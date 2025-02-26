@@ -1,5 +1,14 @@
 # MCP 3D Printer Server
 
+[![npm version](https://img.shields.io/npm/v/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
+[![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
+[![TypeScript](https://img.shields.io/badge/TypeScript-4.9%2B-blue)](https://www.typescriptlang.org/)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/yourusername/mcp-3d-printer-server/graphs/commit-activity)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://makeapullrequest.com)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D%2018.0.0-green.svg)](https://nodejs.org/en/download/)
+[![Downloads](https://img.shields.io/npm/dm/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
+[![GitHub stars](https://img.shields.io/github/stars/yourusername/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/yourusername/mcp-3d-printer-server)
+
 ## Description
 
 This is a server that allows MCP users to connect with the API endpoints of these 3D Printers: 
@@ -532,6 +541,19 @@ Due to the nature of the Bambu Lab printer API, there are some limitations:
 - Monitor memory usage when processing large files
 - Test modifications on simple geometries before attempting complex ones
 - Consider running on a system with at least 4GB of available RAM for larger operations
+
+## Badges
+
+| Badge | Description |
+|-------|-------------|
+| [![npm version](https://img.shields.io/npm/v/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server) | The current version of the package on npm |
+| [![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html) | This project is licensed under GPL-2.0 |
+| [![TypeScript](https://img.shields.io/badge/TypeScript-4.9%2B-blue)](https://www.typescriptlang.org/) | This project is written in TypeScript 4.9+ |
+| [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/yourusername/mcp-3d-printer-server/graphs/commit-activity) | This project is actively maintained |
+| [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://makeapullrequest.com) | We welcome contributions via Pull Requests |
+| [![Node.js Version](https://img.shields.io/badge/node-%3E%3D%2018.0.0-green.svg)](https://nodejs.org/en/download/) | Requires Node.js 18.0.0 or higher |
+| [![Downloads](https://img.shields.io/npm/dm/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server) | Number of downloads per month from npm |
+| [![GitHub stars](https://img.shields.io/github/stars/yourusername/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/yourusername/mcp-3d-printer-server) | Number of GitHub stars this project has received |
 
 ## License
 
