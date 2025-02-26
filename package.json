@@ -1,0 +1,39 @@
+{
+    "name": "3d-printer-mcp-server",
+    "version": "1.0.0",
+    "description": "MCP server for connecting Claude with 3D printer management systems",
+    "main": "dist/index.js",
+    "type": "module",
+    "scripts": {
+        "start": "node dist/index.js",
+        "dev": "ts-node --esm src/index.ts",
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "build": "tsc"
+    },
+    "bin": {
+        "3d-printer-mcp-server": "./dist/index.js"
+    },
+    "keywords": [
+        "mcp",
+        "3d-printer",
+        "octoprint",
+        "klipper",
+        "duet",
+        "repetier",
+        "bambu"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.6.0",
+        "axios": "^1.6.2",
+        "bambu-js": "^2.2.2",
+        "dotenv": "^16.3.1",
+        "form-data": "^4.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^18.0.0",
+        "ts-node": "^10.9.1",
+        "typescript": "^5.0.0"
+    }
+}
