@@ -1,4 +1,4 @@
-# 3D Printer MCP Server
+# MCP 3D Printer Server
 
 ## Description
 
