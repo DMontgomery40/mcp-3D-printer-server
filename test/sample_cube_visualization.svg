@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+        <text x="10" y="20" font-family="Arial" font-size="16" fill="black">
+          STL Visualization: sample_cube.stl
+        </text>
+        <text x="10" y="40" font-family="Arial" font-size="12" fill="black">
+          Dimensions: 10.00 x 10.00 x 10.00 mm
+        </text>
+      
+          <g transform="translate(200, 250)">
+            <rect x="-80" y="-80" width="160" height="160" 
+                  style="fill:#e0e0e0;stroke:#000;stroke-width:1;opacity:0.8;rotateY(0deg)" />
+            <text x="0" y="110" text-anchor="middle" font-family="Arial" font-size="12" fill="black">
+              front
+            </text>
+          </g>
+        
+          <g transform="translate(600, 250)">
+            <rect x="-80" y="-80" width="160" height="160" 
+                  style="fill:#e0e0e0;stroke:#000;stroke-width:1;opacity:0.8;rotateY(90deg)" />
+            <text x="0" y="110" text-anchor="middle" font-family="Arial" font-size="12" fill="black">
+              side
+            </text>
+          </g>
+        
+          <g transform="translate(200, 650)">
+            <rect x="-80" y="-80" width="160" height="160" 
+                  style="fill:#e0e0e0;stroke:#000;stroke-width:1;opacity:0.8;rotateX(90deg)" />
+            <text x="0" y="110" text-anchor="middle" font-family="Arial" font-size="12" fill="black">
+              top
+            </text>
+          </g>
+        
+          <g transform="translate(600, 650)">
+            <rect x="-80" y="-80" width="160" height="160" 
+                  style="fill:#e0e0e0;stroke:#000;stroke-width:1;opacity:0.8;rotateX(30deg) rotateY(45deg)" />
+            <text x="0" y="110" text-anchor="middle" font-family="Arial" font-size="12" fill="black">
+              isometric
+            </text>
+          </g>
+        
+        <g transform="translate(20, 740)">
+          <text font-family="Arial" font-size="14" fill="black">
+            File: sample_cube.stl
+          </text>
+          <text y="20" font-family="Arial" font-size="12" fill="black">
+            Vertices: 12
+          </text>
+          <text y="40" font-family="Arial" font-size="12" fill="black">
+            Dimensions: W:10.00mm × H:10.00mm × D:10.00mm
+          </text>
+        </g>
+      </svg>
