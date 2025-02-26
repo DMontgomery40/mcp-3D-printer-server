@@ -51,7 +51,7 @@ class ThreeDPrinterMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: "3d-printer-mcp-server",
+        name: "mcp-3d-printer-server",
         version: "1.0.0"
       },
       {
@@ -195,7 +195,7 @@ class ThreeDPrinterMCPServer {
                 },
                 type: {
                   type: "string",
-                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu) (default: value from env)"
+                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu, prusa, creality) (default: value from env)"
                 },
                 api_key: {
                   type: "string",
@@ -228,7 +228,7 @@ class ThreeDPrinterMCPServer {
                 },
                 type: {
                   type: "string",
-                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu) (default: value from env)"
+                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu, prusa, creality) (default: value from env)"
                 },
                 api_key: {
                   type: "string",
@@ -261,7 +261,7 @@ class ThreeDPrinterMCPServer {
                 },
                 type: {
                   type: "string",
-                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu) (default: value from env)"
+                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu, prusa, creality) (default: value from env)"
                 },
                 api_key: {
                   type: "string",
@@ -307,7 +307,7 @@ class ThreeDPrinterMCPServer {
                 },
                 type: {
                   type: "string",
-                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu) (default: value from env)"
+                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu, prusa, creality) (default: value from env)"
                 },
                 api_key: {
                   type: "string",
@@ -345,7 +345,7 @@ class ThreeDPrinterMCPServer {
                 },
                 type: {
                   type: "string",
-                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu) (default: value from env)"
+                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu, prusa, creality) (default: value from env)"
                 },
                 api_key: {
                   type: "string",
@@ -378,7 +378,7 @@ class ThreeDPrinterMCPServer {
                 },
                 type: {
                   type: "string",
-                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu) (default: value from env)"
+                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu, prusa, creality) (default: value from env)"
                 },
                 api_key: {
                   type: "string",
@@ -527,6 +527,10 @@ class ThreeDPrinterMCPServer {
         return this.getRepetierStatus(host, port, apiKey);
       case "bambu":
         return this.getBambuStatus(host, bambuSerial, bambuToken);
+      case "prusa":
+        return this.getPrusaStatus(host, port, apiKey);
+      case "creality":
+        return this.getCrealityStatus(host, port, apiKey);
       default:
         throw new Error(`Unsupported printer type: ${type}`);
     }
@@ -551,6 +555,10 @@ class ThreeDPrinterMCPServer {
         return this.getRepetierFiles(host, port, apiKey);
       case "bambu":
         return this.getBambuFiles(host, bambuSerial, bambuToken);
+      case "prusa":
+        return this.getPrusaFiles(host, port, apiKey);
+      case "creality":
+        return this.getCrealityFiles(host, port, apiKey);
       default:
         throw new Error(`Unsupported printer type: ${type}`);
     }
@@ -576,6 +584,10 @@ class ThreeDPrinterMCPServer {
         return this.getRepetierFile(host, port, apiKey, filename);
       case "bambu":
         return this.getBambuFile(host, bambuSerial, bambuToken, filename);
+      case "prusa":
+        return this.getPrusaFile(host, port, apiKey, filename);
+      case "creality":
+        return this.getCrealityFile(host, port, apiKey, filename);
       default:
         throw new Error(`Unsupported printer type: ${type}`);
     }
@@ -609,6 +621,10 @@ class ThreeDPrinterMCPServer {
           return await this.uploadToRepetier(host, port, apiKey, tempFilePath, filename, print);
         case "bambu":
           return await this.uploadToBambu(host, bambuSerial, bambuToken, tempFilePath, filename, print);
+        case "prusa":
+          return await this.uploadToPrusa(host, port, apiKey, tempFilePath, filename, print);
+        case "creality":
+          return await this.uploadToCreality(host, port, apiKey, tempFilePath, filename, print);
         default:
           throw new Error(`Unsupported printer type: ${type}`);
       }
@@ -640,6 +656,10 @@ class ThreeDPrinterMCPServer {
         return await this.startRepetierJob(host, port, apiKey, filename);
       case "bambu":
         return await this.startBambuJob(host, bambuSerial, bambuToken, filename);
+      case "prusa":
+        return await this.startPrusaJob(host, port, apiKey, filename);
+      case "creality":
+        return await this.startCrealityJob(host, port, apiKey, filename);
       default:
         throw new Error(`Unsupported printer type: ${type}`);
     }
@@ -664,6 +684,10 @@ class ThreeDPrinterMCPServer {
         return await this.cancelRepetierJob(host, port, apiKey);
       case "bambu":
         return await this.cancelBambuJob(host, bambuSerial, bambuToken);
+      case "prusa":
+        return await this.cancelPrusaJob(host, port, apiKey);
+      case "creality":
+        return await this.cancelCrealityJob(host, port, apiKey);
       default:
         throw new Error(`Unsupported printer type: ${type}`);
     }
@@ -690,6 +714,10 @@ class ThreeDPrinterMCPServer {
         return await this.setRepetierTemperature(host, port, apiKey, component, temperature);
       case "bambu":
         return await this.setBambuTemperature(host, bambuSerial, bambuToken, component, temperature);
+      case "prusa":
+        return await this.setPrusaTemperature(host, port, apiKey, component, temperature);
+      case "creality":
+        return await this.setCrealityTemperature(host, port, apiKey, component, temperature);
       default:
         throw new Error(`Unsupported printer type: ${type}`);
     }
@@ -1126,6 +1154,213 @@ class ThreeDPrinterMCPServer {
     }
     
     const response = await this.apiClient.get(url);
+    return response.data;
+  }
+
+  // Prusa Connect API Implementation
+  async getPrusaStatus(host: string, port: string, apiKey: string) {
+    const url = `http://${host}:${port}/api/v1/printer`;
+    const response = await this.apiClient.get(url, {
+      headers: {
+        "X-Api-Key": apiKey
+      }
+    });
+    return response.data;
+  }
+
+  async getPrusaFiles(host: string, port: string, apiKey: string) {
+    const url = `http://${host}:${port}/api/v1/storage`;
+    const response = await this.apiClient.get(url, {
+      headers: {
+        "X-Api-Key": apiKey
+      }
+    });
+    return response.data;
+  }
+
+  async getPrusaFile(host: string, port: string, apiKey: string, filename: string) {
+    const url = `http://${host}:${port}/api/v1/storage/${encodeURIComponent(filename)}`;
+    const response = await this.apiClient.get(url, {
+      headers: {
+        "X-Api-Key": apiKey
+      }
+    });
+    return response.data;
+  }
+
+  async uploadToPrusa(host: string, port: string, apiKey: string, filePath: string, filename: string, print: boolean) {
+    const url = `http://${host}:${port}/api/v1/storage`;
+    
+    const formData = new FormData();
+    formData.append("file", fs.createReadStream(filePath));
+    formData.append("filename", filename);
+    
+    const response = await this.apiClient.post(url, formData as any, {
+      headers: {
+        "X-Api-Key": apiKey,
+        ...formData.getHeaders()
+      }
+    });
+    
+    if (print && response.data.success) {
+      await this.startPrusaJob(host, port, apiKey, filename);
+    }
+    
+    return response.data;
+  }
+
+  async startPrusaJob(host: string, port: string, apiKey: string, filename: string) {
+    const url = `http://${host}:${port}/api/v1/job`;
+    
+    const response = await this.apiClient.post(url, {
+      command: "start",
+      file: filename
+    } as any, {
+      headers: {
+        "X-Api-Key": apiKey,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    return response.data;
+  }
+
+  async cancelPrusaJob(host: string, port: string, apiKey: string) {
+    const url = `http://${host}:${port}/api/v1/job`;
+    
+    const response = await this.apiClient.post(url, {
+      command: "cancel"
+    } as any, {
+      headers: {
+        "X-Api-Key": apiKey,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    return response.data;
+  }
+
+  async setPrusaTemperature(host: string, port: string, apiKey: string, component: string, temperature: number) {
+    const url = `http://${host}:${port}/api/v1/printer/temperature`;
+    
+    let data: Record<string, any> = { command: "set" };
+    if (component === "bed") {
+      data.target = { bed: temperature };
+    } else if (component.startsWith("extruder")) {
+      data.target = { tool0: temperature }; // Prusa typically uses tool0 for the extruder
+    } else {
+      throw new Error(`Unsupported component: ${component}`);
+    }
+    
+    const response = await this.apiClient.post(url, data as any, {
+      headers: {
+        "X-Api-Key": apiKey,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    return response.data;
+  }
+
+  // Creality Cloud API Implementation
+  async getCrealityStatus(host: string, port: string, apiKey: string) {
+    const url = `http://${host}:${port}/api/device/status`;
+    const response = await this.apiClient.get(url, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`
+      }
+    });
+    return response.data;
+  }
+
+  async getCrealityFiles(host: string, port: string, apiKey: string) {
+    const url = `http://${host}:${port}/api/storage/list`;
+    const response = await this.apiClient.get(url, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`
+      }
+    });
+    return response.data;
+  }
+
+  async getCrealityFile(host: string, port: string, apiKey: string, filename: string) {
+    const url = `http://${host}:${port}/api/storage/info?filename=${encodeURIComponent(filename)}`;
+    const response = await this.apiClient.get(url, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`
+      }
+    });
+    return response.data;
+  }
+
+  async uploadToCreality(host: string, port: string, apiKey: string, filePath: string, filename: string, print: boolean) {
+    const url = `http://${host}:${port}/api/storage/upload`;
+    
+    const formData = new FormData();
+    formData.append("file", fs.createReadStream(filePath));
+    formData.append("filename", filename);
+    
+    const response = await this.apiClient.post(url, formData as any, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        ...formData.getHeaders()
+      }
+    });
+    
+    if (print && response.data.success) {
+      await this.startCrealityJob(host, port, apiKey, filename);
+    }
+    
+    return response.data;
+  }
+
+  async startCrealityJob(host: string, port: string, apiKey: string, filename: string) {
+    const url = `http://${host}:${port}/api/job/start`;
+    
+    const response = await this.apiClient.post(url, {
+      filename: filename
+    } as any, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    return response.data;
+  }
+
+  async cancelCrealityJob(host: string, port: string, apiKey: string) {
+    const url = `http://${host}:${port}/api/job/cancel`;
+    
+    const response = await this.apiClient.post(url, {} as any, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    return response.data;
+  }
+
+  async setCrealityTemperature(host: string, port: string, apiKey: string, component: string, temperature: number) {
+    const url = `http://${host}:${port}/api/printer/temperature`;
+    
+    let data: Record<string, any> = {};
+    if (component === "bed") {
+      data.bed = temperature;
+    } else if (component === "extruder") {
+      data.hotend = temperature;
+    } else {
+      throw new Error(`Unsupported component: ${component}`);
+    }
+    
+    const response = await this.apiClient.post(url, data as any, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      }
+    });
+    
     return response.data;
   }
 

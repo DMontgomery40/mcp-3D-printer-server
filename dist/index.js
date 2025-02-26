@@ -7,9 +7,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import FormData from "form-data";
-import BambuPrinterModule from "bambu-js";
-// Extract the actual class from the default export
-const BambuPrinter = BambuPrinterModule.BambuPrinter;
+import { BambuPrinter } from "bambu-js";
 // Load environment variables from .env file
 dotenv.config();
 // Default values
@@ -29,7 +27,7 @@ class ThreeDPrinterMCPServer {
     constructor() {
         this.bambuPrinters = new Map();
         this.server = new Server({
-            name: "3d-printer-mcp-server",
+            name: "mcp-3d-printer-server",
             version: "1.0.0"
         }, {
             capabilities: {

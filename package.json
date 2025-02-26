@@ -1,5 +1,5 @@
 {
-    "name": "3d-printer-mcp-server",
+    "name": "mcp-3d-printer-server",
     "version": "0.1.0",
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "main": "src/index.js",
@@ -10,7 +10,7 @@
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "bin": {
-        "3d-printer-mcp-server": "./src/index.js"
+        "mcp-3d-printer-server": "./src/index.js"
     },
     "keywords": [
         "mcp",
@@ -19,10 +19,13 @@
         "klipper",
         "duet",
         "repetier",
-        "bambu"
+        "bambu",
+        "prusa",
+        "creality",
+        "ender"
     ],
     "author": "David Montgomery",
-    "license": "MIT",
+    "license": "GPL-2.0",
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.6.0",
         "axios": "^1.6.2",

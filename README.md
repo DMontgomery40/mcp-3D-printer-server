@@ -9,6 +9,8 @@ This is a server that allows MCP users to connect with the API endpoints of thes
 - Duet
 - Repetier
 - Bambu Labs
+- Prusa Connect
+- Creality/Ender
 
 This server is a Model Context Protocol (MCP) server for connecting Claude with 3D printer management systems. It allows Claude to interact with 3D printers through the APIs of various printer management systems such as OctoPrint, Klipper (via Moonraker), Duet, Repetier, and Bambu Labs printers.
 
@@ -30,14 +32,14 @@ This server is a Model Context Protocol (MCP) server for connecting Claude with 
 ### Install from npm
 
 ```bash
-npm install -g 3d-printer-mcp-server
+npm install -g mcp-3d-printer-server
 ```
 
 ### Install from source
 
 ```bash
-git clone https://github.com/yourusername/3d-printer-mcp-server.git
-cd 3d-printer-mcp-server
+git clone https://github.com/yourusername/mcp-3d-printer-server.git
+cd mcp-3d-printer-server
 npm install
 npm link  # Makes the command available globally
 ```
@@ -71,7 +73,7 @@ BAMBU_TOKEN=your_access_token
 {
   "mcpServers": {
     "3dprint": {
-      "command": "3d-printer-mcp-server",
+      "command": "mcp-3d-printer-server",
       "env": {
         "API_KEY": "your_api_key_here",
         "PRINTER_HOST": "your_printer_ip",
@@ -88,7 +90,7 @@ BAMBU_TOKEN=your_access_token
 {
   "mcpServers": {
     "3dprint": {
-      "command": "3d-printer-mcp-server",
+      "command": "mcp-3d-printer-server",
       "env": {
         "PRINTER_HOST": "your_printer_ip",
         "PRINTER_TYPE": "bambu",
@@ -156,6 +158,36 @@ To connect to your Bambu Lab printer, you need two things:
    - For A1 Mini: Use the Bambu Handy app to connect to your printer, then go to Settings > Network > LAN Mode
 
 **Note**: If your printer is not on the same local network or you can't find the access token, you may need to update your printer's firmware to the latest version to enable LAN Mode.
+
+### Prusa Connect
+
+Prusa Connect is Prusa's own cloud-based solution for managing their printers.
+
+- Default port: 80 (http) or 443 (https)
+- Authentication: API key required
+- Compatible with: Prusa MK4, Prusa Mini, Prusa XL, and other Prusa printers with Prusa Connect
+
+#### Setting up Prusa Connect
+
+1. Make sure your Prusa printer is updated to the latest firmware
+2. Connect your printer to your Wi-Fi network
+3. Create a Prusa Connect account and register your printer
+4. Generate an API key from the Prusa Connect web interface under Settings > API Access
+
+### Creality Cloud
+
+Creality Cloud is Creality's management system for their printers.
+
+- Default port: 80 (http) or 443 (https)
+- Authentication: Bearer token required
+- Compatible with: Ender series, CR series, and other Creality printers with network capabilities
+
+#### Setting up Creality Cloud
+
+1. Install the Creality Cloud app on your mobile device
+2. Create an account and add your printer
+3. Enable local network access for your printer
+4. Generate a token from the Creality Cloud app under Settings > Developer Options
 
 ## Available Tools
 
@@ -278,4 +310,4 @@ Due to the nature of the Bambu Lab printer API, there are some limitations:
 
 ## License
 
-MIT
+GPL-2.0
