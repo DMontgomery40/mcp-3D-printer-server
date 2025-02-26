@@ -1,6 +1,6 @@
 {
     "name": "mcp-3d-printer-server",
-    "version": "0.1.0",
+    "version": "0.2.1",
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "main": "src/index.js",
     "type": "module",
