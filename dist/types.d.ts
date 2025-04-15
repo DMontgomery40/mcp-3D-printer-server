@@ -21,3 +21,55 @@ export declare class BambuPrinterStore {
     get(host: string, serial: string, token: string): InstanceType<typeof BambuPrinter>;
     disconnectAll(): Promise<void>;
 }
+export interface SectionBounds {
+    minX: number;
+    minY: number;
+    minZ: number;
+    maxX: number;
+    maxY: number;
+    maxZ: number;
+}
+export interface ThreeMFMetadata {
+    [key: string]: string;
+}
+export interface ThreeMFObject {
+    id: string;
+    name?: string;
+    type?: string;
+    mesh?: any;
+}
+export interface ThreeMFBuildItem {
+    objectId: string;
+    transform?: string;
+}
+export interface AMSFilamentMapping {
+    [filamentId: string]: number;
+}
+export interface BambuSlicerConfig {
+    layer_height?: number;
+    first_layer_height?: number;
+    sparse_infill_density?: number;
+    sparse_infill_pattern?: string;
+    support_enabled?: boolean;
+    support_type?: string;
+    support_threshold_angle?: number;
+    raft_layers?: number;
+    brim_width?: number;
+    wall_loops?: number;
+    top_shell_layers?: number;
+    bottom_shell_layers?: number;
+    nozzle_temperature?: number[];
+    bed_temperature?: number;
+    filament_type?: string[];
+    flow_ratio?: number[];
+    ams_mapping?: AMSFilamentMapping;
+    [key: string]: any;
+}
+export interface ThreeMFData {
+    metadata: ThreeMFMetadata;
+    objects: ThreeMFObject[];
+    build: {
+        items: ThreeMFBuildItem[];
+    };
+    slicerConfig?: Partial<BambuSlicerConfig>;
+}

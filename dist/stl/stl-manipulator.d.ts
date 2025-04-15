@@ -90,15 +90,15 @@ export declare class STLManipulator extends EventEmitter {
      */
     extendBase(stlFilePath: string, extensionInches: number, progressCallback?: ProgressCallback): Promise<string>;
     /**
-     * Enhanced version of sliceSTL with progress reporting and error handling
-     * @param stlFilePath Path to the STL file
-     * @param slicerType Type of slicer to use ('prusaslicer', 'cura', 'slic3r')
+     * Slice an STL file using the specified slicer
+     * @param stlFilePath Path to the input STL file
+     * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer)
      * @param slicerPath Path to the slicer executable
-     * @param slicerProfile Profile to use for slicing
+     * @param slicerProfile Optional path to the slicer profile/config file
      * @param progressCallback Optional callback for progress updates
      * @returns Path to the generated G-code file
      */
-    sliceSTL(stlFilePath: string, slicerType: 'prusaslicer' | 'cura' | 'slic3r', slicerPath: string, slicerProfile?: string, progressCallback?: ProgressCallback): Promise<string>;
+    sliceSTL(stlFilePath: string, slicerType: 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer', slicerPath: string, slicerProfile?: string, progressCallback?: ProgressCallback): Promise<string>;
     /**
      * Enhanced version of confirmTemperatures with better error handling
      * @param gcodePath Path to the G-code file
@@ -124,4 +124,17 @@ export declare class STLManipulator extends EventEmitter {
             bed: number[];
         };
     }>;
+    /**
+     * Merge vertices within a specified tolerance.
+     */
+    mergeVertices(stlFilePath: string, tolerance?: number, // Default tolerance in mm
+    progressCallback?: ProgressCallback): Promise<string>;
+    /**
+     * Center the model at the origin (0,0,0).
+     */
+    centerModel(stlFilePath: string, progressCallback?: ProgressCallback): Promise<string>;
+    /**
+     * Rotate the model so its largest flat face lies on the XY plane (Z=0).
+     */
+    layFlat(stlFilePath: string, progressCallback?: ProgressCallback): Promise<string>;
 }

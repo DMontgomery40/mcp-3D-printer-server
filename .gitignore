@@ -21,10 +21,10 @@ build/
 # Temporary files
 temp/
 tmp/
-*.tmp
-*.temp
-*.stl
-*.gcode
+# *.tmp # Keep this if needed for other tmp files
+# *.temp # Keep this if needed for other temp files
+temp/*.stl
+temp/*.gcode
 
 # STL visualization outputs
 *_visualization.svg
@@ -53,5 +53,5 @@ yarn-debug.log*
 yarn-error.log*
 
 # Test files and directories
-test/
+# test/ # Removed this line
 coverage/

@@ -1,0 +1,31 @@
+version: '3'
+
+services:
+  mcp-3d-printer-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-3d-printer-server
+    volumes:
+      - ./temp:/app/temp
+      # Removed problematic host slicer mount - install slicer IN the Dockerfile
+      # - ${SLICER_PATH:-/usr/local/bin}:${SLICER_PATH:-/usr/local/bin}:ro 
+    environment:
+      - PRINTER_HOST=${PRINTER_HOST:-localhost}
+      - PRINTER_PORT=${PRINTER_PORT:-80}
+      - PRINTER_TYPE=${PRINTER_TYPE:-octoprint}
+      - API_KEY=${API_KEY:-your_api_key_here}
+      - BAMBU_SERIAL=${BAMBU_SERIAL:-}
+      - BAMBU_TOKEN=${BAMBU_TOKEN:-}
+      - TEMP_DIR=/app/temp
+      - SLICER_TYPE=${SLICER_TYPE:-prusaslicer} # Options: prusaslicer, cura, slic3r, orcaslicer
+      - SLICER_PATH=${SLICER_PATH:-} # Path INSIDE the container
+      - SLICER_PROFILE=${SLICER_PROFILE:-}
+      - BAMBU_STUDIO_CONFIG_PATH=${BAMBU_STUDIO_CONFIG_PATH:-} # Pass through preset path
+    # If you want to provide stdin/stdout access (required for MCP)
+    tty: true
+    stdin_open: true
+    # Restart policy
+    restart: unless-stopped
+    # Network configuration
+    network_mode: host

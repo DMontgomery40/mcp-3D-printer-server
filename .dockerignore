@@ -1,0 +1,52 @@
+# Ignore Git directory
+.git
+
+# Ignore Node dependencies
+node_modules/
+
+# Ignore build output
+dist/
+build/
+*.tsbuildinfo
+
+# Ignore environment files
+.env
+.env.*
+!.env.example
+
+# Ignore temporary files and directories
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Ignore OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Ignore Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Ignore Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore test and coverage output
+coverage/
+
+# Ignore Docker specific files if not needed inside the image itself
+Dockerfile
+docker-compose.yml
+.dockerignore 

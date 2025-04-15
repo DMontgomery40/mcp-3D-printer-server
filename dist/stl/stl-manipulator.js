@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import { EventEmitter } from 'events';
 import * as crypto from 'crypto';
+import { execFile } from 'child_process';
 const readFileAsync = promisify(fs.readFile);
 const writeFileAsync = promisify(fs.writeFile);
 export class STLManipulator extends EventEmitter {
@@ -641,123 +643,122 @@ export class STLManipulator extends EventEmitter {
         }
     }
     /**
-     * Enhanced version of sliceSTL with progress reporting and error handling
-     * @param stlFilePath Path to the STL file
-     * @param slicerType Type of slicer to use ('prusaslicer', 'cura', 'slic3r')
+     * Slice an STL file using the specified slicer
+     * @param stlFilePath Path to the input STL file
+     * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer)
      * @param slicerPath Path to the slicer executable
-     * @param slicerProfile Profile to use for slicing
+     * @param slicerProfile Optional path to the slicer profile/config file
      * @param progressCallback Optional callback for progress updates
      * @returns Path to the generated G-code file
      */
     async sliceSTL(stlFilePath, slicerType, slicerPath, slicerProfile, progressCallback) {
         const operationId = this.generateOperationId();
         this.activeOperations.set(operationId, true);
+        if (!fs.existsSync(slicerPath)) {
+            throw new Error(`Slicer executable not found at: ${slicerPath}`);
+        }
+        if (slicerProfile && !fs.existsSync(slicerProfile)) {
+            console.warn(`Slicer profile specified but not found: ${slicerProfile}. Slicer might use defaults.`);
+            // Allow proceeding without profile, slicer might handle it
+        }
+        const outputFileName = path.basename(stlFilePath, '.stl') + '.gcode';
+        const outputFilePath = path.join(this.tempDir, outputFileName);
+        let args = [];
         try {
             if (progressCallback)
-                progressCallback(0, "Starting slicing operation...");
-            const { exec } = require('child_process');
-            const execAsync = promisify(exec);
-            // Verify the STL file exists
-            if (!fs.existsSync(stlFilePath)) {
-                throw new Error(`STL file not found: ${stlFilePath}`);
-            }
-            // Verify the slicer executable exists if provided
-            if (slicerPath && !fs.existsSync(slicerPath)) {
-                throw new Error(`Slicer executable not found: ${slicerPath}`);
-            }
-            if (progressCallback)
-                progressCallback(10, "Preparing slicing command...");
-            const outputFileName = path.basename(stlFilePath, '.stl') + '.gcode';
-            const outputFilePath = path.join(this.tempDir, outputFileName);
-            let command = '';
+                progressCallback(0, `Starting slicing with ${slicerType}...`);
             switch (slicerType) {
                 case 'prusaslicer':
-                    command = `"${slicerPath}" --export-gcode --output "${outputFilePath}"`;
-                    if (slicerProfile) {
-                        if (!fs.existsSync(slicerProfile)) {
-                            console.warn(`Warning: Slicer profile not found: ${slicerProfile}`);
-                        }
-                        command += ` --load "${slicerProfile}"`;
-                    }
-                    command += ` "${stlFilePath}"`;
+                case 'slic3r': // PrusaSlicer and Slic3r share similar CLI args
+                    args = [
+                        '--slice',
+                        '--output', outputFilePath,
+                        '--load', slicerProfile || '', // Pass profile path
+                        stlFilePath
+                    ];
+                    // Remove empty profile arg if not provided
+                    args = args.filter(arg => arg !== '');
+                    break;
+                case 'orcaslicer': // Add OrcaSlicer case
+                    args = [
+                        // OrcaSlicer might use --load-settings like Bambu, or --load like Prusa
+                        // Assuming --load-settings based on discussion, adjust if needed.
+                        // Also assuming profile path points to the main .ini or .json config.
+                        '--load-settings', slicerProfile || '',
+                        '--output', outputFilePath, // Assuming --output works like PrusaSlicer
+                        stlFilePath
+                    ];
+                    // Alternative if --output doesn't specify filename:
+                    // args = [
+                    //    '--load-settings', slicerProfile || '',
+                    //    '--outputdir', this.tempDir,
+                    //    stlFilePath
+                    // ];
+                    // Remove empty profile arg if not provided
+                    args = args.filter(arg => arg !== '');
                     break;
                 case 'cura':
-                    command = `"${slicerPath}" -o "${outputFilePath}"`;
+                    // CuraEngine CLI args are different, often requiring -s for settings
+                    // Example: curaengine slice -v -j cura_settings.json -s layer_height=0.2 -o output.gcode -l input.stl
+                    // This requires parsing the profile or passing individual settings.
+                    // Keeping it simple for now, assuming profile contains necessary info.
+                    args = [
+                        'slice',
+                        '-l', stlFilePath,
+                        '-o', outputFilePath
+                    ];
                     if (slicerProfile) {
-                        if (!fs.existsSync(slicerProfile)) {
-                            console.warn(`Warning: Slicer profile not found: ${slicerProfile}`);
-                        }
-                        command += ` -l "${slicerProfile}"`;
+                        args.push('-j', slicerProfile); // Load settings from profile definition file
                     }
-                    command += ` "${stlFilePath}"`;
-                    break;
-                case 'slic3r':
-                    command = `"${slicerPath}" --output "${outputFilePath}"`;
-                    if (slicerProfile) {
-                        if (!fs.existsSync(slicerProfile)) {
-                            console.warn(`Warning: Slicer profile not found: ${slicerProfile}`);
-                        }
-                        command += ` --load "${slicerProfile}"`;
-                    }
-                    command += ` "${stlFilePath}"`;
                     break;
                 default:
                     throw new Error(`Unsupported slicer type: ${slicerType}`);
             }
-            if (!this.activeOperations.get(operationId)) {
-                throw new Error("Operation cancelled");
-            }
             if (progressCallback)
-                progressCallback(20, "Running slicer...");
-            console.log(`Slicing STL with command: ${command}`);
-            // Execute the slicing command
+                progressCallback(20, `Executing slicer: ${slicerPath} ${args.join(' ')}`);
+            console.log(`Executing: ${slicerPath} ${args.join(' ')}`);
+            // Execute the slicer
             await new Promise((resolve, reject) => {
-                const slicerProcess = exec(command);
-                // Set up a timeout for the slicing operation (15 minutes)
-                const timeout = setTimeout(() => {
-                    if (slicerProcess.pid) {
-                        process.kill(slicerProcess.pid);
-                    }
-                    reject(new Error("Slicing operation timed out after 15 minutes"));
-                }, 15 * 60 * 1000);
-                // Handle stdout data
-                slicerProcess.stdout?.on('data', (data) => {
-                    console.log(`Slicer stdout: ${data}`);
-                    // Attempt to extract progress information (varies by slicer)
-                    const progressMatch = data.match(/(\d+)%/);
-                    if (progressMatch && progressCallback) {
-                        const slicerProgress = parseInt(progressMatch[1], 10);
-                        // Map slicer's 0-100% to our 20-90% range
-                        const mappedProgress = 20 + (slicerProgress * 0.7);
-                        progressCallback(mappedProgress, `Slicing: ${slicerProgress}%`);
-                    }
-                });
-                // Handle stderr data
-                slicerProcess.stderr?.on('data', (data) => {
-                    console.error(`Slicer stderr: ${data}`);
-                });
-                // Handle completion
-                slicerProcess.on('close', (code) => {
-                    clearTimeout(timeout);
-                    if (code === 0) {
-                        resolve();
+                const process = execFile(slicerPath, args, (error, stdout, stderr) => {
+                    if (error) {
+                        console.error(`Slicer Error: ${error.message}`);
+                        console.error(`Slicer Stderr: ${stderr}`);
+                        reject(new Error(`Slicer failed: ${error.message}. Stderr: ${stderr}`));
                     }
                     else {
-                        reject(new Error(`Slicer process exited with code ${code}`));
+                        console.log(`Slicer Stdout: ${stdout}`);
+                        if (stderr) {
+                            console.warn(`Slicer Stderr: ${stderr}`); // Log stderr even on success
+                        }
+                        resolve();
                     }
                 });
-                // Handle errors
-                slicerProcess.on('error', (err) => {
-                    clearTimeout(timeout);
-                    reject(err);
-                });
+                // Optional: Add listeners for stdout/stderr for real-time progress if slicer provides it
+                // process.stdout?.on('data', (data) => { console.log(`Slicer stdout: ${data}`); });
+                // process.stderr?.on('data', (data) => { console.log(`Slicer stderr: ${data}`); });
+                // Check for cancellation periodically
+                const checkCancel = setInterval(() => {
+                    if (!this.activeOperations.get(operationId)) {
+                        clearInterval(checkCancel);
+                        try {
+                            process.kill(); // Attempt to kill the slicer process
+                            reject(new Error("Slicing operation cancelled"));
+                        }
+                        catch (killError) {
+                            console.error("Error attempting to kill slicer process:", killError);
+                            reject(new Error("Slicing operation cancelled, but failed to kill process."));
+                        }
+                    }
+                }, 500);
+                process.on('exit', () => clearInterval(checkCancel));
+                process.on('error', () => clearInterval(checkCancel)); // Ensure interval cleared on process error too
             });
             if (!this.activeOperations.get(operationId)) {
-                throw new Error("Operation cancelled");
+                // This check might be redundant if the promise rejected on kill, but good safety
+                throw new Error("Slicing operation cancelled after process finished");
             }
-            // Verify the G-code file was created
             if (!fs.existsSync(outputFilePath)) {
-                throw new Error("Slicing failed: G-code file was not created");
+                throw new Error(`Slicer finished but output file not found: ${outputFilePath}`);
             }
             if (progressCallback)
                 progressCallback(100, "Slicing completed successfully");
@@ -770,13 +771,13 @@ export class STLManipulator extends EventEmitter {
             return outputFilePath;
         }
         catch (error) {
-            console.error("Error slicing STL:", error);
+            console.error(`Slicing failed for ${stlFilePath}:`, error);
             this.emit('operationError', {
                 operationId,
                 type: 'slice',
                 error: error instanceof Error ? error.message : String(error)
             });
-            throw new Error(`Failed to slice STL: ${error instanceof Error ? error.message : String(error)}`);
+            throw error;
         }
         finally {
             this.activeOperations.delete(operationId);
@@ -862,6 +863,216 @@ export class STLManipulator extends EventEmitter {
                 error: error instanceof Error ? error.message : String(error)
             });
             throw new Error(`Failed to confirm temperatures: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        finally {
+            this.activeOperations.delete(operationId);
+        }
+    }
+    /**
+     * Merge vertices within a specified tolerance.
+     */
+    async mergeVertices(stlFilePath, tolerance = 0.01, // Default tolerance in mm
+    progressCallback) {
+        const operationId = this.generateOperationId();
+        this.activeOperations.set(operationId, true);
+        try {
+            if (progressCallback)
+                progressCallback(0, "Starting vertex merging...");
+            const { geometry } = await this.loadSTL(stlFilePath, progressCallback); // 10-50% progress
+            if (!this.activeOperations.get(operationId))
+                throw new Error("Operation cancelled");
+            if (progressCallback)
+                progressCallback(60, "Merging vertices...");
+            const originalVertexCount = geometry.attributes.position.count;
+            const mergedGeometry = BufferGeometryUtils.mergeVertices(geometry, tolerance);
+            const newVertexCount = mergedGeometry.attributes.position.count;
+            console.log(`Merged vertices: ${originalVertexCount} -> ${newVertexCount} (Tolerance: ${tolerance}mm)`);
+            if (progressCallback)
+                progressCallback(70, `Vertices merged: ${originalVertexCount} -> ${newVertexCount}`);
+            if (!this.activeOperations.get(operationId))
+                throw new Error("Operation cancelled");
+            const outputFileName = path.basename(stlFilePath, '.stl') + '_merged.stl';
+            const outputFilePath = path.join(this.tempDir, outputFileName);
+            await this.saveSTL(mergedGeometry, outputFilePath, progressCallback); // 80-100% progress
+            this.emit('operationComplete', { operationId, type: 'mergeVertices', success: true, output: outputFilePath, verticesRemoved: originalVertexCount - newVertexCount });
+            return outputFilePath;
+        }
+        catch (error) {
+            this.emit('operationError', { operationId, type: 'mergeVertices', error: error instanceof Error ? error.message : String(error) });
+            throw error;
+        }
+        finally {
+            this.activeOperations.delete(operationId);
+        }
+    }
+    /**
+     * Center the model at the origin (0,0,0).
+     */
+    async centerModel(stlFilePath, progressCallback) {
+        const operationId = this.generateOperationId();
+        this.activeOperations.set(operationId, true);
+        try {
+            if (progressCallback)
+                progressCallback(0, "Starting centering operation...");
+            const { geometry, boundingBox } = await this.loadSTL(stlFilePath, progressCallback); // 10-50% progress
+            if (!this.activeOperations.get(operationId))
+                throw new Error("Operation cancelled");
+            if (progressCallback)
+                progressCallback(60, "Calculating center...");
+            const center = new THREE.Vector3();
+            boundingBox.getCenter(center);
+            if (center.lengthSq() < 0.0001) { // Already centered (or very close)
+                if (progressCallback)
+                    progressCallback(100, "Model is already centered.");
+                console.log("Model already centered. No changes made.");
+                this.emit('operationComplete', { operationId, type: 'centerModel', success: true, output: stlFilePath, message: "Model already centered." });
+                return stlFilePath; // Return original path
+            }
+            if (progressCallback)
+                progressCallback(70, `Applying translation: (${-center.x.toFixed(2)}, ${-center.y.toFixed(2)}, ${-center.z.toFixed(2)})`);
+            const translationMatrix = new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z);
+            geometry.applyMatrix4(translationMatrix);
+            geometry.computeBoundingBox(); // Recompute bounds after moving
+            if (!this.activeOperations.get(operationId))
+                throw new Error("Operation cancelled");
+            const outputFileName = path.basename(stlFilePath, '.stl') + '_centered.stl';
+            const outputFilePath = path.join(this.tempDir, outputFileName);
+            await this.saveSTL(geometry, outputFilePath, progressCallback); // 80-100% progress
+            this.emit('operationComplete', { operationId, type: 'centerModel', success: true, output: outputFilePath });
+            return outputFilePath;
+        }
+        catch (error) {
+            this.emit('operationError', { operationId, type: 'centerModel', error: error instanceof Error ? error.message : String(error) });
+            throw error;
+        }
+        finally {
+            this.activeOperations.delete(operationId);
+        }
+    }
+    /**
+     * Rotate the model so its largest flat face lies on the XY plane (Z=0).
+     */
+    async layFlat(stlFilePath, progressCallback) {
+        const operationId = this.generateOperationId();
+        this.activeOperations.set(operationId, true);
+        try {
+            if (progressCallback)
+                progressCallback(0, "Starting lay flat operation...");
+            const { geometry, boundingBox } = await this.loadSTL(stlFilePath, progressCallback); // 10-50%
+            if (!this.activeOperations.get(operationId))
+                throw new Error("Operation cancelled");
+            if (progressCallback)
+                progressCallback(55, "Analyzing faces...");
+            const positionAttribute = geometry.getAttribute('position');
+            if (!positionAttribute)
+                throw new Error("Geometry has no position attribute.");
+            const faces = [];
+            const vA = new THREE.Vector3();
+            const vB = new THREE.Vector3();
+            const vC = new THREE.Vector3();
+            const faceNormal = new THREE.Vector3();
+            const cb = new THREE.Vector3(), ab = new THREE.Vector3();
+            // Iterate through faces (triangles)
+            for (let i = 0; i < positionAttribute.count; i += 3) {
+                vA.fromBufferAttribute(positionAttribute, i);
+                vB.fromBufferAttribute(positionAttribute, i + 1);
+                vC.fromBufferAttribute(positionAttribute, i + 2);
+                // Calculate face normal
+                cb.subVectors(vC, vB);
+                ab.subVectors(vA, vB);
+                cb.cross(ab);
+                faceNormal.copy(cb).normalize();
+                // Calculate face area (using cross product magnitude / 2)
+                const area = cb.length() / 2;
+                faces.push({
+                    normal: faceNormal.clone(),
+                    area: area,
+                    vertices: [vA.clone(), vB.clone(), vC.clone()] // Store vertices if needed for center calculation
+                });
+            }
+            if (faces.length === 0)
+                throw new Error("No faces found in geometry.");
+            if (!this.activeOperations.get(operationId))
+                throw new Error("Operation cancelled");
+            if (progressCallback)
+                progressCallback(65, "Grouping faces by normal...");
+            // Group faces by similar normal vectors (tolerance for floating point errors)
+            const normalGroups = new Map();
+            const tolerance = 1e-5;
+            for (const face of faces) {
+                let foundGroup = false;
+                for (const [key, group] of normalGroups.entries()) {
+                    if (face.normal.distanceToSquared(group.representativeNormal) < tolerance) {
+                        group.totalArea += face.area;
+                        // Optional: Average the normal? For now, just use the first one.
+                        foundGroup = true;
+                        break;
+                    }
+                }
+                if (!foundGroup) {
+                    const key = `${face.normal.x.toFixed(5)},${face.normal.y.toFixed(5)},${face.normal.z.toFixed(5)}`;
+                    if (!normalGroups.has(key)) { // Ensure unique key even if floats slightly differ after toFixed
+                        normalGroups.set(key, { totalArea: face.area, representativeNormal: face.normal });
+                    }
+                }
+            }
+            if (normalGroups.size === 0)
+                throw new Error("Could not group faces by normal.");
+            if (!this.activeOperations.get(operationId))
+                throw new Error("Operation cancelled");
+            if (progressCallback)
+                progressCallback(75, "Finding largest flat surface...");
+            // Find the group with the largest total area (excluding near-vertical faces)
+            let largestArea = 0;
+            let targetNormal = null;
+            const upVector = new THREE.Vector3(0, 1, 0); // Assuming Y is up for most models initially?
+            const downVector = new THREE.Vector3(0, 0, -1); // Target normal (pointing down)
+            for (const group of normalGroups.values()) {
+                // Check if the normal is reasonably horizontal (not too close to vertical Z)
+                // Angle threshold could be adjusted (e.g., > 5 degrees from Z axis)
+                if (Math.abs(group.representativeNormal.z) < 0.99 && group.totalArea > largestArea) {
+                    largestArea = group.totalArea;
+                    targetNormal = group.representativeNormal;
+                }
+            }
+            if (!targetNormal) {
+                // If no suitable horizontal face found, maybe pick the lowest Z face?
+                // For now, throw an error or return unchanged.
+                console.warn("Could not find a suitable large flat face to lay down. No changes made.");
+                this.emit('operationComplete', { operationId, type: 'layFlat', success: true, output: stlFilePath, message: "No suitable flat face found." });
+                return stlFilePath;
+            }
+            if (progressCallback)
+                progressCallback(80, "Calculating rotation...");
+            // Calculate the rotation needed to align targetNormal with downVector
+            const quaternion = new THREE.Quaternion().setFromUnitVectors(targetNormal, downVector);
+            const rotationMatrix = new THREE.Matrix4().makeRotationFromQuaternion(quaternion);
+            // Rotate around the model's center
+            const center = new THREE.Vector3();
+            boundingBox.getCenter(center);
+            const toOriginMatrix = new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z);
+            const fromOriginMatrix = new THREE.Matrix4().makeTranslation(center.x, center.y, center.z);
+            // Apply rotation
+            geometry.applyMatrix4(toOriginMatrix);
+            geometry.applyMatrix4(rotationMatrix);
+            geometry.applyMatrix4(fromOriginMatrix);
+            // Translate so the new bottom is at Z=0
+            geometry.computeBoundingBox(); // Recompute bounds after rotation
+            const newMinZ = geometry.boundingBox.min.z;
+            const translateToZeroMatrix = new THREE.Matrix4().makeTranslation(0, 0, -newMinZ);
+            geometry.applyMatrix4(translateToZeroMatrix);
+            geometry.computeBoundingBox(); // Final bounds
+            if (!this.activeOperations.get(operationId))
+                throw new Error("Operation cancelled");
+            const outputFileName = path.basename(stlFilePath, '.stl') + '_flat.stl';
+            const outputFilePath = path.join(this.tempDir, outputFileName);
+            await this.saveSTL(geometry, outputFilePath, progressCallback); // 90-100% progress
+            this.emit('operationComplete', { operationId, type: 'layFlat', success: true, output: outputFilePath });
+            return outputFilePath;
+        }
+        catch (error) {
+            this.emit('operationError', { operationId, type: 'layFlat', error: error instanceof Error ? error.message : String(error) });
+            throw error;
         }
         finally {
             this.activeOperations.delete(operationId);
