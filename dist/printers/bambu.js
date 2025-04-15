@@ -129,10 +129,16 @@ export class BambuImplementation extends PrinterImplementation {
         const remotePath = `gcodes/${remoteFilename}`.replace(/\\/g, '/');
         // 1. Connect FTP if necessary (via bambu-js helper)
         if (!printerFTP.isConnected) {
-            console.log(`Connecting Bambu FTP ${host} (${serial}) before uploading...`);
-            await printerFTP.connect(); // Connects MQTT and FTP
+            console.log(`Connecting Bambu FTP ${host} (${serial}) on port 990 (assumed) before uploading...`);
+            try {
+                await printerFTP.connect(); // Connects MQTT and FTP
+                console.log(`Connected Bambu FTP successfully.`);
+            }
+            catch (ftpConnectError) {
+                console.error(`Bambu FTP Connection Error:`, ftpConnectError);
+                throw new Error(`Failed to connect to Bambu FTP: ${ftpConnectError.message}`);
+            }
             // await printerFTP.awaitInitialState(10000); // Might not be needed just for FTP
-            console.log(`Connected Bambu FTP.`);
         }
         // 2. Upload the file via FTP
         console.log(`Uploading ${options.filePath} to ${remotePath} via FTP...`);

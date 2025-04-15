@@ -1,8 +1,8 @@
 {
     "name": "mcp-3d-printer-server",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "MCP server for connecting Claude with 3D printer management systems",
-    "main": "src/index.js",
+    "main": "dist/index.js",
     "repository": "https://github.com/DMontgomery40/mcp-3D-printer-server",
     "type": "module",
     "scripts": {
@@ -12,8 +12,14 @@
         "test": "npm run build && node dist/test/stl-manipulator-test.js"
     },
     "bin": {
-        "mcp-3d-printer-server": "./src/index.js"
+        "mcp-3d-printer-server": "./dist/index.js"
     },
+    "files": [
+        "dist",
+        "src",
+        "README.md",
+        "LICENSE"
+    ],
     "keywords": [
         "mcp",
         "3d-printer",
