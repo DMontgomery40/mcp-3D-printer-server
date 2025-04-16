@@ -21,9 +21,6 @@ RUN --mount=type=cache,target=/root/.npm npm run build
 # Create temp directory for file processing
 RUN mkdir -p temp
 
-# Expose any ports if needed (add if necessary)
-# EXPOSE 3000
-
 # Set environment variables (these can be overridden via docker-compose)
 ENV NODE_ENV=production
 
