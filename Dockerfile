@@ -1,7 +1,13 @@
-FROM node:18-alpine
+# syntax=docker/dockerfile:1
+# check=experimental=all
+
+FROM node:23-alpine@sha256:86703151a18fcd06258e013073508c4afea8e19cd7ed451554221dd00aea83fc
 
 # Install build dependencies
-RUN apk add --no-cache make g++
+RUN apk add --no-cache typescript
+
+# Add non-root user
+RUN addgroup -S group && adduser -S user -G group
 
 # Create app directory
 WORKDIR /app
@@ -10,19 +16,20 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --omit-dev
 
 # Copy source code
 COPY . .
 
 # Build the TypeScript code
-RUN npm run build
+RUN --mount=type=cache,target=/root/.npm npm run build
+
+# Run everything as `user`
+RUN chown -R user:group /app
+USER user
 
 # Create temp directory for file processing
 RUN mkdir -p temp
-
-# Expose any ports if needed (add if necessary)
-# EXPOSE 3000
 
 # Set environment variables (these can be overridden via docker-compose)
 ENV NODE_ENV=production
