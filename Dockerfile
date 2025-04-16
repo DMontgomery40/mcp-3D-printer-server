@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:23-alpine
 
 # Install build dependencies
 RUN apk add --no-cache typescript
