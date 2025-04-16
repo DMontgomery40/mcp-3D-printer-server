@@ -3,6 +3,9 @@ FROM node:23-alpine
 # Install build dependencies
 RUN apk add --no-cache typescript
 
+# Add non-root user
+RUN addgroup -S group && adduser -S user -G group
+
 # Create app directory
 WORKDIR /app
 
@@ -17,6 +20,10 @@ COPY . .
 
 # Build the TypeScript code
 RUN --mount=type=cache,target=/root/.npm npm run build
+
+# Run everything as `user`
+RUN chown -R user:group /app
+USER user
 
 # Create temp directory for file processing
 RUN mkdir -p temp
