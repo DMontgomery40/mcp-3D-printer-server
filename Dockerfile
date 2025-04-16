@@ -1,4 +1,7 @@
-FROM node:23-alpine
+# syntax=docker/dockerfile:1
+# check=experimental=all
+
+FROM node:23-alpine@sha256:86703151a18fcd06258e013073508c4afea8e19cd7ed451554221dd00aea83fc
 
 # Install build dependencies
 RUN apk add --no-cache typescript
