@@ -1,7 +1,7 @@
 FROM node:18-alpine
 
 # Install build dependencies
-RUN apk add --no-cache make g++
+RUN apk add --no-cache typescript
 
 # Create app directory
 WORKDIR /app
