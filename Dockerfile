@@ -10,13 +10,13 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --ignore-scripts --omit-dev
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --omit-dev
 
 # Copy source code
 COPY . .
 
 # Build the TypeScript code
-RUN npm run build
+RUN --mount=type=cache,target=/root/.npm npm run build
 
 # Create temp directory for file processing
 RUN mkdir -p temp
