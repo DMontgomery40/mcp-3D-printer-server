@@ -9,6 +9,10 @@
 [![Downloads](https://img.shields.io/npm/dm/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
 [![GitHub stars](https://img.shields.io/github/stars/dmontgomery40/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/yourusername/mcp-3d-printer-server)
 
+<a href="https://glama.ai/mcp/servers/7f6v2enbgk">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/7f6v2enbgk/badge" alt="3D Printer Server MCP server" />
+</a>
+
 <details>
 <summary><strong>✨ What's New / Significant Updates (as of last session)</strong></summary>
 
