@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/dmontgomery40-mcp-3d-printer-server-badge.png)](https://mseep.ai/app/dmontgomery40-mcp-3d-printer-server)
+
 # MCP 3D Printer Server
 
 [![npm version](https://img.shields.io/npm/v/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
