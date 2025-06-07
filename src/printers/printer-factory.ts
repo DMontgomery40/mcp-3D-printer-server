@@ -1,4 +1,4 @@
-import { PrinterImplementation, BambuPrinterStore } from "../types.js";
+import { PrinterImplementation } from "../types.js";
 import { OctoPrintImplementation } from "./octoprint.js";
 import { KlipperImplementation } from "./klipper.js";
 import { DuetImplementation } from "./duet.js";
@@ -10,7 +10,6 @@ import axios from "axios";
 
 export class PrinterFactory {
   private implementations: Map<string, PrinterImplementation> = new Map();
-  private bambuPrinterStore = new BambuPrinterStore();
   private apiClient = axios.create({ timeout: 10000 });
 
   constructor() {
@@ -18,7 +17,7 @@ export class PrinterFactory {
     this.implementations.set("klipper", new KlipperImplementation(this.apiClient));
     this.implementations.set("duet", new DuetImplementation(this.apiClient));
     this.implementations.set("repetier", new RepetierImplementation(this.apiClient));
-    this.implementations.set("bambu", new BambuImplementation(this.apiClient, this.bambuPrinterStore));
+    this.implementations.set("bambu", new BambuImplementation(this.apiClient));
     this.implementations.set("prusa", new PrusaImplementation(this.apiClient));
     this.implementations.set("creality", new CrealityImplementation(this.apiClient));
   }
@@ -32,6 +31,10 @@ export class PrinterFactory {
   }
 
   async disconnectAll(): Promise<void> {
-    await this.bambuPrinterStore.disconnectAll();
+    // Disconnect all printers if needed
+    const bambuImpl = this.implementations.get("bambu") as BambuImplementation;
+    if (bambuImpl) {
+      await bambuImpl.disconnectAll();
+    }
   }
 } 

@@ -1,5 +1,4 @@
 import { AxiosInstance } from "axios";
-import { BambuPrinter } from "bambu-js";
 
 // Define shared types for the printer implementations
 export type BambuFTP = {
@@ -25,25 +24,7 @@ export abstract class PrinterImplementation {
   abstract setTemperature(host: string, port: string, apiKey: string, component: string, temperature: number): Promise<any>;
 }
 
-// Store for Bambu printers
-export class BambuPrinterStore {
-  private printers: Map<string, InstanceType<typeof BambuPrinter>> = new Map();
 
-  get(host: string, serial: string, token: string): InstanceType<typeof BambuPrinter> {
-    const key = `${host}-${serial}`;
-    if (!this.printers.has(key)) {
-      const printer = new BambuPrinter(host, serial, token);
-      this.printers.set(key, printer);
-    }
-    return this.printers.get(key)!;
-  }
-
-  async disconnectAll(): Promise<void> {
-    for (const printer of this.printers.values()) {
-      await printer.disconnect();
-    }
-  }
-}
 
 export interface SectionBounds {
     minX: number; minY: number; minZ: number;
