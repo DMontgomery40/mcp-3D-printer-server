@@ -10,7 +10,7 @@
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D%2018.0.0-green.svg)](https://nodejs.org/en/download/)
 [![Downloads](https://img.shields.io/npm/dm/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
 [![GitHub stars](https://img.shields.io/github/stars/dmontgomery40/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/yourusername/mcp-3d-printer-server)
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/dmontgomery40-mcp-3d-printer-server-badge.png)](https://mseep.ai/app/dmontgomery40-mcp-3d-printer-server)
+
 
 <a href="https://glama.ai/mcp/servers/7f6v2enbgk">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/7f6v2enbgk/badge" alt="3D Printer Server MCP server" />
