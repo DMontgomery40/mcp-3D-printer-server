@@ -209,6 +209,39 @@ class ThreeDPrinterMCPServer {
               }
             }
           },
+          {
+            name: "list_printer_files",
+            description: "List files available on the 3D printer",
+            inputSchema: {
+              type: "object",
+              properties: {
+                host: {
+                  type: "string",
+                  description: "Hostname or IP address of the printer (default: value from env)"
+                },
+                port: {
+                  type: "string",
+                  description: "Port of the printer API (default: value from env)"
+                },
+                type: {
+                  type: "string",
+                  description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu, prusa, creality) (default: value from env)"
+                },
+                api_key: {
+                  type: "string",
+                  description: "API key for authentication (default: value from env)"
+                },
+                bambu_serial: {
+                  type: "string",
+                  description: "Serial number for Bambu Lab printers (default: value from env)"
+                },
+                bambu_token: {
+                  type: "string",
+                  description: "Access token for Bambu Lab printers (default: value from env)"
+                }
+              }
+            }
+          },
           // New STL manipulation tools
           {
             name: "extend_stl_base",
@@ -686,7 +719,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const processProgressCallback = (progress: number, message?: string) => {
-              console.log(`Process progress: ${progress}% - ${message || ''}`);
+              console.error(`Process progress: ${progress}% - ${message || ''}`);
             };
             
             // 1. Extend the base of the STL file
@@ -717,7 +750,7 @@ class ThreeDPrinterMCPServer {
               );
               
               if (!tempConfirmation.match) {
-                console.warn("Temperature mismatch:", tempConfirmation);
+                console.error("Temperature mismatch:", tempConfirmation);
               }
             }
             
@@ -756,7 +789,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const scaleProgressCallback = (progress: number, message?: string) => {
-              console.log(`Scale progress: ${progress}% - ${message || ''}`);
+              console.error(`Scale progress: ${progress}% - ${message || ''}`);
             };
             
             let scaleFactors: number | [number, number, number];
@@ -788,7 +821,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const rotateProgressCallback = (progress: number, message?: string) => {
-              console.log(`Rotate progress: ${progress}% - ${message || ''}`);
+              console.error(`Rotate progress: ${progress}% - ${message || ''}`);
             };
             
             // Get rotation angles, defaulting to 0 for any undefined axis
@@ -812,7 +845,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const translateProgressCallback = (progress: number, message?: string) => {
-              console.log(`Translate progress: ${progress}% - ${message || ''}`);
+              console.error(`Translate progress: ${progress}% - ${message || ''}`);
             };
             
             // Get translation values, defaulting to 0 for any undefined axis
@@ -836,7 +869,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const modifySectionProgressCallback = (progress: number, message?: string) => {
-              console.log(`Modify section progress: ${progress}% - ${message || ''}`);
+              console.error(`Modify section progress: ${progress}% - ${message || ''}`);
             };
             
             // Determine the section to modify
@@ -913,7 +946,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const visualizationProgressCallback = (progress: number, message?: string) => {
-              console.log(`Visualization progress: ${progress}% - ${message || ''}`);
+              console.error(`Visualization progress: ${progress}% - ${message || ''}`);
             };
             
             // Get width and height parameters, with defaults
@@ -952,7 +985,7 @@ class ThreeDPrinterMCPServer {
             try {
                 // --- Parse 3MF --- 
                 const parsed3MFData = await parse3MF(threeMFPath);
-                console.log(`Successfully parsed 3MF file: ${threeMFPath}`);
+                console.error(`Successfully parsed 3MF file: ${threeMFPath}`);
                 let parsedAmsMapping: number[] | undefined = undefined;
                 // ... (Extract default AMS mapping logic) ...
                 if (parsed3MFData.slicerConfig?.ams_mapping) { 
@@ -960,12 +993,12 @@ class ThreeDPrinterMCPServer {
                                                     .filter(v => typeof v === 'number') as number[];
                     if (slots.length > 0) {
                          parsedAmsMapping = slots.sort((a, b) => a - b);
-                         console.log("Extracted default AMS mapping from 3MF:", parsedAmsMapping);
+                         console.error("Extracted default AMS mapping from 3MF:", parsedAmsMapping);
                     } else {
-                         console.log("AMS mapping found in 3MF, but no valid slots extracted.");
+                         console.error("AMS mapping found in 3MF, but no valid slots extracted.");
                     }
                 } else {
-                     console.log("No default AMS mapping found in 3MF slicer config.");
+                     console.error("No default AMS mapping found in 3MF slicer config.");
                 }
 
                 // --- Gather Overrides and Determine Final Options --- 
@@ -983,16 +1016,16 @@ class ThreeDPrinterMCPServer {
                     } 
                     
                     if (userMappingOverride && userMappingOverride.length > 0) {
-                        console.log("Applying user AMS mapping override:", userMappingOverride);
+                        console.error("Applying user AMS mapping override:", userMappingOverride);
                         finalAmsMapping = userMappingOverride;
                         useAMS = true; // Force useAMS if override provided
                     } else {
-                        console.warn("Received ams_mapping override, but it was empty or invalid.");
+                        console.error("Received ams_mapping override, but it was empty or invalid.");
                     }
                 } 
                 // ... (Handle explicit use_ams=false) ...
                 if (args?.use_ams === false) {
-                    console.log("User explicitly disabled AMS.");
+                    console.error("User explicitly disabled AMS.");
                     finalAmsMapping = undefined;
                     useAMS = false;
                 }
@@ -1248,7 +1281,7 @@ class ThreeDPrinterMCPServer {
           host, bambuSerial, bambuToken, component, temperature
         );
       } else {
-        console.warn('setTemperature not fully implemented for Bambu via direct commands yet.');
+        console.error('setTemperature not fully implemented for Bambu via direct commands yet.');
         return { status: 'Command sent (implementation pending)'}; // Avoid throwing error if method doesn't exist
       }
     }
