@@ -1,5 +1,10 @@
 import { PrinterImplementation } from "../types.js";
 export declare class PrusaImplementation extends PrinterImplementation {
+    private buildAuthHeaders;
+    private buildBaseUrl;
+    private isFallbackStatus;
+    private getWithFallback;
+    private postWithFallback;
     getStatus(host: string, port: string, apiKey: string): Promise<any>;
     getFiles(host: string, port: string, apiKey: string): Promise<any>;
     getFile(host: string, port: string, apiKey: string, filename: string): Promise<any>;

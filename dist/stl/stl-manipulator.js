@@ -39,7 +39,8 @@ export class STLManipulator extends EventEmitter {
                 progressCallback(30, "Parsing STL data...");
             // Load the STL data into a Three.js geometry
             const loader = new STLLoader();
-            const geometry = loader.parse(stlData.buffer);
+            const rawArrayBuffer = stlData.buffer.slice(stlData.byteOffset, stlData.byteOffset + stlData.byteLength);
+            const geometry = loader.parse(rawArrayBuffer);
             // Create a mesh from the geometry
             const material = new THREE.MeshStandardMaterial();
             const mesh = new THREE.Mesh(geometry, material);

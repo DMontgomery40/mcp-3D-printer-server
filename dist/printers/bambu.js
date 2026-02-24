@@ -1,9 +1,10 @@
 import { PrinterImplementation } from "../types.js";
-import { BambuClient, UpdateStateCommand,
-// State, // Removed as using string literal
-// TempUpdatePartType // Removed as likely unusable type
- } from "bambu-node"; // Use bambu-node library
-// Store for bambu-node printer instances
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import JSZip from "jszip";
+import { BambuPrinter } from "bambu-js";
+import { BambuClient, GCodeFileCommand, GCodeLineCommand, PushAllCommand, UpdateStateCommand, } from "bambu-node";
 class BambuClientStore {
     constructor() {
         this.printers = new Map();
@@ -11,76 +12,55 @@ class BambuClientStore {
     }
     async getPrinter(host, serial, token) {
         const key = `${host}-${serial}`;
-        // If already connected/connecting, return existing instance or wait for connection
         if (this.printers.has(key)) {
-            console.log(`Returning existing BambuClient instance for ${key}`);
             return this.printers.get(key);
         }
         if (this.initialConnectionPromises.has(key)) {
-            console.log(`Waiting for existing initial connection attempt for ${key}...`);
-            // Don't await here; if promise exists, listeners will handle map update
-            // await this.initialConnectionPromises.get(key); 
-            // Throw error immediately if we know a connection is pending but not resolved yet
-            // Or rely on the promise rejection propagating if it fails
-            await this.initialConnectionPromises.get(key); // Await necessary to ensure connection completes or fails
+            await this.initialConnectionPromises.get(key);
             if (this.printers.has(key)) {
                 return this.printers.get(key);
             }
-            else {
-                throw new Error(`Existing initial connection attempt for ${key} failed or timed out.`);
-            }
+            throw new Error(`Existing Bambu client connection for ${key} failed.`);
         }
-        // Create new instance and attempt connection
-        console.log(`Creating new BambuClient instance for ${key}`);
         const printer = new BambuClient({
-            host: host,
+            host,
             serialNumber: serial,
             accessToken: token,
         });
-        // Setup event listeners for state management
-        printer.on('client:connect', () => {
-            console.log(`BambuClient connected for ${key}`);
+        printer.on("client:connect", () => {
             this.printers.set(key, printer);
             this.initialConnectionPromises.delete(key);
         });
-        printer.on('client:error', (err) => {
-            console.error(`BambuClient connection error for ${key}:`, err);
+        printer.on("client:error", () => {
             this.printers.delete(key);
             this.initialConnectionPromises.delete(key);
         });
-        printer.on('client:disconnect', () => {
-            console.log(`BambuClient connection closed for ${key}`);
+        printer.on("client:disconnect", () => {
             this.printers.delete(key);
             this.initialConnectionPromises.delete(key);
         });
-        printer.on('printer:dataUpdate', (data) => {
-            // Optional: log or update internal state based on data
-            // console.log(`BambuClient data update for ${key}`);
-        });
-        // Store promise and initiate connection
-        console.log(`Attempting initial connection for BambuClient ${key}...`);
         const connectPromise = printer.connect().then(() => { });
         this.initialConnectionPromises.set(key, connectPromise);
         try {
             await connectPromise;
-            console.log(`Initial connection successful for ${key}.`);
-            // Redundant set, already handled by 'client:connect' listener
-            // this.printers.set(key, printer); 
             return printer;
         }
-        catch (err) {
-            console.error(`Initial connection failed for ${key}:`, err);
-            this.initialConnectionPromises.delete(key); // Clean up promise map on failure
-            throw err; // Rethrow the error
+        catch (error) {
+            this.initialConnectionPromises.delete(key);
+            throw error;
         }
     }
     async disconnectAll() {
-        console.log("Disconnecting all BambuClient instances...");
         const disconnectPromises = [];
-        for (const [key, printer] of this.printers.entries()) {
-            disconnectPromises.push(printer.disconnect()
-                .then(() => console.log(`Disconnected ${key}`))
-                .catch(err => console.error(`Error disconnecting ${key}:`, err)));
+        for (const printer of this.printers.values()) {
+            disconnectPromises.push((async () => {
+                try {
+                    await printer.disconnect();
+                }
+                catch (error) {
+                    console.error("Failed to disconnect Bambu client", error);
+                }
+            })());
         }
         await Promise.allSettled(disconnectPromises);
         this.printers.clear();
@@ -88,22 +68,50 @@ class BambuClientStore {
     }
 }
 export class BambuImplementation extends PrinterImplementation {
-    constructor(apiClient /* Not used */) {
+    constructor(apiClient) {
         super(apiClient);
         this.printerStore = new BambuClientStore();
     }
-    // Helper to get connected printer instance
     async getPrinter(host, serial, token) {
         return this.printerStore.getPrinter(host, serial, token);
     }
-    // --- getStatus ---
+    async resolveProjectFileMetadata(localThreeMfPath, plateIndex) {
+        const archive = await fs.readFile(localThreeMfPath);
+        const zip = await JSZip.loadAsync(archive);
+        const plateEntries = Object.values(zip.files).filter((entry) => !entry.dir && /^Metadata\/plate_\d+\.gcode$/i.test(entry.name));
+        if (plateEntries.length === 0) {
+            throw new Error("3MF does not contain any Metadata/plate_<n>.gcode entries. Re-slice and export a printable 3MF.");
+        }
+        let selectedEntry = plateEntries.sort((a, b) => a.name.localeCompare(b.name))[0];
+        if (plateIndex !== undefined) {
+            const expectedEntryName = `Metadata/plate_${plateIndex + 1}.gcode`;
+            const matchedEntry = plateEntries.find((entry) => entry.name.toLowerCase() === expectedEntryName.toLowerCase());
+            if (!matchedEntry) {
+                const available = plateEntries.map((entry) => entry.name).join(", ");
+                throw new Error(`Requested plateIndex=${plateIndex} (${expectedEntryName}) not present in 3MF. Available: ${available}`);
+            }
+            selectedEntry = matchedEntry;
+        }
+        const gcodeBuffer = await selectedEntry.async("nodebuffer");
+        const md5 = createHash("md5").update(gcodeBuffer).digest("hex");
+        return {
+            plateFileName: path.posix.basename(selectedEntry.name),
+            plateInternalPath: selectedEntry.name,
+            md5,
+        };
+    }
     async getStatus(host, port, apiKey) {
         const [serial, token] = this.extractBambuCredentials(apiKey);
         try {
             const printer = await this.getPrinter(host, serial, token);
-            // Wait a moment for status data to populate if needed
+            try {
+                await printer.executeCommand(new PushAllCommand());
+            }
+            catch (error) {
+                console.warn("PushAllCommand failed, continuing with cached status", error);
+            }
             if (!printer.data || Object.keys(printer.data).length === 0) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise((resolve) => setTimeout(resolve, 1500));
             }
             const data = printer.data;
             return {
@@ -112,123 +120,209 @@ export class BambuImplementation extends PrinterImplementation {
                 temperatures: {
                     nozzle: {
                         actual: data.nozzle_temper || 0,
-                        target: data.nozzle_target_temper || 0
+                        target: data.nozzle_target_temper || 0,
                     },
                     bed: {
                         actual: data.bed_temper || 0,
-                        target: data.bed_target_temper || 0
+                        target: data.bed_target_temper || 0,
                     },
-                    chamber: data.chamber_temper || data.frame_temper || 0
+                    chamber: data.chamber_temper || data.frame_temper || 0,
                 },
                 print: {
-                    filename: data.subtask_name || "None",
+                    filename: data.subtask_name || data.gcode_file || "None",
                     progress: data.mc_percent || 0,
                     timeRemaining: data.mc_remaining_time || 0,
                     currentLayer: data.layer_num || 0,
-                    totalLayers: data.total_layer_num || 0
+                    totalLayers: data.total_layer_num || 0,
                 },
                 ams: data.ams || null,
                 model: data.model || "Unknown",
-                raw: data // Include raw data for debugging
+                serial,
+                raw: data,
             };
         }
         catch (error) {
-            console.error(`Failed to get BambuClient status for ${serial}:`, error);
+            console.error(`Failed to get Bambu status for ${serial}:`, error);
             return { status: "error", connected: false, error: error.message };
         }
     }
-    // --- print3mf ---
     async print3mf(host, serial, token, options) {
-        console.error("print3mf error: bambu-node library does not directly support the required FTPS file upload for .3mf files.");
-        throw new Error("Printing .3mf files is not supported with the current bambu-node library integration due to missing FTPS capability.");
+        if (!options.filePath.toLowerCase().endsWith(".3mf")) {
+            throw new Error("print3mf requires a .3mf input file.");
+        }
+        const projectMetadata = await this.resolveProjectFileMetadata(options.filePath, options.plateIndex);
+        const remoteProjectPath = `cache/${path.basename(options.filePath)}`;
+        const printer = new BambuPrinter(host, serial, token);
+        try {
+            await printer.manipulateFiles(async (context) => {
+                await context.sendFile(options.filePath, remoteProjectPath);
+            });
+            await printer.connect();
+            await printer.awaitInitialState(10000).catch(() => undefined);
+            printer.printProjectFile(remoteProjectPath, projectMetadata.plateFileName, options.projectName, options.md5 ?? projectMetadata.md5, {
+                bedLeveling: options.bedLeveling,
+                flowCalibration: options.flowCalibration,
+                vibrationCalibration: options.vibrationCalibration,
+                layerInspect: options.layerInspect,
+                timelaspe: options.timelapse,
+            });
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const response = {
+                status: "success",
+                message: `Uploaded and started 3MF print: ${options.projectName}`,
+                remoteProjectPath,
+                plateFile: projectMetadata.plateFileName,
+                platePath: projectMetadata.plateInternalPath,
+                md5: options.md5 ?? projectMetadata.md5,
+            };
+            if (options.useAMS === false) {
+                response.warning =
+                    "bambu-js currently always sends use_ams=true in project_file commands.";
+            }
+            return response;
+        }
+        finally {
+            if (printer.isConnected) {
+                await printer.disconnect().catch(() => undefined);
+            }
+        }
     }
-    // --- cancelJob ---
     async cancelJob(host, port, apiKey) {
         const [serial, token] = this.extractBambuCredentials(apiKey);
         const printer = await this.getPrinter(host, serial, token);
-        console.log(`Attempting to cancel print via bambu-node...`);
         try {
-            // Use UpdateStateCommand with string literal state
-            const command = new UpdateStateCommand({ state: 'stop' });
-            await printer.executeCommand(command);
-            console.log(`Cancel print command successful via bambu-node.`);
+            await printer.executeCommand(new UpdateStateCommand({ state: "stop" }));
             return { status: "success", message: "Cancel command sent successfully." };
         }
-        catch (cancelError) {
-            console.error(`Error sending cancel command via bambu-node:`, cancelError);
-            throw new Error(`Failed to cancel print: ${cancelError.message}`);
+        catch (error) {
+            throw new Error(`Failed to cancel print: ${error.message}`);
         }
     }
-    // --- setTemperature --- (Commenting out due to type issues)
     async setTemperature(host, port, apiKey, component, temperature) {
-        // const [serial, token] = this.extractBambuCredentials(apiKey);
-        // const printer = await this.getPrinter(host, serial, token);
-        // console.log(`Attempting to set temperature for ${component} to ${temperature}°C via bambu-node...`);
-        // try {
-        //     let command;
-        //     const partArg = component.toLowerCase();
-        //     if (partArg === 'extruder' || partArg === 'nozzle') {
-        //         // Use string literal for part. Cast temp due to strict lib types.
-        //         console.warn("Casting temperature to 'any' for UpdateTempCommand.");
-        //         command = new UpdateTempCommand({ part: 'nozzle', temperature: temperature as any });
-        //     } else if (partArg === 'bed') {
-        //         // Use string literal for part. Cast temp due to strict lib types.
-        //          console.warn("Casting temperature to 'any' for UpdateTempCommand.");
-        //         command = new UpdateTempCommand({ part: 'bed', temperature: temperature as any });
-        //     } else {
-        //          throw new Error(`Unsupported temperature component: ${component}. Use 'extruder' or 'bed'.`);
-        //     }
-        //     await printer.executeCommand(command);
-        //     console.log(`Set temperature command successful for ${component}.`);
-        //     return { status: "success", message: `Temperature set command for ${component} sent.` };
-        // } catch (tempError) {
-        //     console.error(`Error sending set temperature command via bambu-node:`, tempError);
-        //     throw new Error(`Failed to set temperature: ${(tempError as Error).message}`);
-        // }
-        console.warn("setTemperature is currently disabled due to type inconsistencies in the bambu-node library.");
-        throw new Error("setTemperature is disabled.");
-    }
-    // --- getFiles --- (Library doesn't seem to expose direct file listing)
-    async getFiles(host, port, apiKey) {
-        console.warn("File listing is not directly supported by bambu-node. Returning empty list.");
-        return { files: [], note: "Not supported by bambu-node library" };
-    }
-    // --- getFile --- (Library doesn't seem to expose direct file metadata/download)
-    async getFile(host, port, apiKey, filename) {
-        console.warn("Getting individual file metadata/content is not directly supported by bambu-node.");
-        return { name: filename, exists: false, note: "Not supported by bambu-node library" };
-    }
-    // --- uploadFile (Handled by print method if supported) ---
-    async uploadFile(host, port, apiKey, filePath, filename, print) {
-        console.warn("Use the 'print_3mf' tool. Direct upload without print is not the primary use case.");
-        if (print) {
-            // Cannot directly call print3mf as it's not supported by this library
-            throw new Error("Cannot initiate print via uploadFile as print_3mf is not supported by bambu-node.");
-            // const [serial, token] = this.extractBambuCredentials(apiKey);
-            // await this.print3mf(host, serial, token, { 
-            //     filePath: filePath, 
-            //     projectName: path.basename(filePath, path.extname(filePath))
-            // });
-            // return { status: "success", message: "Upload and print initiated via print_3mf." };
+        const [serial, token] = this.extractBambuCredentials(apiKey);
+        const printer = await this.getPrinter(host, serial, token);
+        const normalizedComponent = component.toLowerCase();
+        const targetTemperature = Math.round(temperature);
+        if (targetTemperature < 0 || targetTemperature > 300) {
+            throw new Error("Temperature must be between 0 and 300°C.");
+        }
+        let gcode;
+        if (normalizedComponent === "bed") {
+            gcode = `M140 S${targetTemperature}`;
+        }
+        else if (normalizedComponent === "extruder" ||
+            normalizedComponent === "nozzle" ||
+            normalizedComponent === "tool" ||
+            normalizedComponent === "tool0") {
+            gcode = `M104 S${targetTemperature}`;
         }
         else {
-            throw new Error("Uploading without printing is not supported. Use print_3mf (if supported).");
+            throw new Error(`Unsupported temperature component: ${component}. Use one of: bed, nozzle, extruder.`);
         }
+        await printer.executeCommand(new GCodeLineCommand({ gcodes: [gcode] }));
+        return {
+            status: "success",
+            message: `Temperature command sent for ${normalizedComponent}.`,
+            command: gcode,
+        };
     }
-    // --- startJob (Use print method via print_3mf if supported) ---
+    async getFiles(host, port, apiKey) {
+        const [serial, token] = this.extractBambuCredentials(apiKey);
+        const printer = new BambuPrinter(host, serial, token);
+        const directories = ["cache", "timelapse", "logs"];
+        const filesByDirectory = {};
+        await printer.manipulateFiles(async (context) => {
+            for (const directory of directories) {
+                try {
+                    filesByDirectory[directory] = await context.readDir(directory);
+                }
+                catch {
+                    filesByDirectory[directory] = [];
+                }
+            }
+        });
+        const files = Object.entries(filesByDirectory).flatMap(([directory, names]) => names.map((name) => `${directory}/${name}`));
+        return {
+            files,
+            directories: filesByDirectory,
+        };
+    }
+    async getFile(host, port, apiKey, filename) {
+        const [serial, token] = this.extractBambuCredentials(apiKey);
+        const printer = new BambuPrinter(host, serial, token);
+        const normalized = filename.replace(/^\/+/, "");
+        const directory = path.posix.dirname(normalized) === "." ? "cache" : path.posix.dirname(normalized);
+        const baseName = path.posix.basename(normalized);
+        let exists = false;
+        await printer.manipulateFiles(async (context) => {
+            const entries = await context.readDir(directory);
+            exists = entries.includes(baseName);
+        });
+        return {
+            name: `${directory}/${baseName}`,
+            exists,
+        };
+    }
+    async uploadFile(host, port, apiKey, filePath, filename, print) {
+        await fs.access(filePath);
+        const [serial, token] = this.extractBambuCredentials(apiKey);
+        const printer = new BambuPrinter(host, serial, token);
+        const normalizedFileName = filename.replace(/^\/+/, "");
+        const remotePath = normalizedFileName.includes("/")
+            ? normalizedFileName
+            : `cache/${normalizedFileName}`;
+        await printer.manipulateFiles(async (context) => {
+            await context.sendFile(filePath, remotePath);
+        });
+        const response = {
+            status: "success",
+            uploaded: true,
+            remotePath,
+            printRequested: print,
+        };
+        if (print) {
+            if (remotePath.toLowerCase().endsWith(".gcode")) {
+                response.startResult = await this.startJob(host, port, apiKey, remotePath);
+            }
+            else if (remotePath.toLowerCase().endsWith(".3mf")) {
+                response.note =
+                    "3MF upload complete. Use print_3mf to start a project print with plate and metadata options.";
+            }
+            else {
+                throw new Error("Automatic print after upload supports .gcode only. Use print_3mf for .3mf project prints.");
+            }
+        }
+        return response;
+    }
     async startJob(host, port, apiKey, filename) {
-        console.warn("startJob is deprecated for Bambu. Use the 'print_3mf' tool (if supported).");
-        throw new Error("startJob is deprecated for Bambu printers. Use print_3mf (if supported).");
-    }
-    // --- Helper to extract Bambu credentials ---
-    extractBambuCredentials(apiKey) {
-        const parts = apiKey.split(':');
-        if (parts.length !== 2) {
-            throw new Error("Invalid Bambu credentials format. Expected 'serial:token'");
+        if (filename.toLowerCase().endsWith(".3mf")) {
+            throw new Error("Use print_3mf for .3mf project files.");
         }
-        return [parts[0], parts[1]];
+        const [serial, token] = this.extractBambuCredentials(apiKey);
+        const printer = await this.getPrinter(host, serial, token);
+        const normalizedFileName = filename.replace(/^\/+/, "");
+        const remoteFile = normalizedFileName.includes("/")
+            ? normalizedFileName
+            : `cache/${normalizedFileName}`;
+        await printer.executeCommand(new GCodeFileCommand({ fileName: remoteFile }));
+        return {
+            status: "success",
+            message: `Start command sent for ${remoteFile}.`,
+            file: remoteFile,
+        };
     }
-    // Method required by PrinterFactory, disconnects managed printers
+    extractBambuCredentials(apiKey) {
+        const separatorIndex = apiKey.indexOf(":");
+        if (separatorIndex <= 0 || separatorIndex === apiKey.length - 1) {
+            throw new Error("Invalid Bambu credentials format. Expected 'serial:token'.");
+        }
+        const serial = apiKey.slice(0, separatorIndex).trim();
+        const token = apiKey.slice(separatorIndex + 1).trim();
+        if (!serial || !token) {
+            throw new Error("Invalid Bambu credentials format. Expected 'serial:token'.");
+        }
+        return [serial, token];
+    }
     async disconnectAll() {
         await this.printerStore.disconnectAll();
     }

@@ -19,14 +19,11 @@
 <details>
 <summary><strong>✨ What's New / Significant Updates (as of last session)</strong></summary>
 
-- **Bambu `.3mf` Printing:** Added the `print_3mf` tool specifically for Bambu Lab printers. This uploads the `.3mf` file and sends the print command directly via MQTT based on OpenBambuAPI specs.
-- **Direct MQTT Communication (Bambu):** Refactored Bambu command handling (`print_3mf`, `cancelJob`) to use direct MQTT (TLS port 8883) instead of relying solely on `bambu-js` for commands.
-- **`.3mf` File Parsing:** Implemented a parser (`src/3mf_parser.ts`) to read metadata and Bambu-specific slicer settings (from `project_settings.config`) within `.3mf` files.
-- **Bambu Preset Resources:** Added support for reading Bambu Studio preset files (`machine`, `filament`, `process`) as MCP resources (e.g., `preset://bambu/process/MyPreset`) if `BAMBU_STUDIO_CONFIG_PATH` is set.
-- **OrcaSlicer Integration:** Added support for using OrcaSlicer via its command-line interface for the `slice_stl` tool.
-- **New STL Manipulation Tools:** Added `merge_vertices`, `center_model`, and `lay_flat` tools for basic model preparation using `three.js`.
-- **Configuration Update:** Added `BAMBU_STUDIO_CONFIG_PATH` environment variable for preset loading.
-- **FTP Usage Note:** Acknowledged in documentation that file operations for Bambu currently use potentially unsecured FTP via `bambu-js`.
+- **Dual Local Transports:** Added explicit `stdio` and `streamable-http` runtime modes with environment-based transport selection.
+- **Bambu Reliability Pass:** Fixed Bambu argument wiring bugs, added FTP-backed file operations, improved status refresh behavior, and implemented practical command paths for `startJob`, `setTemperature`, and `print_3mf`.
+- **Blender Bridge Tooling:** Added `blender_mcp_edit_model` with optional execution mode for model-edit collaboration workflows.
+- **Transport Behavior Tests:** Added real behavior tests for both transports (`initialize`, `tools/list`, success + failing `tools/call`, origin rejection).
+- **Docker Modernization:** Updated Docker build flow to work without BuildKit-specific features and verified streamable HTTP initialization in container smoke testing.
 
 </details>
 
@@ -88,6 +85,7 @@
   - [Visualization Limitations](#visualization-limitations)
   - [Performance Considerations](#performance-considerations)
   - [Testing Recommendations](#testing-recommendations)
+- [Appendix: MCP in Practice (Code Execution, Scale, and Safety)](#appendix-mcp-in-practice-code-execution-scale-and-safety)
 - [Badges](#badges)
 - [License](#license)
 
@@ -224,6 +222,18 @@ SLICER_PROFILE=/path/to/slicer/profile
 # Example Windows: C:\Users\your_user\AppData\Roaming\BambuStudio\user\YOUR_USER_ID
 # Example Linux: /home/your_user/.config/BambuStudio/user/YOUR_USER_ID
 BAMBU_STUDIO_CONFIG_PATH=
+
+# MCP transport configuration
+MCP_TRANSPORT=stdio             # Options: stdio, streamable-http
+MCP_HTTP_HOST=127.0.0.1
+MCP_HTTP_PORT=3000
+MCP_HTTP_PATH=/mcp
+MCP_HTTP_STATEFUL=true
+MCP_HTTP_JSON_RESPONSE=true
+MCP_HTTP_ALLOWED_ORIGINS=http://localhost
+
+# Optional bridge command for blender_mcp_edit_model execute=true mode
+BLENDER_MCP_BRIDGE_COMMAND=
 ```
 
 ## Usage with Claude Desktop
@@ -749,17 +759,17 @@ Here are some example commands you can give to Claude after connecting the MCP s
 
 Due to the nature of the Bambu Lab printer API, there are some limitations:
 
-1. **Starting prints**: Starting a print requires the 3MF project file path, gcode file name, print name, and MD5 hash. The simplified API in this server doesn't support this fully yet.
+1. **Printable 3MF requirement:** `print_3mf` requires a sliced 3MF that includes at least one `Metadata/plate_<n>.gcode` entry so the server can compute MD5 and start the job correctly.
 
-2. **Temperature control**: The Bambu API doesn't provide direct methods to set temperatures. This would require custom G-code commands.
+2. **AMS behavior caveat:** The current `bambu-js` project-file command path always sends `use_ams=true`; passing `use_ams=false` is treated as best-effort and surfaced with a warning.
 
-3. **File management**: Files must be uploaded to the "gcodes" directory on the printer.
+3. **Temperature control path:** Temperature updates are implemented through G-code command dispatch (`M104`/`M140`) over MQTT, so effective behavior still depends on printer firmware acceptance and current printer state.
 
-4. **FTP Security:** File operations currently use the printer's FTP server, which may be unsecured (plain FTP).
+4. **File transfer channel:** File operations use Bambu's FTPS path (port 990) via `bambu-js`. This is more secure than plain FTP, but still assumes a trusted local network environment and library-managed TLS behavior.
 
-5. **Parameter Overrides:** Only parameters supported by the MQTT `project_file` command can be overridden via the `print_3mf` tool (e.g., AMS usage, calibration flags). Slicer settings like layer height or temperature cannot be changed at print time via this command.
+5. **Direct start path scope:** `startJob` currently targets `.gcode` files on printer storage; `.3mf` jobs should be initiated through `print_3mf` so metadata and plate selection are handled.
 
-6. **Status Updates:** Full real-time status monitoring via MQTT needs further implementation.
+6. **Status consistency:** Status reads force a `pushall` refresh when possible, but complete real-time, event-stream status semantics across all Bambu models still need deeper hardening.
 
 ## Limitations and Considerations
 
@@ -786,6 +796,57 @@ Due to the nature of the Bambu Lab printer API, there are some limitations:
 - Monitor memory usage when processing large files
 - Test modifications on simple geometries before attempting complex ones
 - Consider running on a system with at least 4GB of available RAM for larger operations
+
+## Appendix: MCP in Practice (Code Execution, Scale, and Safety)
+
+Last updated: 2026-02-24
+
+### State of MCP Right Now
+MCP remains a high-value protocol for interoperability, but large tool surfaces have a real downside: tool schemas, retries, and tool-call traces can flood the context window. More tools often means more token overhead unless the execution model is disciplined.
+
+### Why Code Mode / Code Execution Has Become Important
+Recent production workflows increasingly move orchestration out of conversational turns and into executable code loops. This keeps context leaner, makes behavior easier to audit, and improves reproducibility.
+
+Core reading:
+- Cloudflare: https://blog.cloudflare.com/code-mode/
+- Cloudflare: https://blog.cloudflare.com/code-execution-with-mcp/
+- Anthropic: https://www.anthropic.com/engineering/code-execution-with-mcp
+
+### Setup Guidance for Users
+For practical day-to-day use, start with a codemode-oriented gateway and keep direct tool exposure narrow:
+- `codemode-mcp`: https://github.com/jx-codes/codemode-mcp
+- UTCP routing guidance: https://www.utcp.io
+
+Even with strong setup, model/tool usage can still be inconsistent across client versions and model releases, so retries and deterministic fallbacks are still required.
+
+### Peter Steinberger Workflow Pattern
+A high-signal pattern is converting broad MCP toolsets into targeted CLIs so the model calls fewer, better-defined commands:
+- MCPorter: https://github.com/steipete/mcporter
+- OpenClaw: https://github.com/steipete/openclaw
+
+### What Works Best With Which Clients
+- Claude Code, Codex CLI, and Cursor agent modes: strong fit for direct MCP and code-execution workflows.
+- Thin hosted chat clients: usually better when MCP servers are wrapped behind narrower CLIs/gateways.
+- Large multi-tool servers: best when grouped into task-specific wrappers instead of exposing every tool directly.
+
+This ecosystem changes quickly; if you are reading this later, parts of this section may already be stale.
+
+### Prompt Injection: Risks, Consequences, and Mitigations
+Prompt injection is still an open problem for tool-using agents. It is manageable, but not solved.
+
+Primary risks:
+- Hidden malicious instructions in remote content or tool output.
+- Secret exfiltration via unintended network/tool calls.
+- Unauthorized state changes (filesystem, infrastructure, or printer actions).
+
+Practical mitigations:
+- Least-privilege credentials and short-lived tokens.
+- Strict schema validation and explicit allowlists for actions/hosts.
+- Human confirmation gates for destructive operations.
+- Execution sandboxing with resource/time limits.
+- Structured logs and replayable runs for incident response.
+
+Treat tool output as untrusted input by default.
 
 ## Badges
 

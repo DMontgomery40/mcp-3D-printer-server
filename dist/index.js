@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ListResourcesRequestSchema, ReadResourceRequestSchema, ListToolsRequestSchema, CallToolRequestSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
+import { createServer as createHttpServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator } from "./stl/stl-manipulator.js";
@@ -26,15 +29,72 @@ const DEFAULT_SLICER_PROFILE = process.env.SLICER_PROFILE || "";
 // Bambu-specific default values
 const DEFAULT_BAMBU_SERIAL = process.env.BAMBU_SERIAL || "";
 const DEFAULT_BAMBU_TOKEN = process.env.BAMBU_TOKEN || "";
+function parseBooleanEnv(rawValue, fallback) {
+    if (rawValue === undefined) {
+        return fallback;
+    }
+    const value = rawValue.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(value)) {
+        return true;
+    }
+    if (["0", "false", "no", "off"].includes(value)) {
+        return false;
+    }
+    return fallback;
+}
+function parsePort(value, fallback) {
+    if (!value) {
+        return fallback;
+    }
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+        throw new Error(`Invalid MCP_HTTP_PORT value: ${value}`);
+    }
+    return parsed;
+}
+function normalizePath(pathValue) {
+    const value = (pathValue ?? "/mcp").trim();
+    if (!value) {
+        return "/mcp";
+    }
+    return value.startsWith("/") ? value : `/${value}`;
+}
+function parseCsvEnv(value) {
+    if (!value) {
+        return new Set();
+    }
+    const entries = value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+    return new Set(entries);
+}
+function readRuntimeConfig() {
+    const rawTransport = process.env.MCP_TRANSPORT?.trim().toLowerCase();
+    const transport = rawTransport === "streamable-http" || rawTransport === "http"
+        ? "streamable-http"
+        : "stdio";
+    return {
+        transport,
+        httpHost: process.env.MCP_HTTP_HOST?.trim() || "127.0.0.1",
+        httpPort: parsePort(process.env.MCP_HTTP_PORT, 3000),
+        httpPath: normalizePath(process.env.MCP_HTTP_PATH),
+        statefulSession: parseBooleanEnv(process.env.MCP_HTTP_STATEFUL, true),
+        enableJsonResponse: parseBooleanEnv(process.env.MCP_HTTP_JSON_RESPONSE, true),
+        allowedOrigins: parseCsvEnv(process.env.MCP_HTTP_ALLOWED_ORIGINS),
+        blenderBridgeCommand: process.env.BLENDER_MCP_BRIDGE_COMMAND?.trim() || undefined,
+    };
+}
 // Ensure temp directory exists
 if (!fs.existsSync(TEMP_DIR)) {
     fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 class ThreeDPrinterMCPServer {
     constructor() {
+        this.runtimeConfig = readRuntimeConfig();
         this.server = new Server({
             name: "mcp-3d-printer-server",
-            version: "1.0.0"
+            version: "1.2.0"
         }, {
             capabilities: {
                 resources: {},
@@ -50,12 +110,6 @@ class ThreeDPrinterMCPServer {
         this.server.onerror = (error) => {
             console.error("[MCP Error]", error);
         };
-        process.on("SIGINT", async () => {
-            // Disconnect all printers
-            await this.printerFactory.disconnectAll();
-            await this.server.close();
-            process.exit(0);
-        });
     }
     setupHandlers() {
         this.setupResourceHandlers();
@@ -545,6 +599,33 @@ class ThreeDPrinterMCPServer {
                             },
                             required: ["stl_path"]
                         }
+                    },
+                    {
+                        name: "blender_mcp_edit_model",
+                        description: "Optionally send STL-edit instructions to a Blender MCP bridge command. Use for advanced model edits outside built-in STL tools.",
+                        inputSchema: {
+                            type: "object",
+                            properties: {
+                                stl_path: {
+                                    type: "string",
+                                    description: "Path to the local STL file."
+                                },
+                                operations: {
+                                    type: "array",
+                                    description: "Ordered edit operations for Blender (e.g. remesh, boolean, decimate).",
+                                    items: { type: "string" }
+                                },
+                                bridge_command: {
+                                    type: "string",
+                                    description: "Optional override command for invoking a local Blender MCP bridge."
+                                },
+                                execute: {
+                                    type: "boolean",
+                                    description: "When true, attempts to execute bridge command; otherwise returns a prepared payload only."
+                                }
+                            },
+                            required: ["stl_path", "operations"]
+                        }
                     }
                 ]
             };
@@ -908,6 +989,17 @@ class ThreeDPrinterMCPServer {
                         }
                         result = await this.stlManipulator.layFlat(String(args.stl_path));
                         break;
+                    case "blender_mcp_edit_model":
+                        if (!args?.stl_path || !Array.isArray(args.operations)) {
+                            throw new Error("Missing required parameters: stl_path and operations");
+                        }
+                        result = await this.invokeBlenderBridge({
+                            stlPath: String(args.stl_path),
+                            operations: args.operations.map((entry) => String(entry)),
+                            execute: Boolean(args.execute ?? false),
+                            bridgeCommand: args.bridge_command !== undefined ? String(args.bridge_command) : undefined,
+                        });
+                        break;
                     default:
                         throw new Error(`Unknown tool: ${name}`);
                 }
@@ -923,13 +1015,15 @@ class ThreeDPrinterMCPServer {
             catch (error) {
                 console.error(`Error calling tool ${name}:`, error);
                 const errorMessage = error instanceof Error ? error.message : String(error);
+                const structuredError = this.toStructuredToolError(name, errorMessage);
                 return {
                     content: [
                         {
                             type: "text",
-                            text: `Error: ${errorMessage}`
+                            text: `Error: ${errorMessage}\nSuggestion: ${structuredError.suggestion}`
                         }
                     ],
+                    structuredContent: structuredError,
                     isError: true
                 };
             }
@@ -955,7 +1049,8 @@ class ThreeDPrinterMCPServer {
     async getPrinterFile(host, filename, port = DEFAULT_PORT, type = DEFAULT_TYPE, apiKey = DEFAULT_API_KEY, bambuSerial = DEFAULT_BAMBU_SERIAL, bambuToken = DEFAULT_BAMBU_TOKEN) {
         const implementation = this.printerFactory.getImplementation(type);
         if (type.toLowerCase() === "bambu") {
-            return implementation.getFile(host, port, apiKey, bambuSerial, bambuToken, filename);
+            const bambuApiKey = `${bambuSerial}:${bambuToken}`;
+            return implementation.getFile(host, port, bambuApiKey, filename);
         }
         return implementation.getFile(host, port, apiKey, filename);
     }
@@ -966,7 +1061,8 @@ class ThreeDPrinterMCPServer {
         try {
             const implementation = this.printerFactory.getImplementation(type);
             if (type.toLowerCase() === "bambu") {
-                return await implementation.uploadFile(host, port, apiKey, bambuSerial, bambuToken, tempFilePath, filename, print);
+                const bambuApiKey = `${bambuSerial}:${bambuToken}`;
+                return await implementation.uploadFile(host, port, bambuApiKey, tempFilePath, filename, print);
             }
             return await implementation.uploadFile(host, port, apiKey, tempFilePath, filename, print);
         }
@@ -980,39 +1076,230 @@ class ThreeDPrinterMCPServer {
     async startPrint(host, port, type, apiKey, bambuSerial, bambuToken, gcodeFilename) {
         const implementation = this.printerFactory.getImplementation(type);
         if (type.toLowerCase() === "bambu") {
-            // Bambu startJob likely uses G-code filename, not 3MF. 
-            // Keep this as is for starting pre-sliced G-code files.
-            // The print_3mf tool handles starting 3MF prints.
-            return await implementation.startJob(host, port, apiKey, bambuSerial, bambuToken, gcodeFilename);
+            const bambuApiKey = `${bambuSerial}:${bambuToken}`;
+            return await implementation.startJob(host, port, bambuApiKey, gcodeFilename);
         }
         return await implementation.startJob(host, port, apiKey, gcodeFilename);
     }
     async cancelPrint(host, port, type, apiKey, bambuSerial, bambuToken) {
         const implementation = this.printerFactory.getImplementation(type);
         if (type.toLowerCase() === "bambu") {
-            return await implementation.cancelJob(host, port, apiKey, bambuSerial, bambuToken);
+            const bambuApiKey = `${bambuSerial}:${bambuToken}`;
+            return await implementation.cancelJob(host, port, bambuApiKey);
         }
         return await implementation.cancelJob(host, port, apiKey);
     }
     async setPrinterTemperature(host, port, type, apiKey, bambuSerial, bambuToken, component, temperature) {
         const implementation = this.printerFactory.getImplementation(type);
         if (type.toLowerCase() === "bambu") {
-            const bambuImplementation = this.printerFactory.getImplementation('bambu');
-            if (bambuImplementation instanceof BambuImplementation && typeof bambuImplementation.setTemperature === 'function') {
-                return await bambuImplementation.setTemperature(host, bambuSerial, bambuToken, component, temperature);
-            }
-            else {
-                console.warn('setTemperature not fully implemented for Bambu via direct commands yet.');
-                return { status: 'Command sent (implementation pending)' }; // Avoid throwing error if method doesn't exist
-            }
+            const bambuApiKey = `${bambuSerial}:${bambuToken}`;
+            return implementation.setTemperature(host, port, bambuApiKey, component, temperature);
         }
         return implementation.setTemperature(host, port, apiKey, component, temperature);
     }
-    async run() {
+    toStructuredToolError(tool, message) {
+        const isInputError = message.toLowerCase().includes("missing required") ||
+            message.toLowerCase().includes("invalid") ||
+            message.toLowerCase().includes("unsupported");
+        return {
+            status: "error",
+            retryable: !isInputError,
+            suggestion: isInputError
+                ? "Fix tool arguments and retry."
+                : "Retry the call. If it keeps failing, verify printer connectivity and credentials.",
+            message,
+            tool,
+        };
+    }
+    async parseHttpRequestBody(req) {
+        const chunks = [];
+        for await (const chunk of req) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        if (chunks.length === 0) {
+            return undefined;
+        }
+        const rawBody = Buffer.concat(chunks).toString("utf8").trim();
+        if (!rawBody) {
+            return undefined;
+        }
+        return JSON.parse(rawBody);
+    }
+    isAllowedOrigin(req) {
+        const origin = req.headers.origin;
+        if (!origin) {
+            return true;
+        }
+        if (this.runtimeConfig.allowedOrigins.size === 0) {
+            return false;
+        }
+        return this.runtimeConfig.allowedOrigins.has(origin);
+    }
+    async connectStdio() {
         const transport = new StdioServerTransport();
         await this.server.connect(transport);
         console.error("3D Printer MCP server running on stdio transport");
     }
+    async connectStreamableHttp() {
+        if (this.httpRuntime) {
+            return;
+        }
+        const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: this.runtimeConfig.statefulSession ? () => randomUUID() : undefined,
+            enableJsonResponse: this.runtimeConfig.enableJsonResponse
+        });
+        await this.server.connect(transport);
+        const requestHandler = async (req, res) => {
+            try {
+                const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+                if (url.pathname !== this.runtimeConfig.httpPath) {
+                    res.statusCode = 404;
+                    res.setHeader("content-type", "application/json");
+                    res.end(JSON.stringify({ error: "Not Found" }));
+                    return;
+                }
+                if (!this.isAllowedOrigin(req)) {
+                    res.statusCode = 403;
+                    res.setHeader("content-type", "application/json");
+                    res.end(JSON.stringify({ error: "Forbidden origin" }));
+                    return;
+                }
+                const method = req.method?.toUpperCase() ?? "GET";
+                if (!["POST", "GET", "DELETE"].includes(method)) {
+                    res.statusCode = 405;
+                    res.setHeader("allow", "POST, GET, DELETE");
+                    res.setHeader("content-type", "application/json");
+                    res.end(JSON.stringify({ error: "Method Not Allowed" }));
+                    return;
+                }
+                let parsedBody;
+                if (method === "POST") {
+                    try {
+                        parsedBody = await this.parseHttpRequestBody(req);
+                    }
+                    catch {
+                        res.statusCode = 400;
+                        res.setHeader("content-type", "application/json");
+                        res.end(JSON.stringify({ error: "Invalid JSON body" }));
+                        return;
+                    }
+                }
+                await transport.handleRequest(req, res, parsedBody);
+            }
+            catch (error) {
+                console.error("Error handling streamable-http request:", error);
+                if (!res.headersSent) {
+                    res.statusCode = 500;
+                    res.setHeader("content-type", "application/json");
+                    res.end(JSON.stringify({
+                        jsonrpc: "2.0",
+                        error: { code: -32603, message: "Internal server error" },
+                        id: null
+                    }));
+                }
+            }
+        };
+        const httpServer = createHttpServer((req, res) => {
+            void requestHandler(req, res);
+        });
+        await new Promise((resolve, reject) => {
+            httpServer.once("error", reject);
+            httpServer.listen(this.runtimeConfig.httpPort, this.runtimeConfig.httpHost, () => resolve());
+        });
+        this.httpRuntime = { transport, httpServer };
+        console.error(`3D Printer MCP server running on streamable-http at http://${this.runtimeConfig.httpHost}:${this.runtimeConfig.httpPort}${this.runtimeConfig.httpPath}`);
+    }
+    async invokeBlenderBridge(params) {
+        const command = params.bridgeCommand ?? this.runtimeConfig.blenderBridgeCommand;
+        const payload = {
+            modelPath: params.stlPath,
+            operations: params.operations,
+            source: "mcp-3d-printer-server"
+        };
+        if (!params.execute) {
+            return {
+                status: "prepared",
+                message: "Prepared Blender MCP payload. Set execute=true to run bridge command.",
+                bridgeCommand: command ?? null,
+                payload
+            };
+        }
+        if (!command) {
+            throw new Error("execute=true requires bridge_command or BLENDER_MCP_BRIDGE_COMMAND env var.");
+        }
+        const { spawn } = await import("node:child_process");
+        const result = await new Promise((resolve, reject) => {
+            const child = spawn(command, {
+                shell: true,
+                stdio: ["pipe", "pipe", "pipe"]
+            });
+            let stdout = "";
+            let stderr = "";
+            child.stdout.setEncoding("utf8");
+            child.stderr.setEncoding("utf8");
+            child.stdout.on("data", (chunk) => {
+                stdout += chunk;
+            });
+            child.stderr.on("data", (chunk) => {
+                stderr += chunk;
+            });
+            child.on("error", reject);
+            child.on("close", (code) => {
+                if (code === 0) {
+                    resolve({ stdout, stderr });
+                    return;
+                }
+                reject(new Error(`Blender bridge command exited with code ${code ?? "unknown"}${stderr.trim() ? `: ${stderr.trim()}` : ""}`));
+            });
+            child.stdin.write(JSON.stringify(payload));
+            child.stdin.end();
+        });
+        return {
+            status: "executed",
+            bridgeCommand: command,
+            stdout: result.stdout?.toString() ?? "",
+            stderr: result.stderr?.toString() ?? ""
+        };
+    }
+    async close() {
+        await this.printerFactory.disconnectAll();
+        if (this.httpRuntime) {
+            await this.httpRuntime.transport.close();
+            await new Promise((resolve, reject) => {
+                this.httpRuntime?.httpServer.close((error) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+                    resolve();
+                });
+            });
+            this.httpRuntime = undefined;
+        }
+        else {
+            await this.server.close();
+        }
+    }
+    async run() {
+        if (this.runtimeConfig.transport === "streamable-http") {
+            await this.connectStreamableHttp();
+            return;
+        }
+        await this.connectStdio();
+    }
 }
 const server = new ThreeDPrinterMCPServer();
-server.run().catch(console.error);
+const shutdown = async () => {
+    await server.close();
+    process.exit(0);
+};
+process.once("SIGINT", () => {
+    void shutdown();
+});
+process.once("SIGTERM", () => {
+    void shutdown();
+});
+server.run().catch((error) => {
+    console.error("[mcp-3d-printer-server] startup failed:", error);
+    process.exit(1);
+});

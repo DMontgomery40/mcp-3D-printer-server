@@ -12,5 +12,10 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
-} 
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/http-server.ts",
+    "src/sse-server.ts"
+  ]
+}

@@ -79,7 +79,11 @@ export class STLManipulator extends EventEmitter {
       
       // Load the STL data into a Three.js geometry
       const loader = new STLLoader();
-      const geometry = loader.parse(stlData.buffer);
+      const rawArrayBuffer = stlData.buffer.slice(
+        stlData.byteOffset,
+        stlData.byteOffset + stlData.byteLength
+      ) as ArrayBuffer;
+      const geometry = loader.parse(rawArrayBuffer);
       
       // Create a mesh from the geometry
       const material = new THREE.MeshStandardMaterial();
