@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
+import { Client as FTPClient } from "basic-ftp";
 import { BambuPrinter } from "bambu-js";
 import { BambuClient, GCodeFileCommand, GCodeLineCommand, PushAllCommand, UpdateStateCommand, } from "bambu-node";
 class BambuClientStore {
@@ -151,41 +152,56 @@ export class BambuImplementation extends PrinterImplementation {
             throw new Error("print3mf requires a .3mf input file.");
         }
         const projectMetadata = await this.resolveProjectFileMetadata(options.filePath, options.plateIndex);
-        const remoteProjectPath = `cache/${path.basename(options.filePath)}`;
-        const printer = new BambuPrinter(host, serial, token);
-        try {
-            await printer.manipulateFiles(async (context) => {
-                await context.sendFile(options.filePath, remoteProjectPath);
-            });
-            await printer.connect();
-            await printer.awaitInitialState(10000).catch(() => undefined);
-            printer.printProjectFile(remoteProjectPath, projectMetadata.plateFileName, options.projectName, options.md5 ?? projectMetadata.md5, {
-                bedLeveling: options.bedLeveling,
-                flowCalibration: options.flowCalibration,
-                vibrationCalibration: options.vibrationCalibration,
-                layerInspect: options.layerInspect,
-                timelaspe: options.timelapse,
-            });
-            await new Promise((resolve) => setTimeout(resolve, 300));
-            const response = {
-                status: "success",
-                message: `Uploaded and started 3MF print: ${options.projectName}`,
-                remoteProjectPath,
-                plateFile: projectMetadata.plateFileName,
-                platePath: projectMetadata.plateInternalPath,
-                md5: options.md5 ?? projectMetadata.md5,
-            };
-            if (options.useAMS === false) {
-                response.warning =
-                    "bambu-js currently always sends use_ams=true in project_file commands.";
-            }
-            return response;
+        const remoteFileName = path.basename(options.filePath);
+        const remoteProjectPath = `cache/${remoteFileName}`;
+        // Upload via basic-ftp directly (bypasses bambu-js double-path bug)
+        await this.ftpUpload(host, token, options.filePath, `/cache/${remoteFileName}`);
+        // Send project_file command via bambu-node MQTT (bypasses bambu-js
+        // hardcoded use_ams=true and missing ams_mapping support)
+        const printer = await this.getPrinter(host, serial, token);
+        const md5 = options.md5 ?? projectMetadata.md5;
+        // Build AMS mapping per OpenBambuAPI spec: 5-element array
+        // [-1,-1,-1,-1,0] means slot 0 only; pad unused slots with -1
+        let amsMapping;
+        if (options.amsMapping && options.amsMapping.length > 0) {
+            amsMapping = Array.from({ length: 5 }, (_, i) => i < options.amsMapping.length ? options.amsMapping[i] : -1);
         }
-        finally {
-            if (printer.isConnected) {
-                await printer.disconnect().catch(() => undefined);
-            }
+        else {
+            amsMapping = [-1, -1, -1, -1, 0];
         }
+        const projectFileCmd = {
+            print: {
+                command: "project_file",
+                param: `Metadata/${projectMetadata.plateFileName}`,
+                url: `file:///sdcard/${remoteProjectPath}`,
+                subtask_name: options.projectName,
+                md5,
+                flow_cali: options.flowCalibration ?? true,
+                layer_inspect: options.layerInspect ?? true,
+                vibration_cali: options.vibrationCalibration ?? true,
+                bed_leveling: options.bedLeveling ?? true,
+                bed_type: "textured_plate",
+                timelapse: options.timelapse ?? false,
+                use_ams: options.useAMS !== false,
+                ams_mapping: amsMapping,
+                profile_id: "0",
+                project_id: "0",
+                sequence_id: "0",
+                subtask_id: "0",
+                task_id: "0",
+            },
+        };
+        await printer.publish(projectFileCmd);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return {
+            status: "success",
+            message: `Uploaded and started 3MF print: ${options.projectName}`,
+            remoteProjectPath,
+            plateFile: projectMetadata.plateFileName,
+            platePath: projectMetadata.plateInternalPath,
+            md5,
+            amsMapping,
+        };
     }
     async cancelJob(host, port, apiKey) {
         const [serial, token] = this.extractBambuCredentials(apiKey);
@@ -266,14 +282,12 @@ export class BambuImplementation extends PrinterImplementation {
     async uploadFile(host, port, apiKey, filePath, filename, print) {
         await fs.access(filePath);
         const [serial, token] = this.extractBambuCredentials(apiKey);
-        const printer = new BambuPrinter(host, serial, token);
         const normalizedFileName = filename.replace(/^\/+/, "");
         const remotePath = normalizedFileName.includes("/")
             ? normalizedFileName
             : `cache/${normalizedFileName}`;
-        await printer.manipulateFiles(async (context) => {
-            await context.sendFile(filePath, remotePath);
-        });
+        // Use direct FTP upload (bypasses bambu-js double-path bug)
+        await this.ftpUpload(host, token, filePath, `/${remotePath}`);
         const response = {
             status: "success",
             uploaded: true,
@@ -310,6 +324,34 @@ export class BambuImplementation extends PrinterImplementation {
             message: `Start command sent for ${remoteFile}.`,
             file: remoteFile,
         };
+    }
+    /**
+     * Upload a file to the printer via FTP using basic-ftp directly.
+     * Bypasses bambu-js's sendFile which has a double-path bug (ensureDir CDs
+     * into the target directory, then uploadFrom uses the full relative path
+     * again, resulting in e.g. /cache/cache/file.3mf).
+     */
+    async ftpUpload(host, token, localPath, remotePath) {
+        const client = new FTPClient(15000);
+        try {
+            await client.access({
+                host,
+                port: 990,
+                user: "bblp",
+                password: token,
+                secure: "implicit",
+                secureOptions: { rejectUnauthorized: false },
+            });
+            // Use absolute path to avoid CWD side-effects
+            const absoluteRemote = remotePath.startsWith("/") ? remotePath : `/${remotePath}`;
+            const remoteDir = path.posix.dirname(absoluteRemote);
+            await client.ensureDir(remoteDir);
+            // uploadFrom with just the basename since we're already in the right dir
+            await client.uploadFrom(localPath, path.posix.basename(absoluteRemote));
+        }
+        finally {
+            client.close();
+        }
     }
     extractBambuCredentials(apiKey) {
         const separatorIndex = apiKey.indexOf(":");

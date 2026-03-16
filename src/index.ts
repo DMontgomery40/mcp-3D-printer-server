@@ -34,8 +34,8 @@ const DEFAULT_TYPE = process.env.PRINTER_TYPE || "octoprint"; // Default to Octo
 const TEMP_DIR = process.env.TEMP_DIR || path.join(process.cwd(), "temp");
 
 // Slicer configuration
-const DEFAULT_SLICER_TYPE = process.env.SLICER_TYPE || "prusaslicer";
-const DEFAULT_SLICER_PATH = process.env.SLICER_PATH || "";
+const DEFAULT_SLICER_TYPE = process.env.SLICER_TYPE || (process.env.PRINTER_TYPE === "bambu" ? "bambustudio" : "prusaslicer");
+const DEFAULT_SLICER_PATH = process.env.SLICER_PATH || (process.env.PRINTER_TYPE === "bambu" ? "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio" : "");
 const DEFAULT_SLICER_PROFILE = process.env.SLICER_PROFILE || "";
 
 // Bambu-specific default values
@@ -313,17 +313,17 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "slice_stl",
-            description: "Slice an STL file to generate G-code",
+            description: "Slice an STL or 3MF file to generate G-code or sliced 3MF",
             inputSchema: {
               type: "object",
               properties: {
                 stl_path: {
                   type: "string",
-                  description: "Path to the STL file to slice"
+                  description: "Path to the STL or 3MF file to slice"
                 },
                 slicer_type: {
                   type: "string",
-                  description: "Type of slicer to use (prusaslicer, cura, slic3r, orcaslicer) (default: value from env)"
+                  description: "Type of slicer to use (prusaslicer, cura, slic3r, orcaslicer, bambustudio) (default: value from env)"
                 },
                 slicer_path: {
                   type: "string",
@@ -703,7 +703,7 @@ class ThreeDPrinterMCPServer {
       const apiKey = String(args?.api_key || DEFAULT_API_KEY);
       const bambuSerial = String(args?.bambu_serial || DEFAULT_BAMBU_SERIAL);
       const bambuToken = String(args?.bambu_token || DEFAULT_BAMBU_TOKEN);
-      const slicerType = String(args?.slicer_type || DEFAULT_SLICER_TYPE) as 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer';
+      const slicerType = String(args?.slicer_type || DEFAULT_SLICER_TYPE) as 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer' | 'bambustudio';
       const slicerPath = String(args?.slicer_path || DEFAULT_SLICER_PATH);
       const slicerProfile = String(args?.slicer_profile || DEFAULT_SLICER_PROFILE);
 
@@ -1049,8 +1049,30 @@ class ThreeDPrinterMCPServer {
                 throw new Error("Bambu serial number and access token are required for print_3mf.");
             }
             
-            const threeMFPath = String(args.three_mf_path);
-            
+            let threeMFPath = String(args.three_mf_path);
+
+            // Auto-slice if the 3MF doesn't contain gcode
+            try {
+              const JSZip = (await import('jszip')).default;
+              const zipData = fs.readFileSync(threeMFPath);
+              const zip = await JSZip.loadAsync(zipData);
+              const hasGcode = Object.keys(zip.files).some(
+                f => f.match(/Metadata\/plate_\d+\.gcode/i) || f.endsWith('.gcode')
+              );
+              if (!hasGcode) {
+                console.log("3MF has no gcode — auto-slicing with " + slicerType);
+                threeMFPath = await this.stlManipulator.sliceSTL(
+                  threeMFPath,
+                  slicerType,
+                  slicerPath,
+                  slicerProfile || undefined
+                );
+                console.log("Auto-sliced to: " + threeMFPath);
+              }
+            } catch (sliceCheckErr: any) {
+              console.warn("Could not check/slice 3MF, proceeding with original:", sliceCheckErr.message);
+            }
+
             // Define variables needed outside the parse try block
             let implementation: BambuImplementation;
             let threeMfFilename: string;

@@ -843,17 +843,17 @@ export class STLManipulator extends EventEmitter {
   }
 
   /**
-   * Slice an STL file using the specified slicer
-   * @param stlFilePath Path to the input STL file
-   * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer)
+   * Slice an STL or 3MF file using the specified slicer
+   * @param stlFilePath Path to the input STL or 3MF file
+   * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer, bambustudio)
    * @param slicerPath Path to the slicer executable
    * @param slicerProfile Optional path to the slicer profile/config file
    * @param progressCallback Optional callback for progress updates
-   * @returns Path to the generated G-code file
+   * @returns Path to the generated G-code or sliced 3MF file
    */
   async sliceSTL(
     stlFilePath: string,
-    slicerType: 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer',
+    slicerType: 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer' | 'bambustudio',
     slicerPath: string,
     slicerProfile?: string,
     progressCallback?: ProgressCallback
@@ -870,7 +870,7 @@ export class STLManipulator extends EventEmitter {
     }
 
     const outputFileName = path.basename(stlFilePath, '.stl') + '.gcode';
-    const outputFilePath = path.join(this.tempDir, outputFileName);
+    let outputFilePath = path.join(this.tempDir, outputFileName);
 
     let args: string[] = [];
 
@@ -921,6 +921,27 @@ export class STLManipulator extends EventEmitter {
           ];
           if (slicerProfile) {
             args.push('-j', slicerProfile); // Load settings from profile definition file
+          }
+          break;
+
+        case 'bambustudio':
+          // Bambu Studio CLI: slice and export as 3MF with embedded gcode
+          // For 3MF input: slice in place and export sliced 3MF
+          // For STL input: slice and export as 3MF
+          {
+            const is3mf = stlFilePath.toLowerCase().endsWith('.3mf');
+            const outputBase = path.basename(stlFilePath, is3mf ? '.3mf' : '.stl');
+            const bambuOutputPath = path.join(this.tempDir, outputBase + '_sliced.3mf');
+            args = [
+              '--slice', '0',  // Slice all plates
+              '--export-3mf', bambuOutputPath,
+            ];
+            if (slicerProfile) {
+              args.push('--load-settings', slicerProfile);
+            }
+            args.push(stlFilePath);
+            // Override outputFilePath for bambustudio since it produces 3MF, not gcode
+            outputFilePath = bambuOutputPath;
           }
           break;
 

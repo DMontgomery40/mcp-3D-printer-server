@@ -39,6 +39,13 @@ export declare class BambuImplementation extends PrinterImplementation {
         message: string;
         file: string;
     }>;
+    /**
+     * Upload a file to the printer via FTP using basic-ftp directly.
+     * Bypasses bambu-js's sendFile which has a double-path bug (ensureDir CDs
+     * into the target directory, then uploadFrom uses the full relative path
+     * again, resulting in e.g. /cache/cache/file.3mf).
+     */
+    private ftpUpload;
     private extractBambuCredentials;
     disconnectAll(): Promise<void>;
 }

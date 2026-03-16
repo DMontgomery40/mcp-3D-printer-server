@@ -105,7 +105,67 @@ function assertCommonToolPresence(listToolsResult) {
   assert.ok(names.includes("get_printer_status"));
   assert.ok(names.includes("get_stl_info"));
   assert.ok(names.includes("blender_mcp_edit_model"));
+  assert.ok(names.includes("print_3mf"), "print_3mf tool must be registered");
+  assert.ok(names.includes("slice_stl"), "slice_stl tool must be registered");
 }
+
+function assertBambuStudioSlicerSupport(listToolsResult) {
+  const sliceTool = listToolsResult.tools.find((t) => t.name === "slice_stl");
+  assert.ok(sliceTool, "slice_stl tool must exist");
+  const desc = sliceTool.inputSchema?.properties?.slicer_type?.description || "";
+  assert.ok(
+    desc.includes("bambustudio"),
+    `slice_stl slicer_type description must mention bambustudio, got: ${desc}`
+  );
+}
+
+test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", async (t) => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_SERIAL: "TEST_SERIAL",
+      BAMBU_TOKEN: "TEST_TOKEN",
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await client.connect(transport);
+
+  const listToolsResult = await client.listTools();
+  assertBambuStudioSlicerSupport(listToolsResult);
+
+  // print_3mf with a non-existent file should error gracefully
+  const missingFile = await client.callTool({
+    name: "print_3mf",
+    arguments: { three_mf_path: "/tmp/nonexistent_test.3mf" },
+  });
+  assert.equal(missingFile.isError, true);
+
+  // slice_stl description should include bambustudio
+  const sliceTool = listToolsResult.tools.find((t) => t.name === "slice_stl");
+  assert.ok(
+    sliceTool.inputSchema.properties.slicer_type.description.includes("bambustudio"),
+    "bambustudio must appear in slice_stl slicer_type description"
+  );
+
+  // print_3mf tool schema should include ams_mapping
+  const print3mfTool = listToolsResult.tools.find((t) => t.name === "print_3mf");
+  assert.ok(print3mfTool, "print_3mf tool must exist");
+  assert.ok(
+    print3mfTool.inputSchema.properties.ams_mapping,
+    "print_3mf must have ams_mapping property"
+  );
+});
 
 test("stdio transport: initialize, list tools, call success + structured failure", async (t) => {
   const transport = new StdioClientTransport({
