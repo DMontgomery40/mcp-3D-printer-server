@@ -57,7 +57,7 @@
   - [Running with Docker](#running-with-docker)
     - [Using Slicers with Docker](#using-slicers-with-docker)
 - [Configuration](#configuration)
-- [Usage with Claude Desktop](#usage-with-claude-desktop)
+- [Usage](#usage)
 - [Supported Printer Management Systems](#supported-printer-management-systems)
   - [OctoPrint](#octoprint)
   - [Klipper (via Moonraker)](#klipper-via-moonraker)
@@ -85,7 +85,7 @@
   - [Visualization Limitations](#visualization-limitations)
   - [Performance Considerations](#performance-considerations)
   - [Testing Recommendations](#testing-recommendations)
-- [Appendix: MCP in Practice (Code Execution, Scale, and Safety)](#appendix-mcp-in-practice-code-execution-scale-and-safety)
+- [Appendix: MCP Safety Notes](#appendix-mcp-safety-notes)
 - [Badges](#badges)
 - [License](#license)
 
@@ -239,46 +239,55 @@ MCP_HTTP_ALLOWED_ORIGINS=http://localhost
 BLENDER_MCP_BRIDGE_COMMAND=
 ```
 
-## Usage with Claude Desktop
+## Usage
 
-1. Edit your Claude Desktop configuration file:
-
-```json
-{
-  "mcpServers": {
-    "3dprint": {
-      "command": "mcp-3d-printer-server",
-      "env": {
-        "API_KEY": "your_api_key_here",
-        "PRINTER_HOST": "your_printer_ip",
-        "PRINTER_TYPE": "octoprint"
-      }
-    }
-  }
-}
-```
-
-2. For Bambu Labs printers:
+Add this server to your MCP client's config (Claude Desktop, Claude Code, Cursor, Codex CLI, or any MCP-compatible client). The config format is the same everywhere -- an `mcpServers` entry with the command and env vars:
 
 ```json
 {
   "mcpServers": {
     "3dprint": {
-      "command": "mcp-3d-printer-server",
+      "command": "npx",
+      "args": ["-y", "mcp-3d-printer-server"],
       "env": {
         "PRINTER_HOST": "your_printer_ip",
         "PRINTER_TYPE": "bambu",
         "BAMBU_SERIAL": "your_printer_serial",
         "BAMBU_TOKEN": "your_access_token",
-        "BAMBU_MODEL": "p1s"
+        "BAMBU_MODEL": "p1s",
+        "SLICER_TYPE": "bambustudio",
+        "SLICER_PATH": "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio"
       }
     }
   }
 }
 ```
 
-3. Restart Claude Desktop
-4. Connect to your printer through Claude
+For non-Bambu printers, replace the Bambu-specific env vars with `API_KEY` and the appropriate `PRINTER_TYPE` (see [Supported Printer Management Systems](#supported-printer-management-systems)).
+
+Where this config lives depends on your client:
+
+| Client | Config location |
+|--------|----------------|
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Claude Code (project) | `.mcp.json` in project root |
+| Claude Code (global) | `~/.claude/settings.json` |
+| Cursor | MCP settings in Cursor preferences |
+| Codex CLI | MCP config per Codex docs |
+
+Restart your client after editing the config.
+
+### Recommended: use with codemode-mcp
+
+For any MCP server with a large tool surface, wrapping it behind [codemode-mcp](https://github.com/jx-codes/codemode-mcp) dramatically reduces token usage. Instead of exposing every tool definition to the model, codemode lets the agent write code against a two-tool interface (`search()` and `execute()`), loading only the tools it needs on demand.
+
+Anthropic and Cloudflare independently demonstrated this pattern reduces MCP token costs by up to 98%:
+
+- [Code execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic)
+- [Code Mode: give agents an entire API in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/) (Cloudflare)
+
+This applies to all MCP servers, not just this one.
 
 ## Supported Printer Management Systems
 
@@ -805,56 +814,19 @@ Due to the nature of the Bambu Lab printer API, there are some limitations:
 - Test modifications on simple geometries before attempting complex ones
 - Consider running on a system with at least 4GB of available RAM for larger operations
 
-## Appendix: MCP in Practice (Code Execution, Scale, and Safety)
+## Appendix: MCP Safety Notes
 
-Last updated: 2026-02-24
+See [Recommended: use with codemode-mcp](#recommended-use-with-codemode-mcp) for reducing token overhead with large tool surfaces.
 
-### State of MCP Right Now
-MCP remains a high-value protocol for interoperability, but large tool surfaces have a real downside: tool schemas, retries, and tool-call traces can flood the context window. More tools often means more token overhead unless the execution model is disciplined.
+### Prompt Injection: Risks and Mitigations
 
-### Why Code Mode / Code Execution Has Become Important
-Recent production workflows increasingly move orchestration out of conversational turns and into executable code loops. This keeps context leaner, makes behavior easier to audit, and improves reproducibility.
+Prompt injection is an open problem for tool-using agents. Practical mitigations:
 
-Core reading:
-- Cloudflare: https://blog.cloudflare.com/code-mode/
-- Cloudflare: https://blog.cloudflare.com/code-execution-with-mcp/
-- Anthropic: https://www.anthropic.com/engineering/code-execution-with-mcp
-
-### Setup Guidance for Users
-For practical day-to-day use, start with a codemode-oriented gateway and keep direct tool exposure narrow:
-- `codemode-mcp`: https://github.com/jx-codes/codemode-mcp
-- UTCP routing guidance: https://www.utcp.io
-
-Even with strong setup, model/tool usage can still be inconsistent across client versions and model releases, so retries and deterministic fallbacks are still required.
-
-### Peter Steinberger Workflow Pattern
-A high-signal pattern is converting broad MCP toolsets into targeted CLIs so the model calls fewer, better-defined commands:
-- MCPorter: https://github.com/steipete/mcporter
-- OpenClaw: https://github.com/steipete/openclaw
-
-### What Works Best With Which Clients
-- Claude Code, Codex CLI, and Cursor agent modes: strong fit for direct MCP and code-execution workflows.
-- Thin hosted chat clients: usually better when MCP servers are wrapped behind narrower CLIs/gateways.
-- Large multi-tool servers: best when grouped into task-specific wrappers instead of exposing every tool directly.
-
-This ecosystem changes quickly; if you are reading this later, parts of this section may already be stale.
-
-### Prompt Injection: Risks, Consequences, and Mitigations
-Prompt injection is still an open problem for tool-using agents. It is manageable, but not solved.
-
-Primary risks:
-- Hidden malicious instructions in remote content or tool output.
-- Secret exfiltration via unintended network/tool calls.
-- Unauthorized state changes (filesystem, infrastructure, or printer actions).
-
-Practical mitigations:
 - Least-privilege credentials and short-lived tokens.
 - Strict schema validation and explicit allowlists for actions/hosts.
 - Human confirmation gates for destructive operations.
 - Execution sandboxing with resource/time limits.
-- Structured logs and replayable runs for incident response.
-
-Treat tool output as untrusted input by default.
+- Treat tool output as untrusted input by default.
 
 ## Badges
 
