@@ -4,6 +4,7 @@ interface BambuPrintOptionsInternal {
     filePath: string;
     useAMS?: boolean;
     plateIndex?: number;
+    bedType?: string;
     bedLeveling?: boolean;
     flowCalibration?: boolean;
     vibrationCalibration?: boolean;

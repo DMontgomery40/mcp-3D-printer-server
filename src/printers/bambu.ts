@@ -18,6 +18,7 @@ interface BambuPrintOptionsInternal {
   filePath: string;
   useAMS?: boolean;
   plateIndex?: number;
+  bedType?: string;
   bedLeveling?: boolean;
   flowCalibration?: boolean;
   vibrationCalibration?: boolean;
@@ -261,7 +262,7 @@ export class BambuImplementation extends PrinterImplementation {
         layer_inspect: options.layerInspect ?? true,
         vibration_cali: options.vibrationCalibration ?? true,
         bed_leveling: options.bedLeveling ?? true,
-        bed_type: "textured_plate",
+        bed_type: options.bedType || "textured_plate",
         timelapse: options.timelapse ?? false,
         use_ams: options.useAMS !== false,
         ams_mapping: amsMapping,

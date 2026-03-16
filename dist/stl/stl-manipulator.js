@@ -652,7 +652,7 @@ export class STLManipulator extends EventEmitter {
      * @param progressCallback Optional callback for progress updates
      * @returns Path to the generated G-code or sliced 3MF file
      */
-    async sliceSTL(stlFilePath, slicerType, slicerPath, slicerProfile, progressCallback) {
+    async sliceSTL(stlFilePath, slicerType, slicerPath, slicerProfile, progressCallback, printerPreset) {
         const operationId = this.generateOperationId();
         this.activeOperations.set(operationId, true);
         if (!fs.existsSync(slicerPath)) {
@@ -724,6 +724,10 @@ export class STLManipulator extends EventEmitter {
                             '--slice', '0', // Slice all plates
                             '--export-3mf', bambuOutputPath,
                         ];
+                        // --load-machine ensures correct G-code for the specific printer model
+                        if (printerPreset && !slicerProfile) {
+                            args.push('--load-machine', printerPreset);
+                        }
                         if (slicerProfile) {
                             args.push('--load-settings', slicerProfile);
                         }

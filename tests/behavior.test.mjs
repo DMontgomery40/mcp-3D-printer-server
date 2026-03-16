@@ -129,6 +129,7 @@ test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", a
       PRINTER_TYPE: "bambu",
       BAMBU_SERIAL: "TEST_SERIAL",
       BAMBU_TOKEN: "TEST_TOKEN",
+      BAMBU_MODEL: "", // Explicitly empty to override dotenv
     },
     stderr: "pipe",
   });
@@ -144,12 +145,41 @@ test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", a
   const listToolsResult = await client.listTools();
   assertBambuStudioSlicerSupport(listToolsResult);
 
-  // print_3mf with a non-existent file should error gracefully
-  const missingFile = await client.callTool({
+  // print_3mf without bambu_model should error about model, not crash
+  const noModelResult = await client.callTool({
     name: "print_3mf",
     arguments: { three_mf_path: "/tmp/nonexistent_test.3mf" },
   });
-  assert.equal(missingFile.isError, true);
+  assert.equal(noModelResult.isError, true);
+  const noModelError = noModelResult.content?.[0]?.text || "";
+  assert.ok(
+    noModelError.toLowerCase().includes("bambu_model") || noModelError.toLowerCase().includes("model"),
+    `Error must mention model is required, got: ${noModelError}`
+  );
+
+  // print_3mf with invalid model should reject
+  const badModelResult = await client.callTool({
+    name: "print_3mf",
+    arguments: { three_mf_path: "/tmp/nonexistent_test.3mf", bambu_model: "ender3" },
+  });
+  assert.equal(badModelResult.isError, true);
+  const badModelError = badModelResult.content?.[0]?.text || "";
+  assert.ok(
+    badModelError.toLowerCase().includes("invalid") || badModelError.toLowerCase().includes("valid models"),
+    `Error must reject invalid model, got: ${badModelError}`
+  );
+
+  // print_3mf with valid model should get past model validation (error about file instead)
+  const validModelResult = await client.callTool({
+    name: "print_3mf",
+    arguments: { three_mf_path: "/tmp/nonexistent_test.3mf", bambu_model: "p1s" },
+  });
+  assert.equal(validModelResult.isError, true);
+  const validModelError = validModelResult.content?.[0]?.text || "";
+  assert.ok(
+    !validModelError.toLowerCase().includes("bambu_model"),
+    `With valid model, error should be about file not model, got: ${validModelError}`
+  );
 
   // slice_stl description should include bambustudio
   const sliceTool = listToolsResult.tools.find((t) => t.name === "slice_stl");
@@ -158,12 +188,62 @@ test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", a
     "bambustudio must appear in slice_stl slicer_type description"
   );
 
-  // print_3mf tool schema should include ams_mapping
+  // print_3mf tool schema should include ams_mapping and bambu_model
   const print3mfTool = listToolsResult.tools.find((t) => t.name === "print_3mf");
   assert.ok(print3mfTool, "print_3mf tool must exist");
   assert.ok(
     print3mfTool.inputSchema.properties.ams_mapping,
     "print_3mf must have ams_mapping property"
+  );
+  assert.ok(
+    print3mfTool.inputSchema.properties.bambu_model,
+    "print_3mf must have bambu_model property"
+  );
+  assert.ok(
+    print3mfTool.inputSchema.required.includes("bambu_model"),
+    "bambu_model must be required in print_3mf schema"
+  );
+  assert.deepEqual(
+    print3mfTool.inputSchema.properties.bambu_model.enum,
+    ["p1s", "p1p", "x1c", "x1e", "a1", "a1mini", "h2d"],
+    "bambu_model enum must list all valid models"
+  );
+});
+
+test("printer model safety: BAMBU_MODEL env var accepted as default", async (t) => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_SERIAL: "TEST_SERIAL",
+      BAMBU_TOKEN: "TEST_TOKEN",
+      BAMBU_MODEL: "p1s",
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await client.connect(transport);
+
+  // With BAMBU_MODEL=p1s env, print_3mf without explicit model should
+  // get past model validation (error about file, not model)
+  const result = await client.callTool({
+    name: "print_3mf",
+    arguments: { three_mf_path: "/tmp/nonexistent_test.3mf" },
+  });
+  assert.equal(result.isError, true);
+  const errorText = result.content?.[0]?.text || "";
+  assert.ok(
+    !errorText.toLowerCase().includes("bambu_model"),
+    `With BAMBU_MODEL env, error should be about file not model, got: ${errorText}`
   );
 });
 

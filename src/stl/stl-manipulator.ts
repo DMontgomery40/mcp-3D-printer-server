@@ -856,7 +856,8 @@ export class STLManipulator extends EventEmitter {
     slicerType: 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer' | 'bambustudio',
     slicerPath: string,
     slicerProfile?: string,
-    progressCallback?: ProgressCallback
+    progressCallback?: ProgressCallback,
+    printerPreset?: string
   ): Promise<string> {
     const operationId = this.generateOperationId();
     this.activeOperations.set(operationId, true);
@@ -936,6 +937,10 @@ export class STLManipulator extends EventEmitter {
               '--slice', '0',  // Slice all plates
               '--export-3mf', bambuOutputPath,
             ];
+            // --load-machine ensures correct G-code for the specific printer model
+            if (printerPreset && !slicerProfile) {
+              args.push('--load-machine', printerPreset);
+            }
             if (slicerProfile) {
               args.push('--load-settings', slicerProfile);
             }

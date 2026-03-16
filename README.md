@@ -211,9 +211,12 @@ TEMP_DIR=/path/to/temp/dir
 # Bambu Labs specific configuration
 BAMBU_SERIAL=your_printer_serial # REQUIRED for Bambu
 BAMBU_TOKEN=your_access_token    # REQUIRED for Bambu
+BAMBU_MODEL=p1s                  # REQUIRED for Bambu: p1s, p1p, x1c, x1e, a1, a1mini, h2d
+BED_TYPE=textured_plate          # Bed plate: textured_plate, cool_plate, engineering_plate, hot_plate
+NOZZLE_DIAMETER=0.4              # Nozzle diameter in mm (default: 0.4)
 
 # Slicer configuration (for slice_stl tool)
-SLICER_TYPE=prusaslicer  # Options: prusaslicer, cura, slic3r, orcaslicer
+SLICER_TYPE=prusaslicer  # Options: prusaslicer, cura, slic3r, orcaslicer, bambustudio
 SLICER_PATH=/path/to/slicer/executable
 SLICER_PROFILE=/path/to/slicer/profile
 
@@ -266,7 +269,8 @@ BLENDER_MCP_BRIDGE_COMMAND=
         "PRINTER_HOST": "your_printer_ip",
         "PRINTER_TYPE": "bambu",
         "BAMBU_SERIAL": "your_printer_serial",
-        "BAMBU_TOKEN": "your_access_token"
+        "BAMBU_TOKEN": "your_access_token",
+        "BAMBU_MODEL": "p1s"
       }
     }
   }
@@ -311,8 +315,9 @@ Repetier-Server is a host software for 3D printers.
 Bambu Lab printers use MQTT for status and control and FTP for file operations.
 
 - Authentication: Serial number and access token required (set `BAMBU_SERIAL` and `BAMBU_TOKEN`)
-- Requirements: Printer must be on the same network or have cloud connection enabled
-- Compatible with: X1C, P1S, P1P, A1, and other Bambu Lab printers
+- Printer model: **Required** (set `BAMBU_MODEL`). Valid values: `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`. This ensures the slicer generates correct G-code for your specific printer.
+- Requirements: Printer must be on the same network with Developer Mode and LAN Only Mode enabled
+- Compatible with: X1C, X1E, P1S, P1P, A1, A1 Mini, H2D
 
 #### Finding Your Bambu Printer's Serial Number and Access Token
 
@@ -671,19 +676,22 @@ Set the temperature of a printer component.
 
 Uploads a `.3mf` file to a Bambu printer via FTP and initiates the print job via an MQTT command. Allows overriding some print parameters like AMS mapping.
 
+**`bambu_model` is required** -- it ensures the slicer generates G-code for the correct printer. Using the wrong model can cause the bed to crash into the nozzle and damage the printer. If not provided in the tool call and `BAMBU_MODEL` is not set in the environment, the server will ask interactively via MCP elicitation (if supported by your client) or return a clear error.
+
 ```json
 {
   "three_mf_path": "/path/to/your_model.3mf",
-  "host": "your_bambu_ip", // Optional if default is set
-  "bambu_serial": "YOUR_SERIAL", // Optional if default is set
-  "bambu_token": "YOUR_TOKEN", // Optional if default is set
-  // Optional Overrides:
-  "use_ams": true, // Default: true
-  "ams_mapping": [0, 1, 2, 3], // Array of AMS slot indices to use
-  "bed_leveling": true, // Default: true
-  "flow_calibration": false, // Default: false
-  "vibration_calibration": false, // Default: false
-  "timelapse": false // Default: false
+  "bambu_model": "p1s",
+  "bed_type": "textured_plate",
+  "host": "your_bambu_ip",
+  "bambu_serial": "YOUR_SERIAL",
+  "bambu_token": "YOUR_TOKEN",
+  "use_ams": true,
+  "ams_mapping": [0, 1, 2, 3],
+  "bed_leveling": true,
+  "flow_calibration": false,
+  "vibration_calibration": false,
+  "timelapse": false
 }
 ```
 
