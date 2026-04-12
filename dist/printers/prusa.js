@@ -61,6 +61,7 @@ export class PrusaImplementation extends PrinterImplementation {
     }
     async getStatus(host, port, apiKey) {
         const response = await this.getWithFallback(host, port, apiKey, [
+            "/api/v1/status",
             "/api/v1/printer",
             "/api/printer",
         ]);
