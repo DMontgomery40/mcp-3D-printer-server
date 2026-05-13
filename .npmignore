@@ -1,0 +1,12 @@
+# Local-only Codex/agent guidance should not ship in the npm package.
+AGENTS.md
+
+# Untracked scratch/test artifacts from local validation.
+src/test/Tape+Card+55mm+Ring.stl
+test/Tape-Card-55mm-Ring.stl
+
+# Stale transport experiment files are not part of the runtime entrypoint.
+src/http-server.ts
+src/sse-server.ts
+dist/http-server.*
+dist/sse-server.*

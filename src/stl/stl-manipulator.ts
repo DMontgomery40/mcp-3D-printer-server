@@ -11,6 +11,7 @@ import { execFile } from 'child_process';
 
 const readFileAsync = promisify(fs.readFile);
 const writeFileAsync = promisify(fs.writeFile);
+const DEFAULT_SLICER_TIMEOUT_MS = 10 * 60 * 1000;
 
 // Define types for progress tracking
 export type ProgressCallback = (progress: number, message?: string) => void;
@@ -20,6 +21,14 @@ export type OperationResult = {
   error?: string;
   operationId: string;
 };
+
+export type SlicerType =
+  | 'prusaslicer'
+  | 'cura'
+  | 'slic3r'
+  | 'orcaslicer'
+  | 'orcaslicer-bambulab'
+  | 'bambustudio';
 
 // Define possible transformation operations
 export type TransformationType = 'scale' | 'rotate' | 'translate' | 'extendBase' | 'customModify';
@@ -58,6 +67,75 @@ export class STLManipulator extends EventEmitter {
    */
   private generateOperationId(): string {
     return crypto.randomUUID();
+  }
+
+  private validateSlicerExecutable(slicerPath: string): void {
+    if (!slicerPath.trim()) {
+      throw new Error("Slicer executable path is required.");
+    }
+
+    const looksLikePath = path.isAbsolute(slicerPath) || /[\\/]/.test(slicerPath);
+    if (looksLikePath && !fs.existsSync(slicerPath)) {
+      throw new Error(`Slicer executable not found at: ${slicerPath}`);
+    }
+  }
+
+  private resolveBambuMachinePresetPath(slicerPath: string, printerPreset: string): string {
+    if (fs.existsSync(printerPreset)) {
+      return printerPreset;
+    }
+
+    const presetFile = printerPreset.endsWith(".json") ? printerPreset : `${printerPreset}.json`;
+    const candidateDirs: string[] = [];
+    const macAppMarker = `${path.sep}Contents${path.sep}MacOS${path.sep}`;
+    const macAppIndex = slicerPath.indexOf(macAppMarker);
+
+    if (macAppIndex >= 0) {
+      candidateDirs.push(
+        path.join(
+          slicerPath.slice(0, macAppIndex + `${path.sep}Contents`.length),
+          "Resources",
+          "profiles",
+          "BBL",
+          "machine"
+        )
+      );
+    }
+
+    const executableDir = path.dirname(slicerPath);
+    candidateDirs.push(
+      path.join(executableDir, "..", "Resources", "profiles", "BBL", "machine"),
+      path.join(executableDir, "..", "share", "OrcaSlicer", "resources", "profiles", "BBL", "machine"),
+      path.join(executableDir, "..", "resources", "profiles", "BBL", "machine"),
+      path.join(executableDir, "resources", "profiles", "BBL", "machine")
+    );
+
+    for (const candidateDir of candidateDirs) {
+      const candidate = path.resolve(candidateDir, presetFile);
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    throw new Error(
+      `Could not find Bambu machine preset "${presetFile}" near slicer executable ${slicerPath}. ` +
+      "Pass slicer_profile with an explicit machine/process settings file, or use a slicer bundle that includes Resources/profiles/BBL/machine."
+    );
+  }
+
+  private resolveSlicerTimeoutMs(): number {
+    const rawTimeout = process.env.SLICER_TIMEOUT_MS?.trim();
+    if (!rawTimeout) {
+      return DEFAULT_SLICER_TIMEOUT_MS;
+    }
+
+    const timeoutMs = Number(rawTimeout);
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      console.warn(`Invalid SLICER_TIMEOUT_MS value "${rawTimeout}", using ${DEFAULT_SLICER_TIMEOUT_MS}.`);
+      return DEFAULT_SLICER_TIMEOUT_MS;
+    }
+
+    return timeoutMs;
   }
 
   /**
@@ -845,7 +923,7 @@ export class STLManipulator extends EventEmitter {
   /**
    * Slice an STL or 3MF file using the specified slicer
    * @param stlFilePath Path to the input STL or 3MF file
-   * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer, bambustudio)
+   * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer, orcaslicer-bambulab, bambustudio)
    * @param slicerPath Path to the slicer executable
    * @param slicerProfile Optional path to the slicer profile/config file
    * @param progressCallback Optional callback for progress updates
@@ -853,7 +931,7 @@ export class STLManipulator extends EventEmitter {
    */
   async sliceSTL(
     stlFilePath: string,
-    slicerType: 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer' | 'bambustudio',
+    slicerType: SlicerType,
     slicerPath: string,
     slicerProfile?: string,
     progressCallback?: ProgressCallback,
@@ -862,9 +940,7 @@ export class STLManipulator extends EventEmitter {
     const operationId = this.generateOperationId();
     this.activeOperations.set(operationId, true);
 
-    if (!fs.existsSync(slicerPath)) {
-      throw new Error(`Slicer executable not found at: ${slicerPath}`);
-    }
+    this.validateSlicerExecutable(slicerPath);
     if (slicerProfile && !fs.existsSync(slicerProfile)) {
         console.warn(`Slicer profile specified but not found: ${slicerProfile}. Slicer might use defaults.`);
         // Allow proceeding without profile, slicer might handle it
@@ -925,8 +1001,10 @@ export class STLManipulator extends EventEmitter {
           }
           break;
 
+        case 'orcaslicer-bambulab':
         case 'bambustudio':
-          // Bambu Studio CLI: slice and export as 3MF with embedded gcode
+          // Bambu project slicers: slice and export as 3MF with embedded gcode.
+          // orcaslicer-bambulab is the FULU fork that restores BambuNetwork support.
           // For 3MF input: slice in place and export sliced 3MF
           // For STL input: slice and export as 3MF
           {
@@ -937,9 +1015,9 @@ export class STLManipulator extends EventEmitter {
               '--slice', '0',  // Slice all plates
               '--export-3mf', bambuOutputPath,
             ];
-            // --load-machine ensures correct G-code for the specific printer model
+            // FULU Orca/Bambu Studio load machine presets as JSON settings files.
             if (printerPreset && !slicerProfile) {
-              args.push('--load-machine', printerPreset);
+              args.push('--load-settings', this.resolveBambuMachinePresetPath(slicerPath, printerPreset));
             }
             if (slicerProfile) {
               args.push('--load-settings', slicerProfile);
@@ -959,19 +1037,48 @@ export class STLManipulator extends EventEmitter {
 
       // Execute the slicer
       await new Promise<void>((resolve, reject) => {
+        const timeoutMs = this.resolveSlicerTimeoutMs();
+        let settled = false;
+        let slicerProcessKilledByTimeout = false;
+        let timeoutHandle: NodeJS.Timeout | undefined;
+
+        const settle = (callback: () => void) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+          }
+          callback();
+        };
+
         const process = execFile(slicerPath, args, (error, stdout, stderr) => {
           if (error) {
             console.error(`Slicer Error: ${error.message}`);
             console.error(`Slicer Stderr: ${stderr}`);
-            reject(new Error(`Slicer failed: ${error.message}. Stderr: ${stderr}`));
+            const timeoutMessage = slicerProcessKilledByTimeout
+              ? ` Slicer exceeded timeout ${timeoutMs}ms.`
+              : "";
+            settle(() => reject(new Error(`Slicer failed: ${error.message}.${timeoutMessage} Stderr: ${stderr}`)));
           } else {
             console.log(`Slicer Stdout: ${stdout}`);
              if (stderr) {
                  console.warn(`Slicer Stderr: ${stderr}`); // Log stderr even on success
              }
-            resolve();
+            settle(() => resolve());
           }
         });
+
+        timeoutHandle = setTimeout(() => {
+          slicerProcessKilledByTimeout = true;
+          try {
+            process.kill("SIGKILL");
+          } catch (killError) {
+            console.error("Error attempting to kill timed-out slicer process:", killError);
+          }
+          settle(() => reject(new Error(`Slicer exceeded timeout ${timeoutMs}ms.`)));
+        }, timeoutMs);
 
         // Optional: Add listeners for stdout/stderr for real-time progress if slicer provides it
         // process.stdout?.on('data', (data) => { console.log(`Slicer stdout: ${data}`); });
@@ -983,10 +1090,10 @@ export class STLManipulator extends EventEmitter {
                clearInterval(checkCancel);
                try {
                    process.kill(); // Attempt to kill the slicer process
-                   reject(new Error("Slicing operation cancelled"));
+                   settle(() => reject(new Error("Slicing operation cancelled")));
                } catch (killError) {
                    console.error("Error attempting to kill slicer process:", killError);
-                   reject(new Error("Slicing operation cancelled, but failed to kill process."));
+                   settle(() => reject(new Error("Slicing operation cancelled, but failed to kill process.")));
                }
            }
        }, 500); 

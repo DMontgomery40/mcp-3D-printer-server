@@ -1,4 +1,7 @@
 
+## Thank You To FULU And Louis Rossmann
+
+Thank you to the [FULU Foundation](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) and [Louis Rossmann](https://www.youtube.com/@rossmanngroup) for standing up for consumer ownership, open source developers, repair rights, and users who should not have working hardware made worse by locked-down software. This MCP server treats the FULU OrcaSlicer-bambulab fork as a first-class Bambu project slicer target.
 
 # MCP 3D Printer Server
 
@@ -20,6 +23,7 @@
 <summary><strong>✨ What's New / Significant Updates (as of last session)</strong></summary>
 
 - **Dual Local Transports:** Added explicit `stdio` and `streamable-http` runtime modes with environment-based transport selection.
+- **FULU OrcaSlicer-bambulab Support:** Added `orcaslicer-bambulab` / `fulu_orca` slicer support for Bambu project 3MF export, and made it the default Bambu slicer target when no slicer is configured.
 - **Bambu Reliability Pass:** Fixed Bambu argument wiring bugs, added FTP-backed file operations, improved status refresh behavior, and implemented practical command paths for `startJob`, `setTemperature`, and `print_3mf`.
 - **Blender Bridge Tooling:** Added `blender_mcp_edit_model` with optional execution mode for model-edit collaboration workflows.
 - **Transport Behavior Tests:** Added real behavior tests for both transports (`initialize`, `tools/list`, success + failing `tools/call`, origin rejection).
@@ -128,6 +132,8 @@ This server is a Model Context Protocol (MCP) server for connecting Claude with 
 - Confirm temperature settings in G-code files
 - Complete end-to-end workflow from STL modification to printing
 - Print `.3mf` files directly on Bambu Lab printers (via MQTT command)
+- Slice Bambu projects with FULU OrcaSlicer-bambulab (`SLICER_TYPE=orcaslicer-bambulab`) and auto-slice unsliced 3MF files before Bambu printing when a project slicer is configured
+- Inspect and probe the FULU BambuNetwork runtime (`check_fulu_orca_setup`) and call safe-by-default FULU bridge RPC methods for diagnostics and development (`fulu_bambu_network_rpc`)
 - Read Bambu Studio preset files (printer, filament, process) as resources
 
 ## Installation
@@ -169,12 +175,12 @@ Please note that the default Docker setup **cannot directly use a slicer install
 
 The recommended approach is to **install your preferred slicer *inside* the Docker image**. This makes the container self-sufficient.
 
-To do this, you will need to modify the `Dockerfile`. Here's a conceptual example of how you might add PrusaSlicer or OrcaSlicer (specific commands may vary depending on the slicer, its dependencies, and current Alpine packages):
+To do this, you will need to modify the `Dockerfile`. Here's a conceptual example of how you might add PrusaSlicer, OrcaSlicer, or the FULU OrcaSlicer-bambulab build (specific commands may vary depending on the slicer, its dependencies, and current Alpine packages):
 
 ```dockerfile
 # ... other Dockerfile commands ...
 
-# Example: Install PrusaSlicer or OrcaSlicer (adjust command as needed)
+# Example: Install PrusaSlicer, OrcaSlicer, or FULU OrcaSlicer-bambulab (adjust command as needed)
 # Check Alpine package repositories first (e.g., apk add prusaslicer or apk add orcaslicer)
 # If not available, download and install manually (e.g., AppImage):
 # RUN apk add --no-cache fuse # FUSE might be needed for AppImages
@@ -188,7 +194,7 @@ ENV SLICER_PATH=/usr/local/bin/orcaslicer
 # ... rest of Dockerfile ...
 ```
 
-After modifying the `Dockerfile`, rebuild your image (`docker-compose build`). You'll also need to ensure the `SLICER_PATH` environment variable in your `.env` file or `docker-compose.yml` points to the correct path *inside the container* (e.g., `/usr/local/bin/orcaslicer`). Set `SLICER_TYPE` to `orcaslicer` as well.
+After modifying the `Dockerfile`, rebuild your image (`docker-compose build`). You'll also need to ensure the `SLICER_PATH` environment variable in your `.env` file or `docker-compose.yml` points to the correct path *inside the container* (e.g., `/usr/local/bin/orcaslicer`). For the FULU Bambu-enabled fork, set `SLICER_TYPE=orcaslicer-bambulab`.
 
 Apologies for not including a specific slicer out-of-the-box, but given the wide variety of slicers (PrusaSlicer, OrcaSlicer, Cura, etc.) and configurations available, pre-installing one would unnecessarily bloat the image for many users. If a particular slicer becomes a very common request, I can certainly look into adding official support for it in a future version.
 
@@ -216,9 +222,22 @@ BED_TYPE=textured_plate          # Bed plate: textured_plate, cool_plate, engine
 NOZZLE_DIAMETER=0.4              # Nozzle diameter in mm (default: 0.4)
 
 # Slicer configuration (for slice_stl tool)
-SLICER_TYPE=prusaslicer  # Options: prusaslicer, cura, slic3r, orcaslicer, bambustudio
+# For Bambu projects, the default is orcaslicer-bambulab unless SLICER_TYPE is set.
+SLICER_TYPE=orcaslicer-bambulab  # Options: prusaslicer, cura, slic3r, orcaslicer, orcaslicer-bambulab, bambustudio
 SLICER_PATH=/path/to/slicer/executable
 SLICER_PROFILE=/path/to/slicer/profile
+
+# Optional aliases for FULU OrcaSlicer-bambulab when SLICER_PATH is not set
+FULU_ORCA_PATH=/path/to/FULU/OrcaSlicer
+ORCASLICER_BAMBULAB_PATH=/path/to/FULU/OrcaSlicer
+FULU_ORCA_PLUGIN_DIR=/path/to/FULU/OrcaSlicer.app/Contents/MacOS
+ORCASLICER_BAMBULAB_PLUGIN_DIR=/path/to/FULU/OrcaSlicer.app/Contents/MacOS
+
+# Optional FULU BambuNetwork bridge runtime
+# macOS default runtime dir:
+# /Users/you/Library/Application Support/OrcaSlicer/macos-bridge/runtime
+PJARCZAK_MAC_RUNTIME_DIR=
+FULU_BAMBU_BRIDGE_COMMAND=
 
 # Optional: Path to Bambu Studio user config dir (for loading presets)
 # Example macOS: /Users/your_user/Library/Application Support/BambuStudio/user/YOUR_USER_ID
@@ -255,8 +274,9 @@ Add this server to your MCP client's config (Claude Desktop, Claude Code, Cursor
         "BAMBU_SERIAL": "your_printer_serial",
         "BAMBU_TOKEN": "your_access_token",
         "BAMBU_MODEL": "p1s",
-        "SLICER_TYPE": "bambustudio",
-        "SLICER_PATH": "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio"
+        "SLICER_TYPE": "orcaslicer-bambulab",
+        "SLICER_PATH": "/path/to/FULU/OrcaSlicer",
+        "FULU_ORCA_PLUGIN_DIR": "/Applications/OrcaSlicer.app/Contents/MacOS"
       }
     }
   }
@@ -264,6 +284,145 @@ Add this server to your MCP client's config (Claude Desktop, Claude Code, Cursor
 ```
 
 For non-Bambu printers, replace the Bambu-specific env vars with `API_KEY` and the appropriate `PRINTER_TYPE` (see [Supported Printer Management Systems](#supported-printer-management-systems)).
+
+### FULU OrcaSlicer-bambulab
+
+Use [`FULU-Foundation/OrcaSlicer-bambulab`](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) as the first-class Bambu project slicer by setting:
+
+```env
+PRINTER_TYPE=bambu
+SLICER_TYPE=orcaslicer-bambulab
+SLICER_PATH=/path/to/FULU/OrcaSlicer
+FULU_ORCA_PLUGIN_DIR=/path/to/FULU/runtime/payload
+BAMBU_MODEL=p1s
+```
+
+Accepted aliases include `fulu_orca`, `fulu-orca`, `orca-studio`, and `orca_bambulab`. For Bambu printers, this is the default slicer family when `SLICER_TYPE` is not set.
+
+What the integration does:
+
+- `slice_stl` uses the FULU/Orca project CLI shape (`--slice 0 --export-3mf`) to produce a sliced Bambu-compatible 3MF.
+- `print_3mf` can auto-slice an unsliced 3MF through FULU OrcaSlicer-bambulab, then upload and start the sliced project through this server's Bambu print path.
+- `check_fulu_orca_setup` verifies the FULU executable, platform runtime payload, setup commands, and optional BambuNetwork bridge handshake.
+- `fulu_bambu_network_rpc` can call the FULU bridge protocol for diagnostics and development. Read-only methods are allowed by default; mutating methods require `allow_mutating_method=true`; FULU print methods still require `bambu_model`.
+
+What stays deliberately explicit:
+
+- This MCP server's existing Bambu print path is local MQTT plus FTPS and still needs `BAMBU_SERIAL`, `BAMBU_TOKEN`, and `PRINTER_HOST`.
+- FULU's BambuNetwork bridge is a separate runtime. The MCP can inspect it, probe it, and issue guarded bridge RPC calls, but it will not silently switch a print from local LAN control to cloud/BambuNetwork control.
+- `BAMBU_MODEL` remains mandatory for Bambu print operations because wrong machine presets can produce dangerous G-code.
+
+#### Current Bench Test Status
+
+This integration has been tested against the current FULU macOS release artifacts and a local Benchy smoke test. The MCP-side bug found during that bench was real: Bambu-family project slicers must use Orca/Bambu preset JSON with `--load-settings`, not the invalid `--load-machine` flag. That is fixed here.
+
+The old Bambu Studio fallback still works. Set:
+
+```env
+SLICER_TYPE=bambustudio
+SLICER_PATH=/Applications/BambuStudio.app/Contents/MacOS/BambuStudio
+```
+
+With that fallback, the same Benchy 3MF sliced successfully through Bambu Studio's CLI into a Bambu-compatible project 3MF. This is the known-good path while FULU platform packaging settles.
+
+macOS is not proven green yet. On this Mac, the FULU arm64 and x86_64 macOS release bundles hit the same CLI slice problem during Benchy testing: one path crashed with `SIGSEGV` inside OrcaSlicer CLI processing, and repeated attempts left uninterruptible macOS `UE` processes that ignored `SIGKILL`. The MCP now avoids pretending that is solved. `check_fulu_orca_setup` can inspect the bundle and bridge payload, but macOS users should treat FULU CLI slicing as active feedback territory until FULU ships a stable macOS CLI/runtime combination.
+
+We need Windows testers. The WSL 2 setup path, payload checks, and bridge command shape are represented in this MCP, but the full Windows path still needs real reports from people who can validate `install_runtime.ps1`, `verify_runtime.ps1`, bridge probing, CLI slicing, and a known-safe print workflow on their own machine.
+
+We will keep iterating with user and contributor feedback. Please report the OS, CPU architecture, FULU release asset name, `check_fulu_orca_setup` result, slicer command stderr, and whether the Bambu Studio fallback works on the same model.
+
+#### FULU Runtime Setup By Platform
+
+The FULU README currently says macOS is work in progress, but the source tree already ships macOS Lima runtime scripts and Windows WSL runtime scripts. This MCP knows those file layouts and returns the exact commands through `check_fulu_orca_setup`.
+
+Windows:
+
+```bat
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+```
+
+Restart Windows, then run the FULU package scripts from the directory that contains `install_runtime.ps1`:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_runtime.ps1 -PackageDir . -PluginDir .
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\verify_runtime.ps1 -PackageDir . -PluginDir .
+```
+
+Linux:
+
+Install the FULU OrcaSlicer-bambulab build normally, set `SLICER_TYPE=orcaslicer-bambulab`, and point `SLICER_PATH` at the executable. If you want bridge-level diagnostics, set `FULU_BAMBU_BRIDGE_COMMAND` to the packaged `pjarczak_bambu_linux_host`.
+
+macOS:
+
+Set the app payload directory, then run the scripts that FULU copies into the app bundle:
+
+```bash
+export FULU_ORCA_PLUGIN_DIR="/Applications/OrcaSlicer.app/Contents/MacOS"
+bash "$FULU_ORCA_PLUGIN_DIR/install_runtime_macos.sh" -PackageDir "$FULU_ORCA_PLUGIN_DIR" -PluginDir "$FULU_ORCA_PLUGIN_DIR"
+bash "$FULU_ORCA_PLUGIN_DIR/verify_runtime_macos.sh" -PackageDir "$FULU_ORCA_PLUGIN_DIR" -PluginDir "$FULU_ORCA_PLUGIN_DIR"
+```
+
+The default installed runtime is:
+
+```text
+~/Library/Application Support/OrcaSlicer/macos-bridge/runtime
+```
+
+The bridge command shape is:
+
+```bash
+"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper" "$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host"
+```
+
+If your app is named `Orca Studio.app` or lives somewhere else, pass its real `Contents/MacOS` path as `plugin_dir` or `FULU_ORCA_PLUGIN_DIR`.
+
+#### Check The Setup Through MCP
+
+Ask your MCP client to call `check_fulu_orca_setup`, or call it from an agent with arguments like:
+
+```json
+{
+  "platform": "darwin",
+  "slicer_path": "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
+  "plugin_dir": "/Applications/OrcaSlicer.app/Contents/MacOS",
+  "run_bridge_probe": true,
+  "bridge_command": "\"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper\" \"$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host\""
+}
+```
+
+The result reports missing payload files, install/verify commands, the MCP env values to use, and bridge handshake/capability/runtime info when probing is enabled.
+
+#### FULU Bridge RPC
+
+`fulu_bambu_network_rpc` speaks the FULU bridge frame protocol from the MCP side. The protocol is little-endian binary frames with JSON bodies, using methods such as `bridge.handshake`, `bridge.capabilities`, `bridge.runtime_info`, and `net.get_user_print_info`.
+
+Safe diagnostic example:
+
+```json
+{
+  "method": "bridge.runtime_info",
+  "bridge_command": "\"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper\" \"$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host\""
+}
+```
+
+Mutating methods are intentionally gated:
+
+```json
+{
+  "method": "net.start_print",
+  "allow_mutating_method": true,
+  "bambu_model": "p1s",
+  "payload": {
+    "client_job_id": 1,
+    "params": {
+      "dev_id": "YOUR_PRINTER_ID"
+    }
+  }
+}
+```
+
+That second example is intentionally incomplete because real BambuNetwork print calls need the full FULU/Bambu print parameter payload. The important part is that the MCP exposes the bridge without pretending a cloud print can be safely inferred from a local filename.
 
 Where this config lives depends on your client:
 
@@ -672,7 +831,7 @@ Set the temperature of a printer component.
 }
 ```
 
-**Not supported for Bambu printers** via direct MQTT commands.
+For Bambu printers, this dispatches firmware G-code temperature commands (`M104` for nozzle, `M140` for bed) over MQTT.
 
 </details>
 
@@ -681,9 +840,34 @@ Set the temperature of a printer component.
 
 ### Bambu-Specific Tools
 
+#### check_fulu_orca_setup
+
+Inspects the FULU OrcaSlicer-bambulab executable, platform runtime payload, setup commands, and optional BambuNetwork bridge probe.
+
+```json
+{
+  "platform": "darwin",
+  "slicer_path": "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
+  "plugin_dir": "/Applications/OrcaSlicer.app/Contents/MacOS",
+  "run_bridge_probe": true,
+  "bridge_command": "\"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper\" \"$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host\""
+}
+```
+
+#### fulu_bambu_network_rpc
+
+Calls one FULU BambuNetwork bridge JSON RPC method. Read-only methods such as `bridge.handshake`, `bridge.runtime_info`, and `net.get_user_print_info` are allowed by default. Methods that can mutate account, printer, cloud, or print state require `allow_mutating_method=true`; FULU print methods also require `bambu_model`.
+
+```json
+{
+  "method": "bridge.handshake",
+  "bridge_command": "\"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper\" \"$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host\""
+}
+```
+
 #### print_3mf
 
-Uploads a `.3mf` file to a Bambu printer via FTP and initiates the print job via an MQTT command. Allows overriding some print parameters like AMS mapping.
+Uploads a sliced `.3mf` file to a Bambu printer via FTP and initiates the print job via an MQTT command. If the 3MF has no embedded plate G-code and a project slicer is configured, the server can auto-slice it first with FULU OrcaSlicer-bambulab or Bambu Studio. Allows overriding some print parameters like AMS mapping.
 
 **`bambu_model` is required** -- it ensures the slicer generates G-code for the correct printer. Using the wrong model can cause the bed to crash into the nozzle and damage the printer. If not provided in the tool call and `BAMBU_MODEL` is not set in the environment, the server will ask interactively via MCP elicitation (if supported by your client) or return a clear error.
 
@@ -695,6 +879,8 @@ Uploads a `.3mf` file to a Bambu printer via FTP and initiates the print job via
   "host": "your_bambu_ip",
   "bambu_serial": "YOUR_SERIAL",
   "bambu_token": "YOUR_TOKEN",
+  "slicer_type": "orcaslicer-bambulab",
+  "slicer_path": "/path/to/FULU/OrcaSlicer",
   "use_ams": true,
   "ams_mapping": [0, 1, 2, 3],
   "bed_leveling": true,
@@ -776,17 +962,19 @@ Here are some example commands you can give to Claude after connecting the MCP s
 
 Due to the nature of the Bambu Lab printer API, there are some limitations:
 
-1. **Printable 3MF requirement:** `print_3mf` requires a sliced 3MF that includes at least one `Metadata/plate_<n>.gcode` entry so the server can compute MD5 and start the job correctly.
+1. **Printable 3MF requirement:** `print_3mf` ultimately needs a sliced 3MF that includes at least one `Metadata/plate_<n>.gcode` entry so the server can compute MD5 and start the job correctly. Unsliced 3MF files can be auto-sliced first when `SLICER_TYPE=orcaslicer-bambulab` or `SLICER_TYPE=bambustudio` is configured.
 
-2. **AMS behavior caveat:** The current `bambu-js` project-file command path always sends `use_ams=true`; passing `use_ams=false` is treated as best-effort and surfaced with a warning.
+2. **AMS behavior caveat:** AMS mapping is passed through the MQTT project-file command, but real behavior still depends on printer firmware, loaded filament, and the sliced project's metadata.
 
 3. **Temperature control path:** Temperature updates are implemented through G-code command dispatch (`M104`/`M140`) over MQTT, so effective behavior still depends on printer firmware acceptance and current printer state.
 
-4. **File transfer channel:** File operations use Bambu's FTPS path (port 990) via `bambu-js`. This is more secure than plain FTP, but still assumes a trusted local network environment and library-managed TLS behavior.
+4. **File transfer channel:** Uploads use Bambu's FTPS path (port 990) directly through `basic-ftp` with implicit TLS. Some read/list operations still use `bambu-js` helpers.
 
 5. **Direct start path scope:** `startJob` currently targets `.gcode` files on printer storage; `.3mf` jobs should be initiated through `print_3mf` so metadata and plate selection are handled.
 
 6. **Status consistency:** Status reads force a `pushall` refresh when possible, but complete real-time, event-stream status semantics across all Bambu models still need deeper hardening.
+
+7. **FULU BambuNetwork bridge scope:** The FULU bridge exposes BambuNetwork functionality through its own runtime and RPC protocol. This MCP can inspect/probe that runtime and issue guarded bridge RPC calls, but local `print_3mf` still uses the server's explicit local MQTT/FTPS path unless a future change maps a complete FULU cloud-print payload safely.
 
 ## Limitations and Considerations
 

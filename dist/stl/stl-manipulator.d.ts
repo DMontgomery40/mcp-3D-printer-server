@@ -7,6 +7,7 @@ export type OperationResult = {
     error?: string;
     operationId: string;
 };
+export type SlicerType = 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer' | 'orcaslicer-bambulab' | 'bambustudio';
 export type TransformationType = 'scale' | 'rotate' | 'translate' | 'extendBase' | 'customModify';
 export type TransformationAxis = 'x' | 'y' | 'z' | 'all';
 export type BoundingBox = {
@@ -30,6 +31,9 @@ export declare class STLManipulator extends EventEmitter {
      * Generate a unique operation ID
      */
     private generateOperationId;
+    private validateSlicerExecutable;
+    private resolveBambuMachinePresetPath;
+    private resolveSlicerTimeoutMs;
     /**
      * Load STL file and return geometry and bounding box
      */
@@ -92,13 +96,13 @@ export declare class STLManipulator extends EventEmitter {
     /**
      * Slice an STL or 3MF file using the specified slicer
      * @param stlFilePath Path to the input STL or 3MF file
-     * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer, bambustudio)
+     * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer, orcaslicer-bambulab, bambustudio)
      * @param slicerPath Path to the slicer executable
      * @param slicerProfile Optional path to the slicer profile/config file
      * @param progressCallback Optional callback for progress updates
      * @returns Path to the generated G-code or sliced 3MF file
      */
-    sliceSTL(stlFilePath: string, slicerType: 'prusaslicer' | 'cura' | 'slic3r' | 'orcaslicer' | 'bambustudio', slicerPath: string, slicerProfile?: string, progressCallback?: ProgressCallback, printerPreset?: string): Promise<string>;
+    sliceSTL(stlFilePath: string, slicerType: SlicerType, slicerPath: string, slicerProfile?: string, progressCallback?: ProgressCallback, printerPreset?: string): Promise<string>;
     /**
      * Enhanced version of confirmTemperatures with better error handling
      * @param gcodePath Path to the G-code file

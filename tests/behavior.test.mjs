@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import fs from "node:fs/promises";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -107,9 +109,11 @@ function assertCommonToolPresence(listToolsResult) {
   assert.ok(names.includes("blender_mcp_edit_model"));
   assert.ok(names.includes("print_3mf"), "print_3mf tool must be registered");
   assert.ok(names.includes("slice_stl"), "slice_stl tool must be registered");
+  assert.ok(names.includes("check_fulu_orca_setup"), "check_fulu_orca_setup tool must be registered");
+  assert.ok(names.includes("fulu_bambu_network_rpc"), "fulu_bambu_network_rpc tool must be registered");
 }
 
-function assertBambuStudioSlicerSupport(listToolsResult) {
+function assertBambuProjectSlicerSupport(listToolsResult) {
   const sliceTool = listToolsResult.tools.find((t) => t.name === "slice_stl");
   assert.ok(sliceTool, "slice_stl tool must exist");
   const desc = sliceTool.inputSchema?.properties?.slicer_type?.description || "";
@@ -117,9 +121,160 @@ function assertBambuStudioSlicerSupport(listToolsResult) {
     desc.includes("bambustudio"),
     `slice_stl slicer_type description must mention bambustudio, got: ${desc}`
   );
+  assert.ok(
+    desc.includes("orcaslicer-bambulab"),
+    `slice_stl slicer_type description must mention orcaslicer-bambulab, got: ${desc}`
+  );
+  assert.ok(
+    sliceTool.inputSchema?.properties?.slicer_type?.enum?.includes("fulu_orca"),
+    "slice_stl slicer_type enum must include FULU alias"
+  );
 }
 
-test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", async (t) => {
+async function createFakeBambuProjectSlicer(t) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-orca-"));
+  const executableDir = path.join(dir, "FakeOrca.app", "Contents", "MacOS");
+  const presetDir = path.join(dir, "FakeOrca.app", "Contents", "Resources", "profiles", "BBL", "machine");
+  await fs.mkdir(executableDir, { recursive: true });
+  await fs.mkdir(presetDir, { recursive: true });
+  const executable = path.join(executableDir, "fake-fulu-orca.mjs");
+  const presetPath = path.join(presetDir, "Bambu Lab P1S 0.4 nozzle.json");
+  await fs.writeFile(presetPath, JSON.stringify({ name: "Bambu Lab P1S 0.4 nozzle" }));
+
+  await fs.writeFile(
+    executable,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+const args = process.argv.slice(2);
+function fail(message) {
+  console.error(message);
+  process.exit(11);
+}
+if (!args.includes("--slice")) fail("missing --slice");
+const exportIndex = args.indexOf("--export-3mf");
+if (exportIndex < 0 || !args[exportIndex + 1]) fail("missing --export-3mf output");
+const loadSettingsIndex = args.indexOf("--load-settings");
+if (loadSettingsIndex < 0 || !args[loadSettingsIndex + 1]?.includes("Bambu Lab P1S")) {
+  fail("missing Bambu P1S machine preset");
+}
+if (!fs.existsSync(args[loadSettingsIndex + 1])) fail("machine preset path does not exist");
+fs.writeFileSync(args[exportIndex + 1], "fake sliced 3mf");
+`,
+    { mode: 0o755 }
+  );
+
+  t.after(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  return executable;
+}
+
+async function createFakeFuluBundle(t) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-bundle-"));
+  const pluginDir = path.join(dir, "OrcaSlicer.app", "Contents", "MacOS");
+  const runtimeDir = path.join(dir, "runtime");
+  const slicerPath = path.join(pluginDir, "OrcaSlicer");
+  await fs.mkdir(pluginDir, { recursive: true });
+  await fs.mkdir(runtimeDir, { recursive: true });
+
+  const pluginFiles = [
+    "install_runtime_macos.sh",
+    "verify_runtime_macos.sh",
+    "pjarczak_lima_instance.txt",
+    "pjarczak-bambu-linux-host-wrapper",
+    "libpjarczak_bambu_networking_bridge.dylib",
+    "pjarczak_bambu_linux_host",
+    "pjarczak_bambu_linux_host_abi1",
+    "pjarczak_bambu_linux_host_abi0",
+    "libbambu_networking.so",
+    "libBambuSource.so",
+    "ca-certificates.crt",
+    "slicer_base64.cer",
+  ];
+  const runtimeFiles = [
+    "pjarczak_bambu_linux_host",
+    "pjarczak_bambu_linux_host_abi1",
+    "pjarczak_bambu_linux_host_abi0",
+    "libbambu_networking.so",
+    "libBambuSource.so",
+    "ca-certificates.crt",
+    "slicer_base64.cer",
+  ];
+
+  for (const name of pluginFiles) {
+    await fs.writeFile(path.join(pluginDir, name), `${name}\n`, { mode: 0o755 });
+  }
+  for (const name of runtimeFiles) {
+    await fs.writeFile(path.join(runtimeDir, name), `${name}\n`, { mode: 0o755 });
+  }
+  await fs.writeFile(slicerPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+  t.after(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  return { pluginDir, runtimeDir, slicerPath };
+}
+
+async function createFakeFuluBridge(t) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-bridge-"));
+  const executable = path.join(dir, "fake-fulu-bridge.mjs");
+
+  await fs.writeFile(
+    executable,
+    `#!/usr/bin/env node
+const MAGIC = 0x52424a50;
+const JSON_RESPONSE = 2;
+function writeFrame(id, payload) {
+  const body = Buffer.from(JSON.stringify(payload), "utf8");
+  const header = Buffer.alloc(16);
+  header.writeUInt32LE(MAGIC, 0);
+  header.writeUInt32LE(JSON_RESPONSE, 4);
+  header.writeUInt32LE(id, 8);
+  header.writeUInt32LE(body.length, 12);
+  process.stdout.write(Buffer.concat([header, body]));
+}
+const chunks = [];
+process.stdin.on("data", chunk => chunks.push(chunk));
+process.stdin.on("end", () => {
+  const buffer = Buffer.concat(chunks);
+  let offset = 0;
+  while (offset + 16 <= buffer.length) {
+    const magic = buffer.readUInt32LE(offset);
+    const type = buffer.readUInt32LE(offset + 4);
+    const id = buffer.readUInt32LE(offset + 8);
+    const size = buffer.readUInt32LE(offset + 12);
+    const payloadStart = offset + 16;
+    const payloadEnd = payloadStart + size;
+    if (magic !== MAGIC || type !== 1 || payloadEnd > buffer.length) process.exit(12);
+    const request = JSON.parse(buffer.subarray(payloadStart, payloadEnd).toString("utf8"));
+    let response = { ok: true, value: 0, method: request.method, payload: request.payload };
+    if (request.method === "bridge.handshake") {
+      response = { ok: true, protocol_version: 1, bridge_version: "fake-fulu-bridge", network_loaded: true, source_loaded: true };
+    } else if (request.method === "bridge.capabilities") {
+      response = { ok: true, agent_count: 1, auth_capabilities: ["fake"] };
+    } else if (request.method === "bridge.runtime_info") {
+      response = { ok: true, plugin_dir: "/fake/plugin", network_so: "/fake/libbambu_networking.so", source_so: "/fake/libBambuSource.so" };
+    } else if (request.method === "bridge.ping") {
+      response = { ok: true, value: "pong" };
+    }
+    writeFrame(id, response);
+    offset = payloadEnd;
+  }
+});
+`,
+    { mode: 0o755 }
+  );
+
+  t.after(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  return `${process.execPath} ${executable}`;
+}
+
+test("bambu defaults: FULU Orca project slicer type and auto-slice on unsliced 3MF", async (t) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER_ENTRY],
@@ -143,7 +298,7 @@ test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", a
   await client.connect(transport);
 
   const listToolsResult = await client.listTools();
-  assertBambuStudioSlicerSupport(listToolsResult);
+  assertBambuProjectSlicerSupport(listToolsResult);
 
   // print_3mf without bambu_model should error about model, not crash
   const noModelResult = await client.callTool({
@@ -181,11 +336,15 @@ test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", a
     `With valid model, error should be about file not model, got: ${validModelError}`
   );
 
-  // slice_stl description should include bambustudio
+  // slice_stl description should include both Bambu project slicer paths
   const sliceTool = listToolsResult.tools.find((t) => t.name === "slice_stl");
   assert.ok(
     sliceTool.inputSchema.properties.slicer_type.description.includes("bambustudio"),
     "bambustudio must appear in slice_stl slicer_type description"
+  );
+  assert.ok(
+    sliceTool.inputSchema.properties.slicer_type.description.includes("orcaslicer-bambulab"),
+    "orcaslicer-bambulab must appear in slice_stl slicer_type description"
   );
 
   // print_3mf tool schema should include ams_mapping and bambu_model
@@ -200,6 +359,10 @@ test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", a
     "print_3mf must have bambu_model property"
   );
   assert.ok(
+    print3mfTool.inputSchema.properties.slicer_type,
+    "print_3mf must expose slicer_type for auto-slicing"
+  );
+  assert.ok(
     print3mfTool.inputSchema.required.includes("bambu_model"),
     "bambu_model must be required in print_3mf schema"
   );
@@ -208,6 +371,176 @@ test("bambu defaults: bambustudio slicer type and auto-slice on unsliced 3MF", a
     ["p1s", "p1p", "x1c", "x1e", "a1", "a1mini", "h2d"],
     "bambu_model enum must list all valid models"
   );
+});
+
+test("FULU Orca slicer aliases export Bambu project 3MF with model preset", async (t) => {
+  const fakeSlicer = await createFakeBambuProjectSlicer(t);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_SERIAL: "TEST_SERIAL",
+      BAMBU_TOKEN: "TEST_TOKEN",
+      BAMBU_MODEL: "",
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await client.connect(transport);
+
+  for (const slicerType of ["orcaslicer-bambulab", "fulu_orca"]) {
+    const result = await client.callTool({
+      name: "slice_stl",
+      arguments: {
+        stl_path: SAMPLE_STL,
+        slicer_type: slicerType,
+        slicer_path: fakeSlicer,
+        bambu_model: "p1s",
+      },
+    });
+
+    assert.equal(result.isError, undefined, `${slicerType} should slice successfully`);
+    const outputPath = result.content?.[0]?.text || "";
+    assert.ok(
+      outputPath.endsWith("_sliced.3mf"),
+      `${slicerType} should export a sliced 3MF, got: ${outputPath}`
+    );
+  }
+});
+
+test("FULU setup check validates macOS runtime payload and probes bridge", async (t) => {
+  const bundle = await createFakeFuluBundle(t);
+  const bridgeCommand = await createFakeFuluBridge(t);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      BAMBU_MODEL: "",
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await client.connect(transport);
+
+  const result = await client.callTool({
+    name: "check_fulu_orca_setup",
+    arguments: {
+      platform: "darwin",
+      slicer_path: bundle.slicerPath,
+      plugin_dir: bundle.pluginDir,
+      runtime_dir: bundle.runtimeDir,
+      bridge_command: bridgeCommand,
+      run_bridge_probe: true,
+    },
+  });
+
+  assert.equal(result.isError, undefined);
+  const payload = parseJsonResult(result);
+  assert.equal(payload.status, "ready");
+  assert.equal(payload.platform, "darwin");
+  assert.deepEqual(payload.missingRequiredFiles, []);
+  assert.equal(payload.bridgeProbe.ok, true);
+  assert.equal(payload.bridgeProbe.handshake.bridge_version, "fake-fulu-bridge");
+  assert.ok(
+    payload.commands.some((command) => command.command.includes("install_runtime_macos.sh")),
+    "macOS setup check should return the concrete install command"
+  );
+  assert.ok(
+    payload.commands.some((command) => command.command.includes("pjarczak-bambu-linux-host-wrapper")),
+    "macOS setup check should return the concrete bridge command shape"
+  );
+  assert.equal(payload.mcpEnv.SLICER_TYPE, "orcaslicer-bambulab");
+});
+
+test("FULU bridge RPC allows read-only methods and gates mutating print methods", async (t) => {
+  const bridgeCommand = await createFakeFuluBridge(t);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_MODEL: "",
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await client.connect(transport);
+
+  const ping = await client.callTool({
+    name: "fulu_bambu_network_rpc",
+    arguments: {
+      bridge_command: bridgeCommand,
+      method: "bridge.ping",
+    },
+  });
+  assert.equal(ping.isError, undefined);
+  const pingPayload = parseJsonResult(ping);
+  assert.equal(pingPayload.readOnly, true);
+  assert.equal(pingPayload.response.value, "pong");
+
+  const blockedMutation = await client.callTool({
+    name: "fulu_bambu_network_rpc",
+    arguments: {
+      bridge_command: bridgeCommand,
+      method: "net.send_message",
+      payload: { dev_id: "printer", msg: "{}" },
+    },
+  });
+  assert.equal(blockedMutation.isError, true);
+  assert.match(blockedMutation.content?.[0]?.text || "", /allow_mutating_method=true/);
+
+  const missingModel = await client.callTool({
+    name: "fulu_bambu_network_rpc",
+    arguments: {
+      bridge_command: bridgeCommand,
+      method: "net.start_print",
+      allow_mutating_method: true,
+      payload: { params: { dev_id: "printer" } },
+    },
+  });
+  assert.equal(missingModel.isError, true);
+  assert.match(missingModel.content?.[0]?.text || "", /bambu_model|model/i);
+
+  const allowedPrintRpc = await client.callTool({
+    name: "fulu_bambu_network_rpc",
+    arguments: {
+      bridge_command: bridgeCommand,
+      method: "net.start_print",
+      allow_mutating_method: true,
+      bambu_model: "p1s",
+      payload: { params: { dev_id: "printer" } },
+    },
+  });
+  assert.equal(allowedPrintRpc.isError, undefined);
+  const allowedPrintPayload = parseJsonResult(allowedPrintRpc);
+  assert.equal(allowedPrintPayload.printMethod, true);
+  assert.equal(allowedPrintPayload.bambuModel, "p1s");
+  assert.equal(allowedPrintPayload.response.method, "net.start_print");
 });
 
 test("printer model safety: BAMBU_MODEL env var accepted as default", async (t) => {
