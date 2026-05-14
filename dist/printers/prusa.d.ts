@@ -2,6 +2,9 @@ import { PrinterImplementation } from "../types.js";
 export declare class PrusaImplementation extends PrinterImplementation {
     private buildAuthHeaders;
     private buildBaseUrl;
+    private defaultProtocolFor;
+    private isDefaultPort;
+    private isPrusaConnectCloudHost;
     private isFallbackStatus;
     private getWithFallback;
     private postWithFallback;

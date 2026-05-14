@@ -11,13 +11,49 @@ type RequestCandidate = {
 export class PrusaImplementation extends PrinterImplementation {
   private buildAuthHeaders(apiKey: string): Record<string, string> {
     return {
+      Accept: "application/json",
       "X-Api-Key": apiKey,
       Authorization: `Bearer ${apiKey}`,
     };
   }
 
   private buildBaseUrl(host: string, port: string): string {
-    return `http://${host}:${port}`;
+    const trimmedHost = host.trim();
+    const trimmedPort = port.trim();
+    if (!trimmedHost) {
+      throw new Error("Prusa host is required.");
+    }
+
+    const rawBaseUrl = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmedHost)
+      ? trimmedHost
+      : `${this.defaultProtocolFor(trimmedHost, trimmedPort)}://${trimmedHost}`;
+    const parsed = new URL(rawBaseUrl);
+
+    if (trimmedPort && !parsed.port && !this.isDefaultPort(parsed.protocol, trimmedPort)) {
+      parsed.port = trimmedPort;
+    }
+
+    return parsed.toString().replace(/\/$/, "");
+  }
+
+  private defaultProtocolFor(host: string, port: string): "http" | "https" {
+    if (port === "443" || this.isPrusaConnectCloudHost(host)) {
+      return "https";
+    }
+    return "http";
+  }
+
+  private isDefaultPort(protocol: string, port: string): boolean {
+    return (protocol === "https:" && port === "443") || (protocol === "http:" && port === "80");
+  }
+
+  private isPrusaConnectCloudHost(host: string): boolean {
+    try {
+      const parsed = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(host) ? host : `https://${host}`);
+      return parsed.hostname.toLowerCase() === "connect.prusa3d.com";
+    } catch {
+      return host.toLowerCase().split(":")[0] === "connect.prusa3d.com";
+    }
   }
 
   private isFallbackStatus(error: unknown): boolean {

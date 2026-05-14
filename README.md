@@ -260,7 +260,7 @@ BLENDER_MCP_BRIDGE_COMMAND=
 
 ## Usage
 
-Add this server to your MCP client's config (Claude Desktop, Claude Code, Cursor, Codex CLI, or any MCP-compatible client). The config format is the same everywhere -- an `mcpServers` entry with the command and env vars:
+Add this server to your MCP client's config (Claude Desktop, Claude Code, Cursor, Codex, or any MCP-compatible client). Most JSON-based clients use an `mcpServers` entry with the command and env vars:
 
 ```json
 {
@@ -424,18 +424,23 @@ Mutating methods are intentionally gated:
 
 That second example is intentionally incomplete because real BambuNetwork print calls need the full FULU/Bambu print parameter payload. The important part is that the MCP exposes the bridge without pretending a cloud print can be safely inferred from a local filename.
 
-Where this config lives depends on your client:
+Where this config lives depends on your client and OS:
 
-| Client | Config location |
-|--------|----------------|
-| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Claude Code (project) | `.mcp.json` in project root |
-| Claude Code (global) | `~/.claude/settings.json` |
-| Cursor | MCP settings in Cursor preferences |
-| Codex CLI | MCP config per Codex docs |
+| Client / scope | macOS / Linux location | Windows location |
+|----------------|------------------------|------------------|
+| Claude Desktop (macOS / Windows) | `~/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Claude Desktop (Linux) | Not officially supported for local MCP yet; Claude Desktop docs still list Linux support as coming soon. | N/A |
+| Claude Code (project-shared MCP) | `.mcp.json` in the project root | `.mcp.json` in the project root |
+| Claude Code (user/local MCP) | `~/.claude.json` | `%USERPROFILE%\.claude.json` |
+| Claude Code settings (not MCP server definitions) | `~/.claude/settings.json` | `%USERPROFILE%\.claude\settings.json` |
+| Cursor (project) | `.cursor/mcp.json` in the project root | `.cursor\mcp.json` in the project root |
+| Cursor (global) | `~/.cursor/mcp.json` | `%USERPROFILE%\.cursor\mcp.json` |
+| Codex (user; CLI, IDE extension, app) | `~/.codex/config.toml` | `%USERPROFILE%\.codex\config.toml` |
+| Codex (project, trusted projects only) | `.codex/config.toml` in the project root | `.codex\config.toml` in the project root |
 
-Restart your client after editing the config.
+Codex uses TOML instead of the JSON shape above. You can manage MCP servers with `codex mcp`, or edit `config.toml` directly with a `[mcp_servers.<name>]` entry.
+
+Restart your client after editing the config. For Codex, run `/mcp` or `codex mcp list` to confirm the server loaded.
 
 ### Recommended: use with codemode-mcp
 
@@ -515,6 +520,8 @@ Prusa Connect is Prusa's own cloud-based solution for managing their printers.
 - Default port: 80 (http) or 443 (https)
 - Authentication: API key required
 - Compatible with: Prusa MK4, Prusa Mini, Prusa XL, and other Prusa printers with Prusa Connect
+
+For Prusa Connect cloud, use `connect.prusa3d.com` with `PRINTER_PORT=443`, or include the scheme directly with `PRINTER_HOST=https://connect.prusa3d.com`. The server normalizes both forms to HTTPS. Local PrusaLink hosts continue to use HTTP unless you provide an `https://` host or port `443`.
 
 #### Setting up Prusa Connect
 
@@ -700,11 +707,14 @@ Slice an STL file to generate G-code.
 ```json
 {
   "stl_path": "/path/to/file.stl",
-  "slicer_type": "prusaslicer",
-  "slicer_path": "/path/to/prusaslicer",
-  "slicer_profile": "/path/to/profile.ini"
+  "slicer_type": "orcaslicer",
+  "slicer_path": "/path/to/orcaslicer",
+  "slicer_profile": "/path/to/machine.json;/path/to/process.json",
+  "filament_profile": "/path/to/flat-nylon-filament.json"
 }
 ```
+
+For OrcaSlicer, the server uses `--slice 0 --outputdir` and returns the renamed `plate_1.gcode` output. Load filament separately with `filament_profile` (`--load-filaments`) or encode it in `slicer_profile` after a pipe, for example `/path/to/process.json|/path/to/filament.json`.
 
 #### confirm_temperatures
 
@@ -773,7 +783,7 @@ For Bambu printers, lists files in the `gcodes` directory via FTP.
 
 #### upload_gcode
 
-Upload a G-code file to the printer.
+Upload G-code content or a local G-code file path to the printer.
 
 ```json
 {
@@ -782,6 +792,18 @@ Upload a G-code file to the printer.
   "api_key": "YOUR_API_KEY",
   "filename": "my_print.gcode",
   "gcode": "G28\nG1 X100 Y100 Z10 F3000\n...",
+  "print": true
+}
+```
+
+For larger files, pass a local path instead. If `filename` is omitted, the printer filename defaults to the basename of `gcode_path`.
+
+```json
+{
+  "host": "192.168.1.100",
+  "type": "klipper",
+  "api_key": "YOUR_API_KEY",
+  "gcode_path": "/path/to/my_print.gcode",
   "print": true
 }
 ```

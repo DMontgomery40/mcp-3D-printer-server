@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { PrusaImplementation } from "../dist/printers/prusa.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +24,21 @@ function createClient() {
     name: "mcp-3d-printer-server-behavior-tests",
     version: "0.0.1",
   });
+}
+
+function createRecordingApiClient(responseData = { ok: true }) {
+  const calls = [];
+  return {
+    calls,
+    async get(url, config) {
+      calls.push({ method: "get", url, config });
+      return { data: responseData };
+    },
+    async post(url, data, config) {
+      calls.push({ method: "post", url, data, config });
+      return { data: responseData };
+    },
+  };
 }
 
 async function getFreePort() {
@@ -101,16 +117,34 @@ function parseJsonResult(toolResult) {
   return JSON.parse(text);
 }
 
+async function readCallToolHandlerNames() {
+  const source = await fs.readFile(path.join(REPO_ROOT, "src", "index.ts"), "utf8");
+  const switchStart = source.indexOf("switch (name) {");
+  assert.notEqual(switchStart, -1, "CallTool switch must exist");
+  const defaultStart = source.indexOf("default:", switchStart);
+  assert.notEqual(defaultStart, -1, "CallTool switch must have a default case");
+
+  return [...source.slice(switchStart, defaultStart).matchAll(/case "([^"]+)":/g)]
+    .map((match) => match[1])
+    .sort();
+}
+
 function assertCommonToolPresence(listToolsResult) {
   const names = listToolsResult.tools.map((tool) => tool.name);
 
   assert.ok(names.includes("get_printer_status"));
+  assert.ok(names.includes("list_printer_files"), "list_printer_files tool must be registered");
+  assert.ok(names.includes("upload_gcode"), "upload_gcode tool must be registered");
+  assert.ok(names.includes("start_print"), "start_print tool must be registered");
+  assert.ok(names.includes("cancel_print"), "cancel_print tool must be registered");
+  assert.ok(names.includes("set_printer_temperature"), "set_printer_temperature tool must be registered");
   assert.ok(names.includes("get_stl_info"));
   assert.ok(names.includes("blender_mcp_edit_model"));
   assert.ok(names.includes("print_3mf"), "print_3mf tool must be registered");
   assert.ok(names.includes("slice_stl"), "slice_stl tool must be registered");
   assert.ok(names.includes("check_fulu_orca_setup"), "check_fulu_orca_setup tool must be registered");
   assert.ok(names.includes("fulu_bambu_network_rpc"), "fulu_bambu_network_rpc tool must be registered");
+  assertPrinterControlSchemas(listToolsResult);
 }
 
 function assertBambuProjectSlicerSupport(listToolsResult) {
@@ -129,6 +163,29 @@ function assertBambuProjectSlicerSupport(listToolsResult) {
     sliceTool.inputSchema?.properties?.slicer_type?.enum?.includes("fulu_orca"),
     "slice_stl slicer_type enum must include FULU alias"
   );
+  assert.ok(
+    sliceTool.inputSchema?.properties?.filament_profile,
+    "slice_stl must expose filament_profile for OrcaSlicer"
+  );
+}
+
+function assertPrinterControlSchemas(listToolsResult) {
+  const uploadTool = listToolsResult.tools.find((t) => t.name === "upload_gcode");
+  assert.ok(uploadTool, "upload_gcode tool must exist");
+  assert.ok(
+    uploadTool.inputSchema?.properties?.gcode_path,
+    "upload_gcode must expose gcode_path for large local files"
+  );
+  assert.ok(
+    uploadTool.inputSchema?.properties?.gcode,
+    "upload_gcode must keep gcode content upload support"
+  );
+
+  const startTool = listToolsResult.tools.find((t) => t.name === "start_print");
+  assert.deepEqual(startTool?.inputSchema?.required, ["filename"]);
+
+  const setTemperatureTool = listToolsResult.tools.find((t) => t.name === "set_printer_temperature");
+  assert.deepEqual(setTemperatureTool?.inputSchema?.required, ["component", "temperature"]);
 }
 
 async function createFakeBambuProjectSlicer(t) {
@@ -168,6 +225,48 @@ fs.writeFileSync(args[exportIndex + 1], "fake sliced 3mf");
   });
 
   return executable;
+}
+
+async function createFakeOrcaSlicer(t) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-orcaslicer-"));
+  const executable = path.join(dir, "fake-orcaslicer.mjs");
+
+  await fs.writeFile(
+    executable,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+const args = process.argv.slice(2);
+function fail(message) {
+  console.error(message);
+  process.exit(11);
+}
+if (args.includes("--output")) fail("OrcaSlicer does not support --output");
+const sliceIndex = args.indexOf("--slice");
+if (sliceIndex < 0 || args[sliceIndex + 1] !== "0") fail("missing --slice 0");
+const outputDirIndex = args.indexOf("--outputdir");
+if (outputDirIndex < 0 || !args[outputDirIndex + 1]) fail("missing --outputdir");
+const hasProcessSettings = args.some((arg, index) => args[index - 1] === "--load-settings" && arg.endsWith("process.json"));
+if (!hasProcessSettings) {
+  fail("missing process settings");
+}
+const hasFilament = args.some((arg, index) => args[index - 1] === "--load-filaments" && arg.endsWith("nylon.json"));
+if (!hasFilament) {
+  fail("missing filament profile");
+}
+const inputPath = args[args.length - 1];
+if (!fs.existsSync(inputPath)) fail("input STL missing");
+fs.mkdirSync(args[outputDirIndex + 1], { recursive: true });
+fs.writeFileSync(path.join(args[outputDirIndex + 1], "plate_1.gcode"), "; fake orca gcode\\n");
+`,
+    { mode: 0o755 }
+  );
+
+  t.after(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  return { dir, executable };
 }
 
 async function createFakeFuluBundle(t) {
@@ -414,6 +513,144 @@ test("FULU Orca slicer aliases export Bambu project 3MF with model preset", asyn
       outputPath.endsWith("_sliced.3mf"),
       `${slicerType} should export a sliced 3MF, got: ${outputPath}`
     );
+  }
+});
+
+test("OrcaSlicer slice_stl uses outputdir, filament profile, and plate output rename", async (t) => {
+  const { dir, executable } = await createFakeOrcaSlicer(t);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "orca-slice-output-"));
+  const machineProfile = path.join(dir, "machine.json");
+  const processProfile = path.join(dir, "process.json");
+  const filamentProfile = path.join(dir, "nylon.json");
+  await fs.writeFile(machineProfile, "{}\n");
+  await fs.writeFile(processProfile, "{}\n");
+  await fs.writeFile(filamentProfile, "{}\n");
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      TEMP_DIR: tempDir,
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  await client.connect(transport);
+
+  for (const [label, profileArgs] of [
+    [
+      "explicit filament_profile",
+      {
+        slicer_profile: `${machineProfile};${processProfile}`,
+        filament_profile: filamentProfile,
+      },
+    ],
+    [
+      "encoded filament profile",
+      {
+        slicer_profile: `${machineProfile};${processProfile}|${filamentProfile}`,
+      },
+    ],
+  ]) {
+    const result = await client.callTool({
+      name: "slice_stl",
+      arguments: {
+        stl_path: SAMPLE_STL,
+        slicer_type: "orcaslicer",
+        slicer_path: executable,
+        ...profileArgs,
+      },
+    });
+
+    assert.equal(result.isError, undefined, `orcaslicer should slice successfully with ${label}`);
+    const outputPath = result.content?.[0]?.text || "";
+    assert.equal(path.dirname(outputPath), tempDir);
+    assert.equal(path.basename(outputPath), "sample_cube.gcode");
+    assert.equal(await fs.readFile(outputPath, "utf8"), "; fake orca gcode\n");
+  }
+
+  const tempEntries = await fs.readdir(tempDir);
+  assert.ok(
+    !tempEntries.some((entry) => entry.endsWith("-orca-output")),
+    "temporary OrcaSlicer output directory should be cleaned up"
+  );
+});
+
+test("tool registry advertises every implemented call handler", async (t) => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await client.connect(transport);
+  const listToolsResult = await client.listTools();
+  const listedNames = listToolsResult.tools.map((tool) => tool.name).sort();
+  const handlerNames = await readCallToolHandlerNames();
+
+  assert.deepEqual(
+    handlerNames.filter((name) => !listedNames.includes(name)),
+    [],
+    "Every CallTool handler must be registered in tools/list"
+  );
+  assert.deepEqual(
+    listedNames.filter((name) => !handlerNames.includes(name)),
+    [],
+    "Every registered tool must have a CallTool handler"
+  );
+});
+
+test("Prusa adapter normalizes Prusa Connect HTTPS URLs", async () => {
+  for (const { host, port, expectedUrl } of [
+    {
+      host: "connect.prusa3d.com",
+      port: "443",
+      expectedUrl: "https://connect.prusa3d.com/api/v1/status",
+    },
+    {
+      host: "https://connect.prusa3d.com",
+      port: "443",
+      expectedUrl: "https://connect.prusa3d.com/api/v1/status",
+    },
+    {
+      host: "connect.prusa3d.com",
+      port: "",
+      expectedUrl: "https://connect.prusa3d.com/api/v1/status",
+    },
+    {
+      host: "192.168.1.50",
+      port: "8080",
+      expectedUrl: "http://192.168.1.50:8080/api/v1/status",
+    },
+  ]) {
+    const apiClient = createRecordingApiClient();
+    const implementation = new PrusaImplementation(apiClient);
+
+    await implementation.getStatus(host, port, "TEST_KEY");
+
+    assert.equal(apiClient.calls[0].url, expectedUrl);
+    assert.equal(apiClient.calls[0].config.headers["X-Api-Key"], "TEST_KEY");
+    assert.equal(apiClient.calls[0].config.headers.Authorization, "Bearer TEST_KEY");
+    assert.equal(apiClient.calls[0].config.headers.Accept, "application/json");
   }
 });
 

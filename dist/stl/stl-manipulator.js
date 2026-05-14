@@ -36,6 +36,54 @@ export class STLManipulator extends EventEmitter {
             throw new Error(`Slicer executable not found at: ${slicerPath}`);
         }
     }
+    splitProfileList(profileList) {
+        return (profileList || "")
+            .split(";")
+            .map((profile) => profile.trim())
+            .filter((profile) => profile.length > 0);
+    }
+    parseOrcaProfileArgs(slicerProfile, filamentProfile) {
+        const [settingsSegment = "", filamentSegment = ""] = (slicerProfile || "").split("|", 2);
+        return {
+            settingsProfiles: this.splitProfileList(settingsSegment),
+            filamentProfiles: [
+                ...this.splitProfileList(filamentSegment),
+                ...this.splitProfileList(filamentProfile),
+            ],
+        };
+    }
+    warnForMissingProfiles(profiles, label) {
+        for (const profile of profiles) {
+            if (!fs.existsSync(profile)) {
+                console.warn(`${label} specified but not found: ${profile}. Slicer might use defaults.`);
+            }
+        }
+    }
+    appendOrcaProfileArgs(args, profiles) {
+        for (const profile of profiles.settingsProfiles) {
+            args.push('--load-settings', profile);
+        }
+        for (const profile of profiles.filamentProfiles) {
+            args.push('--load-filaments', profile);
+        }
+    }
+    resolveOrcaGcodeOutput(outputDir) {
+        const preferredPath = path.join(outputDir, 'plate_1.gcode');
+        if (fs.existsSync(preferredPath)) {
+            return preferredPath;
+        }
+        const plateOutputs = fs.readdirSync(outputDir)
+            .filter((entry) => /^plate_\d+\.gcode$/i.test(entry))
+            .sort((a, b) => {
+            const aNumber = Number(a.match(/\d+/)?.[0] || 0);
+            const bNumber = Number(b.match(/\d+/)?.[0] || 0);
+            return aNumber - bNumber;
+        });
+        if (plateOutputs.length === 0) {
+            throw new Error(`OrcaSlicer finished but no plate_N.gcode file was found in: ${outputDir}`);
+        }
+        return path.join(outputDir, plateOutputs[0]);
+    }
     resolveBambuMachinePresetPath(slicerPath, printerPreset) {
         if (fs.existsSync(printerPreset)) {
             return printerPreset;
@@ -696,16 +744,25 @@ export class STLManipulator extends EventEmitter {
      * @param progressCallback Optional callback for progress updates
      * @returns Path to the generated G-code or sliced 3MF file
      */
-    async sliceSTL(stlFilePath, slicerType, slicerPath, slicerProfile, progressCallback, printerPreset) {
+    async sliceSTL(stlFilePath, slicerType, slicerPath, slicerProfile, progressCallback, printerPreset, filamentProfile) {
         const operationId = this.generateOperationId();
         this.activeOperations.set(operationId, true);
         this.validateSlicerExecutable(slicerPath);
-        if (slicerProfile && !fs.existsSync(slicerProfile)) {
+        const orcaProfiles = this.parseOrcaProfileArgs(slicerProfile, filamentProfile);
+        if (slicerType === 'orcaslicer') {
+            this.warnForMissingProfiles(orcaProfiles.settingsProfiles, 'Slicer profile');
+            this.warnForMissingProfiles(orcaProfiles.filamentProfiles, 'Filament profile');
+        }
+        else if (slicerProfile && !fs.existsSync(slicerProfile)) {
             console.warn(`Slicer profile specified but not found: ${slicerProfile}. Slicer might use defaults.`);
             // Allow proceeding without profile, slicer might handle it
         }
+        if (slicerType !== 'orcaslicer' && filamentProfile && !fs.existsSync(filamentProfile)) {
+            console.warn(`Filament profile specified but not found: ${filamentProfile}. Slicer might use defaults.`);
+        }
         const outputFileName = path.basename(stlFilePath, '.stl') + '.gcode';
         let outputFilePath = path.join(this.tempDir, outputFileName);
+        let orcaOutputDir;
         let args = [];
         try {
             if (progressCallback)
@@ -723,22 +780,14 @@ export class STLManipulator extends EventEmitter {
                     args = args.filter(arg => arg !== '');
                     break;
                 case 'orcaslicer': // Add OrcaSlicer case
+                    orcaOutputDir = path.join(this.tempDir, `${operationId}-orca-output`);
+                    fs.mkdirSync(orcaOutputDir, { recursive: true });
                     args = [
-                        // OrcaSlicer might use --load-settings like Bambu, or --load like Prusa
-                        // Assuming --load-settings based on discussion, adjust if needed.
-                        // Also assuming profile path points to the main .ini or .json config.
-                        '--load-settings', slicerProfile || '',
-                        '--output', outputFilePath, // Assuming --output works like PrusaSlicer
-                        stlFilePath
+                        '--slice', '0',
+                        '--outputdir', orcaOutputDir,
                     ];
-                    // Alternative if --output doesn't specify filename:
-                    // args = [
-                    //    '--load-settings', slicerProfile || '',
-                    //    '--outputdir', this.tempDir,
-                    //    stlFilePath
-                    // ];
-                    // Remove empty profile arg if not provided
-                    args = args.filter(arg => arg !== '');
+                    this.appendOrcaProfileArgs(args, orcaProfiles);
+                    args.push(stlFilePath);
                     break;
                 case 'cura':
                     // CuraEngine CLI args are different, often requiring -s for settings
@@ -774,6 +823,9 @@ export class STLManipulator extends EventEmitter {
                         }
                         if (slicerProfile) {
                             args.push('--load-settings', slicerProfile);
+                        }
+                        if (filamentProfile) {
+                            args.push('--load-filaments', filamentProfile);
                         }
                         args.push(stlFilePath);
                         // Override outputFilePath for bambustudio since it produces 3MF, not gcode
@@ -853,6 +905,16 @@ export class STLManipulator extends EventEmitter {
                 // This check might be redundant if the promise rejected on kill, but good safety
                 throw new Error("Slicing operation cancelled after process finished");
             }
+            if (slicerType === 'orcaslicer') {
+                if (!orcaOutputDir) {
+                    throw new Error("Internal error: OrcaSlicer output directory was not initialized.");
+                }
+                const orcaGcodePath = this.resolveOrcaGcodeOutput(orcaOutputDir);
+                if (fs.existsSync(outputFilePath)) {
+                    fs.unlinkSync(outputFilePath);
+                }
+                fs.renameSync(orcaGcodePath, outputFilePath);
+            }
             if (!fs.existsSync(outputFilePath)) {
                 throw new Error(`Slicer finished but output file not found: ${outputFilePath}`);
             }
@@ -876,6 +938,9 @@ export class STLManipulator extends EventEmitter {
             throw error;
         }
         finally {
+            if (orcaOutputDir && fs.existsSync(orcaOutputDir)) {
+                fs.rmSync(orcaOutputDir, { recursive: true, force: true });
+            }
             this.activeOperations.delete(operationId);
         }
     }

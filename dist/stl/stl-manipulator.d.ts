@@ -32,6 +32,11 @@ export declare class STLManipulator extends EventEmitter {
      */
     private generateOperationId;
     private validateSlicerExecutable;
+    private splitProfileList;
+    private parseOrcaProfileArgs;
+    private warnForMissingProfiles;
+    private appendOrcaProfileArgs;
+    private resolveOrcaGcodeOutput;
     private resolveBambuMachinePresetPath;
     private resolveSlicerTimeoutMs;
     /**
@@ -102,7 +107,7 @@ export declare class STLManipulator extends EventEmitter {
      * @param progressCallback Optional callback for progress updates
      * @returns Path to the generated G-code or sliced 3MF file
      */
-    sliceSTL(stlFilePath: string, slicerType: SlicerType, slicerPath: string, slicerProfile?: string, progressCallback?: ProgressCallback, printerPreset?: string): Promise<string>;
+    sliceSTL(stlFilePath: string, slicerType: SlicerType, slicerPath: string, slicerProfile?: string, progressCallback?: ProgressCallback, printerPreset?: string, filamentProfile?: string): Promise<string>;
     /**
      * Enhanced version of confirmTemperatures with better error handling
      * @param gcodePath Path to the G-code file
