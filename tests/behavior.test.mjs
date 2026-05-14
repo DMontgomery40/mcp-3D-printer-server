@@ -111,6 +111,50 @@ async function terminateChildProcess(childProcess) {
   ]);
 }
 
+async function assertStreamableHttpEntrypoint(t, entryFile, portEnvName) {
+  const port = await getFreePort();
+  const endpoint = `http://127.0.0.1:${port}/mcp`;
+  const env = {
+    ...process.env,
+    MCP_HTTP_HOST: "127.0.0.1",
+    MCP_HTTP_PATH: "/mcp",
+  };
+  delete env.MCP_TRANSPORT;
+  delete env.MCP_HTTP_PORT;
+  env[portEnvName] = String(port);
+
+  const childProcess = spawn(process.execPath, [entryFile], {
+    cwd: REPO_ROOT,
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+
+  let stderrOutput = "";
+  childProcess.stderr?.on("data", (chunk) => {
+    stderrOutput += chunk.toString();
+  });
+
+  t.after(async () => {
+    await terminateChildProcess(childProcess);
+  });
+
+  const transport = new StreamableHTTPClientTransport(new URL(endpoint));
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await waitForHttpServerReady(endpoint);
+  await client.connect(transport);
+  const listToolsResult = await client.listTools();
+  assertCommonToolPresence(listToolsResult);
+  assert.ok(
+    !stderrOutput.includes("startup failed"),
+    `entrypoint should not report startup failure, got: ${stderrOutput}`
+  );
+}
+
 function parseJsonResult(toolResult) {
   const text = toolResult.content?.[0]?.text;
   assert.equal(typeof text, "string", "Expected text result payload");
@@ -944,4 +988,9 @@ test("streamable-http transport: initialize, list tools, call success + origin r
     method: "POST",
   });
   assert.equal(wrongPathResponse.status, 404);
+});
+
+test("legacy HTTP and SSE entrypoints delegate to maintained streamable HTTP runtime", async (t) => {
+  await assertStreamableHttpEntrypoint(t, path.join(REPO_ROOT, "dist", "http-server.js"), "HTTP_PORT");
+  await assertStreamableHttpEntrypoint(t, path.join(REPO_ROOT, "dist", "sse-server.js"), "SSE_PORT");
 });
