@@ -505,11 +505,7 @@ class ThreeDPrinterMCPServer {
                                     type: "boolean",
                                     description: "Start printing after upload when the printer backend supports it."
                                 }
-                            },
-                            anyOf: [
-                                { required: ["filename", "gcode"] },
-                                { required: ["gcode_path"] }
-                            ]
+                            }
                         }
                     },
                     {

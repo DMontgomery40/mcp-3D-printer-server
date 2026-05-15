@@ -188,7 +188,24 @@ function assertCommonToolPresence(listToolsResult) {
   assert.ok(names.includes("slice_stl"), "slice_stl tool must be registered");
   assert.ok(names.includes("check_fulu_orca_setup"), "check_fulu_orca_setup tool must be registered");
   assert.ok(names.includes("fulu_bambu_network_rpc"), "fulu_bambu_network_rpc tool must be registered");
+  assertAnthropicCompatibleToolSchemas(listToolsResult);
   assertPrinterControlSchemas(listToolsResult);
+}
+
+function assertAnthropicCompatibleToolSchemas(listToolsResult) {
+  const topLevelCompositionKeywords = ["anyOf", "oneOf", "allOf"];
+
+  for (const tool of listToolsResult.tools) {
+    assert.equal(tool.inputSchema?.type, "object", `${tool.name} inputSchema must be a root object`);
+
+    for (const keyword of topLevelCompositionKeywords) {
+      assert.equal(
+        Object.hasOwn(tool.inputSchema ?? {}, keyword),
+        false,
+        `${tool.name} inputSchema must not expose top-level ${keyword}`
+      );
+    }
+  }
 }
 
 function assertBambuProjectSlicerSupport(listToolsResult) {
