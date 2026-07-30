@@ -193,6 +193,8 @@ function readRuntimeConfig() {
         enableJsonResponse: parseBooleanEnv(process.env.MCP_HTTP_JSON_RESPONSE, true),
         allowedOrigins: parseCsvEnv(process.env.MCP_HTTP_ALLOWED_ORIGINS),
         blenderBridgeCommand: process.env.BLENDER_MCP_BRIDGE_COMMAND?.trim() || undefined,
+        allowExecutableArg: parseBooleanEnv(process.env.MCP_ALLOW_EXECUTABLE_ARG, false),
+        allowBridgeCommandArg: parseBooleanEnv(process.env.MCP_ALLOW_BRIDGE_COMMAND_ARG, false),
     };
 }
 // Ensure temp directory exists
@@ -666,7 +668,7 @@ class ThreeDPrinterMCPServer {
                                 },
                                 slicer_path: {
                                     type: "string",
-                                    description: "Path to the slicer executable (default: value from env)"
+                                    description: "Path to the slicer executable (default: value from env). Per-call overrides require MCP_ALLOW_EXECUTABLE_ARG=1."
                                 },
                                 slicer_profile: {
                                     type: "string",
@@ -761,7 +763,7 @@ class ThreeDPrinterMCPServer {
                                 },
                                 slicer_path: {
                                     type: "string",
-                                    description: "Path to the slicer executable (default: value from env)."
+                                    description: "Path to the slicer executable (default: value from env). Per-call overrides require MCP_ALLOW_EXECUTABLE_ARG=1."
                                 },
                                 slicer_profile: {
                                     type: "string",
@@ -1006,7 +1008,7 @@ class ThreeDPrinterMCPServer {
                                 },
                                 slicer_path: {
                                     type: "string",
-                                    description: "Path to the slicer executable if auto-slicing is needed."
+                                    description: "Path to the slicer executable if auto-slicing is needed. Per-call overrides require MCP_ALLOW_EXECUTABLE_ARG=1."
                                 },
                                 slicer_profile: {
                                     type: "string",
@@ -1052,15 +1054,20 @@ class ThreeDPrinterMCPServer {
                             properties: {
                                 slicer_path: {
                                     type: "string",
-                                    description: "Path to the FULU OrcaSlicer executable. Defaults from SLICER_PATH/FULU_ORCA_PATH."
+                                    description: "Path to the FULU OrcaSlicer executable. Defaults from SLICER_PATH/FULU_ORCA_PATH. " +
+                                        "When run_bridge_probe=true, requires MCP_ALLOW_EXECUTABLE_ARG=1 to be accepted here."
                                 },
                                 plugin_dir: {
                                     type: "string",
-                                    description: "Directory containing the FULU Bambu runtime payload; on macOS this is usually OrcaSlicer.app/Contents/MacOS."
+                                    description: "Directory containing the FULU Bambu runtime payload; on macOS this is usually " +
+                                        "OrcaSlicer.app/Contents/MacOS. When run_bridge_probe=true, requires " +
+                                        "MCP_ALLOW_EXECUTABLE_ARG=1 to be accepted here."
                                 },
                                 runtime_dir: {
                                     type: "string",
-                                    description: "Installed runtime directory. On macOS this defaults to ~/Library/Application Support/OrcaSlicer/macos-bridge/runtime."
+                                    description: "Installed runtime directory. On macOS this defaults to ~/Library/Application " +
+                                        "Support/OrcaSlicer/macos-bridge/runtime. When run_bridge_probe=true, requires " +
+                                        "MCP_ALLOW_EXECUTABLE_ARG=1 to be accepted here."
                                 },
                                 platform: {
                                     type: "string",
@@ -1069,7 +1076,9 @@ class ThreeDPrinterMCPServer {
                                 },
                                 bridge_command: {
                                     type: "string",
-                                    description: "Command that starts the FULU BambuNetwork bridge host for probing."
+                                    description: "Command that starts the FULU BambuNetwork bridge host for probing. Read from " +
+                                        "FULU_BAMBU_BRIDGE_COMMAND by default; requires MCP_ALLOW_EXECUTABLE_ARG=1 " +
+                                        "to be accepted here."
                                 },
                                 run_bridge_probe: {
                                     type: "boolean",
@@ -1090,7 +1099,9 @@ class ThreeDPrinterMCPServer {
                             properties: {
                                 bridge_command: {
                                     type: "string",
-                                    description: "Command that starts the FULU BambuNetwork bridge host. Defaults to FULU_BAMBU_BRIDGE_COMMAND."
+                                    description: "Command that starts the FULU BambuNetwork bridge host. Defaults to " +
+                                        "FULU_BAMBU_BRIDGE_COMMAND; requires MCP_ALLOW_EXECUTABLE_ARG=1 to be " +
+                                        "accepted here."
                                 },
                                 method: {
                                     type: "string",
@@ -1181,7 +1192,9 @@ class ThreeDPrinterMCPServer {
                                 },
                                 bridge_command: {
                                     type: "string",
-                                    description: "Optional override command for invoking a local Blender MCP bridge."
+                                    description: "Optional override command for invoking a local Blender MCP bridge. Read from " +
+                                        "BLENDER_MCP_BRIDGE_COMMAND by default; requires MCP_ALLOW_EXECUTABLE_ARG=1 " +
+                                        "to be accepted here."
                                 },
                                 execute: {
                                     type: "boolean",
@@ -1205,7 +1218,6 @@ class ThreeDPrinterMCPServer {
             const bambuSerial = String(args?.bambu_serial || DEFAULT_BAMBU_SERIAL);
             const bambuToken = String(args?.bambu_token || DEFAULT_BAMBU_TOKEN);
             const slicerType = normalizeSlicerType(String(args?.slicer_type || DEFAULT_SLICER_TYPE));
-            const slicerPath = String(args?.slicer_path || DEFAULT_SLICER_PATH);
             const slicerProfile = String(args?.slicer_profile || DEFAULT_SLICER_PROFILE);
             const filamentProfile = String(args?.filament_profile || DEFAULT_FILAMENT_PROFILE);
             try {
@@ -1264,7 +1276,7 @@ class ThreeDPrinterMCPServer {
                             const nozzleDiam = String(args?.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER);
                             slicePreset = BAMBU_MODEL_PRESETS[sliceModel]?.(nozzleDiam);
                         }
-                        result = await this.stlManipulator.sliceSTL(String(args.stl_path), slicerType, slicerPath, slicerProfile || undefined, undefined, // progressCallback
+                        result = await this.stlManipulator.sliceSTL(String(args.stl_path), slicerType, this.resolveExecutableSelectorArg(args?.slicer_path, "slice_stl", "slicer_path") ?? DEFAULT_SLICER_PATH, slicerProfile || undefined, undefined, // progressCallback
                         slicePreset, filamentProfile || undefined);
                         break;
                     }
@@ -1296,7 +1308,7 @@ class ThreeDPrinterMCPServer {
                                 processPreset = BAMBU_MODEL_PRESETS[processModel]?.(processNozzle);
                             }
                         }
-                        const gcodePath = await this.stlManipulator.sliceSTL(extendedStlPath, slicerType, slicerPath, slicerProfile || undefined, processProgressCallback, processPreset, filamentProfile || undefined);
+                        const gcodePath = await this.stlManipulator.sliceSTL(extendedStlPath, slicerType, this.resolveExecutableSelectorArg(args?.slicer_path, "process_and_print_stl", "slicer_path") ?? DEFAULT_SLICER_PATH, slicerProfile || undefined, processProgressCallback, processPreset, filamentProfile || undefined);
                         if (type.toLowerCase() === 'bambu' && gcodePath.toLowerCase().endsWith(".3mf")) {
                             if (!bambuSerial || !bambuToken) {
                                 throw new Error("Bambu serial number and access token are required for Bambu 3MF printing.");
@@ -1503,21 +1515,29 @@ class ThreeDPrinterMCPServer {
                         const printNozzle = String(args?.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER);
                         const printPreset = BAMBU_MODEL_PRESETS[printModel]?.(printNozzle);
                         let threeMFPath = String(args.three_mf_path);
-                        // Auto-slice if the 3MF doesn't contain gcode
+                        let shouldAutoSlice = false;
                         try {
                             const JSZip = (await import('jszip')).default;
                             const zipData = fs.readFileSync(threeMFPath);
                             const zip = await JSZip.loadAsync(zipData);
-                            const hasGcode = Object.keys(zip.files).some(f => f.match(/Metadata\/plate_\d+\.gcode/i) || f.endsWith('.gcode'));
-                            if (!hasGcode) {
+                            shouldAutoSlice = !Object.keys(zip.files).some(f => f.match(/Metadata\/plate_\d+\.gcode/i) || f.endsWith('.gcode'));
+                        }
+                        catch (sliceCheckErr) {
+                            console.warn("Could not check 3MF for embedded gcode, proceeding with original:", sliceCheckErr.message);
+                        }
+                        // Only treat slicer_path as an executable selector when a slicer
+                        // will actually launch. Ready-to-print archives ignore it.
+                        if (shouldAutoSlice) {
+                            const printSlicerPath = this.resolveExecutableSelectorArg(args?.slicer_path, "print_3mf", "slicer_path") ?? DEFAULT_SLICER_PATH;
+                            try {
                                 console.log(`3MF has no gcode — auto-slicing with ${slicerType} for ${printModel}`);
-                                threeMFPath = await this.stlManipulator.sliceSTL(threeMFPath, slicerType, slicerPath, slicerProfile || undefined, undefined, // progressCallback
+                                threeMFPath = await this.stlManipulator.sliceSTL(threeMFPath, slicerType, printSlicerPath, slicerProfile || undefined, undefined, // progressCallback
                                 printPreset, filamentProfile || undefined);
                                 console.log("Auto-sliced to: " + threeMFPath);
                             }
-                        }
-                        catch (sliceCheckErr) {
-                            console.warn("Could not check/slice 3MF, proceeding with original:", sliceCheckErr.message);
+                            catch (sliceErr) {
+                                console.warn("Could not auto-slice 3MF, proceeding with original:", sliceErr.message);
+                            }
                         }
                         // Define variables needed outside the parse try block
                         let implementation;
@@ -1569,13 +1589,14 @@ class ThreeDPrinterMCPServer {
                         break;
                     }
                     case "check_fulu_orca_setup": {
+                        const runBridgeProbe = Boolean(args?.run_bridge_probe ?? false);
                         result = await inspectFuluOrcaSetup({
-                            slicerPath: args?.slicer_path !== undefined ? String(args.slicer_path) : undefined,
-                            pluginDir: args?.plugin_dir !== undefined ? String(args.plugin_dir) : undefined,
-                            runtimeDir: args?.runtime_dir !== undefined ? String(args.runtime_dir) : undefined,
+                            slicerPath: this.resolveExecutableSelectorArg(args?.slicer_path, "check_fulu_orca_setup", "slicer_path", runBridgeProbe, true),
+                            pluginDir: this.resolveExecutableSelectorArg(args?.plugin_dir, "check_fulu_orca_setup", "plugin_dir", runBridgeProbe, true),
+                            runtimeDir: this.resolveExecutableSelectorArg(args?.runtime_dir, "check_fulu_orca_setup", "runtime_dir", runBridgeProbe, true),
                             platform: args?.platform !== undefined ? String(args.platform) : undefined,
-                            bridgeCommand: args?.bridge_command !== undefined ? String(args.bridge_command) : undefined,
-                            runBridgeProbe: Boolean(args?.run_bridge_probe ?? false),
+                            bridgeCommand: this.resolveExecutableSelectorArg(args?.bridge_command, "check_fulu_orca_setup", "bridge_command", true, true),
+                            runBridgeProbe,
                             probeTimeoutMs: args?.probe_timeout_ms !== undefined ? Number(args.probe_timeout_ms) : undefined,
                         });
                         break;
@@ -1593,7 +1614,7 @@ class ThreeDPrinterMCPServer {
                             ? args.payload
                             : undefined;
                         result = await invokeFuluBridgeRpc({
-                            bridgeCommand: args?.bridge_command !== undefined ? String(args.bridge_command) : undefined,
+                            bridgeCommand: this.resolveExecutableSelectorArg(args?.bridge_command, "fulu_bambu_network_rpc", "bridge_command", true, true),
                             method,
                             payload,
                             timeoutMs: args?.timeout_ms !== undefined ? Number(args.timeout_ms) : undefined,
@@ -1629,7 +1650,7 @@ class ThreeDPrinterMCPServer {
                             stlPath: String(args.stl_path),
                             operations: args.operations.map((entry) => String(entry)),
                             execute: Boolean(args.execute ?? false),
-                            bridgeCommand: args.bridge_command !== undefined ? String(args.bridge_command) : undefined,
+                            bridgeCommand: this.resolveExecutableSelectorArg(args.bridge_command, "blender_mcp_edit_model", "bridge_command", true, true),
                         });
                         break;
                     default:
@@ -1842,6 +1863,33 @@ class ThreeDPrinterMCPServer {
         });
         this.httpRuntime = { transport, httpServer };
         console.error(`3D Printer MCP server running on streamable-http at http://${this.runtimeConfig.httpHost}:${this.runtimeConfig.httpPort}${this.runtimeConfig.httpPath}`);
+    }
+    /**
+     * Bridge commands and path-derived bridge executables are machine-local
+     * settings. Accepting their selectors as tool arguments means anything that
+     * can steer the model — a model description, a README in a downloaded
+     * archive, 3MF metadata — can choose the program this server runs. They are
+     * read from environment configuration by default and only accepted for
+     * execution when MCP_ALLOW_EXECUTABLE_ARG is set. The older
+     * MCP_ALLOW_BRIDGE_COMMAND_ARG name remains a compatibility alias only for
+     * bridge commands and path selectors used to derive a bridge executable.
+     */
+    resolveExecutableSelectorArg(rawValue, toolName, argumentName, executionRequested = true, allowLegacyBridgeArg = false) {
+        if (rawValue === undefined) {
+            return undefined;
+        }
+        const value = String(rawValue);
+        if (value.length === 0) {
+            return undefined;
+        }
+        const isAllowed = this.runtimeConfig.allowExecutableArg ||
+            (allowLegacyBridgeArg && this.runtimeConfig.allowBridgeCommandArg);
+        if (executionRequested && !isAllowed) {
+            throw new Error(`${toolName}: the ${argumentName} argument cannot select an executable by default. ` +
+                "Executable paths and commands are read from server environment configuration. Set " +
+                `MCP_ALLOW_EXECUTABLE_ARG=1 to accept ${argumentName} for process execution.`);
+        }
+        return value;
     }
     async invokeBlenderBridge(params) {
         const command = params.bridgeCommand ?? this.runtimeConfig.blenderBridgeCommand;
