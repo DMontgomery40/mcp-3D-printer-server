@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import JSZip from "jszip";
 import { PrusaImplementation } from "../dist/printers/prusa.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -545,6 +546,7 @@ test("FULU Orca slicer aliases export Bambu project 3MF with model preset", asyn
       BAMBU_SERIAL: "TEST_SERIAL",
       BAMBU_TOKEN: "TEST_TOKEN",
       BAMBU_MODEL: "",
+      MCP_ALLOW_EXECUTABLE_ARG: "1",
     },
     stderr: "pipe",
   });
@@ -594,6 +596,7 @@ test("OrcaSlicer slice_stl uses outputdir, filament profile, and plate output re
       ...process.env,
       MCP_TRANSPORT: "stdio",
       TEMP_DIR: tempDir,
+      MCP_ALLOW_EXECUTABLE_ARG: "1",
     },
     stderr: "pipe",
   });
@@ -855,6 +858,7 @@ test("bridge_command argument is rejected by default and the env var still works
       BAMBU_MODEL: "",
       FULU_BAMBU_BRIDGE_COMMAND: bridgeCommand,
       // Empty rather than "0" so this exercises the shipped default.
+      MCP_ALLOW_EXECUTABLE_ARG: "",
       MCP_ALLOW_BRIDGE_COMMAND_ARG: "",
     },
     stderr: "pipe",
@@ -886,7 +890,7 @@ test("bridge_command argument is rejected by default and the env var still works
     assert.equal(rejected.isError, true, `${call.name} must reject bridge_command by default`);
     assert.match(
       rejected.content?.[0]?.text || "",
-      /MCP_ALLOW_BRIDGE_COMMAND_ARG/,
+      /MCP_ALLOW_EXECUTABLE_ARG/,
       `${call.name} must name the opt-in env var so the fix is discoverable`
     );
   }
@@ -920,6 +924,7 @@ test("bridge probes reject every per-call executable path selector by default", 
       FULU_BAMBU_BRIDGE_COMMAND: "",
       FULU_ORCA_PLUGIN_DIR: "",
       ORCASLICER_BAMBULAB_PLUGIN_DIR: "",
+      MCP_ALLOW_EXECUTABLE_ARG: "",
       MCP_ALLOW_BRIDGE_COMMAND_ARG: "",
     },
     stderr: "pipe",
@@ -952,7 +957,7 @@ test("bridge probes reject every per-call executable path selector by default", 
       `${argumentName} must not select a spawned executable without the explicit opt-in`
     );
     assert.match(rejected.content?.[0]?.text || "", new RegExp(argumentName));
-    assert.match(rejected.content?.[0]?.text || "", /MCP_ALLOW_BRIDGE_COMMAND_ARG/);
+    assert.match(rejected.content?.[0]?.text || "", /MCP_ALLOW_EXECUTABLE_ARG/);
   }
 
   assert.equal(
@@ -973,6 +978,144 @@ test("bridge probes reject every per-call executable path selector by default", 
   });
   assert.equal(inspection.isError, undefined, "path overrides remain available for non-executing inspection");
   assert.equal(parseJsonResult(inspection).status, "ready");
+});
+
+test("slicer_path cannot select an executable without explicit opt-in", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "slicer-selector-gate-"));
+  const executable = path.join(tempDir, "unexpected-slicer");
+  const markerPath = path.join(tempDir, "executed");
+  await fs.writeFile(
+    executable,
+    `#!/bin/sh\nprintf executed > '${markerPath}'\nexit 17\n`,
+    { mode: 0o755 }
+  );
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_MODEL: "",
+      MCP_ALLOW_EXECUTABLE_ARG: "",
+      MCP_ALLOW_BRIDGE_COMMAND_ARG: "1",
+    },
+    stderr: "pipe",
+  });
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  await client.connect(transport);
+  const rejected = await client.callTool({
+    name: "slice_stl",
+    arguments: {
+      stl_path: SAMPLE_STL,
+      slicer_type: "orcaslicer",
+      slicer_path: executable,
+    },
+  });
+
+  assert.equal(rejected.isError, true);
+  assert.match(rejected.content?.[0]?.text || "", /slicer_path/);
+  assert.match(rejected.content?.[0]?.text || "", /MCP_ALLOW_EXECUTABLE_ARG/);
+  assert.equal(
+    await fs.access(markerPath).then(() => true, () => false),
+    false,
+    "the rejected slicer_path must never execute"
+  );
+});
+
+test("empty slicer_path preserves env fallback without enabling executable arguments", async (t) => {
+  const fakeSlicer = await createFakeBambuProjectSlicer(t);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_SERIAL: "TEST_SERIAL",
+      BAMBU_TOKEN: "TEST_TOKEN",
+      BAMBU_MODEL: "",
+      SLICER_PATH: fakeSlicer,
+      MCP_ALLOW_EXECUTABLE_ARG: "",
+      MCP_ALLOW_BRIDGE_COMMAND_ARG: "",
+    },
+    stderr: "pipe",
+  });
+  const client = createClient();
+  t.after(async () => { await closeTransport(transport); });
+
+  await client.connect(transport);
+  const result = await client.callTool({
+    name: "slice_stl",
+    arguments: {
+      stl_path: SAMPLE_STL,
+      slicer_type: "orcaslicer-bambulab",
+      slicer_path: "",
+      bambu_model: "p1s",
+    },
+  });
+
+  assert.equal(result.isError, undefined);
+});
+
+test("print_3mf ignores slicer_path when the archive already contains gcode", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ready-3mf-selector-"));
+  const threeMFPath = path.join(tempDir, "ready.gcode.3mf");
+  const executable = path.join(tempDir, "unexpected-slicer");
+  const markerPath = path.join(tempDir, "executed");
+  const zip = new JSZip();
+  zip.file("Metadata/plate_1.gcode", "; ready to print\n");
+  await fs.writeFile(threeMFPath, await zip.generateAsync({ type: "nodebuffer" }));
+  await fs.writeFile(
+    executable,
+    `#!/bin/sh\nprintf executed > '${markerPath}'\nexit 17\n`,
+    { mode: 0o755 }
+  );
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_SERIAL: "TEST_SERIAL",
+      BAMBU_TOKEN: "TEST_TOKEN",
+      BAMBU_MODEL: "",
+      MCP_ALLOW_EXECUTABLE_ARG: "",
+      MCP_ALLOW_BRIDGE_COMMAND_ARG: "",
+    },
+    stderr: "pipe",
+  });
+  const client = createClient();
+  t.after(async () => {
+    await closeTransport(transport);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  await client.connect(transport);
+  const result = await client.callTool({
+    name: "print_3mf",
+    arguments: {
+      three_mf_path: threeMFPath,
+      bambu_model: "p1s",
+      slicer_path: executable,
+    },
+  });
+  const resultText = result.content?.[0]?.text || "";
+  assert.doesNotMatch(resultText, /MCP_ALLOW_EXECUTABLE_ARG/);
+  assert.equal(
+    await fs.access(markerPath).then(() => true, () => false),
+    false,
+    "a slicer selector supplied with a ready-to-print archive must not execute"
+  );
 });
 
 test("printer model safety: BAMBU_MODEL env var accepted as default", async (t) => {
