@@ -195,6 +195,7 @@ type RuntimeConfig = {
   enableJsonResponse: boolean;
   allowedOrigins: Set<string>;
   blenderBridgeCommand?: string;
+  allowBridgeCommandArg: boolean;
 };
 
 function parseBooleanEnv(rawValue: string | undefined, fallback: boolean): boolean {
@@ -259,6 +260,7 @@ function readRuntimeConfig(): RuntimeConfig {
     enableJsonResponse: parseBooleanEnv(process.env.MCP_HTTP_JSON_RESPONSE, true),
     allowedOrigins: parseCsvEnv(process.env.MCP_HTTP_ALLOWED_ORIGINS),
     blenderBridgeCommand: process.env.BLENDER_MCP_BRIDGE_COMMAND?.trim() || undefined,
+    allowBridgeCommandArg: parseBooleanEnv(process.env.MCP_ALLOW_BRIDGE_COMMAND_ARG, false),
   };
 }
 
@@ -1173,15 +1175,23 @@ class ThreeDPrinterMCPServer {
               properties: {
                 slicer_path: {
                   type: "string",
-                  description: "Path to the FULU OrcaSlicer executable. Defaults from SLICER_PATH/FULU_ORCA_PATH."
+                  description:
+                    "Path to the FULU OrcaSlicer executable. Defaults from SLICER_PATH/FULU_ORCA_PATH. " +
+                    "When run_bridge_probe=true, requires MCP_ALLOW_BRIDGE_COMMAND_ARG=1 to be accepted here."
                 },
                 plugin_dir: {
                   type: "string",
-                  description: "Directory containing the FULU Bambu runtime payload; on macOS this is usually OrcaSlicer.app/Contents/MacOS."
+                  description:
+                    "Directory containing the FULU Bambu runtime payload; on macOS this is usually " +
+                    "OrcaSlicer.app/Contents/MacOS. When run_bridge_probe=true, requires " +
+                    "MCP_ALLOW_BRIDGE_COMMAND_ARG=1 to be accepted here."
                 },
                 runtime_dir: {
                   type: "string",
-                  description: "Installed runtime directory. On macOS this defaults to ~/Library/Application Support/OrcaSlicer/macos-bridge/runtime."
+                  description:
+                    "Installed runtime directory. On macOS this defaults to ~/Library/Application " +
+                    "Support/OrcaSlicer/macos-bridge/runtime. When run_bridge_probe=true, requires " +
+                    "MCP_ALLOW_BRIDGE_COMMAND_ARG=1 to be accepted here."
                 },
                 platform: {
                   type: "string",
@@ -1190,7 +1200,10 @@ class ThreeDPrinterMCPServer {
                 },
                 bridge_command: {
                   type: "string",
-                  description: "Command that starts the FULU BambuNetwork bridge host for probing."
+                  description:
+                    "Command that starts the FULU BambuNetwork bridge host for probing. Read from " +
+                    "FULU_BAMBU_BRIDGE_COMMAND by default; requires MCP_ALLOW_BRIDGE_COMMAND_ARG=1 " +
+                    "to be accepted here."
                 },
                 run_bridge_probe: {
                   type: "boolean",
@@ -1212,7 +1225,10 @@ class ThreeDPrinterMCPServer {
               properties: {
                 bridge_command: {
                   type: "string",
-                  description: "Command that starts the FULU BambuNetwork bridge host. Defaults to FULU_BAMBU_BRIDGE_COMMAND."
+                  description:
+                    "Command that starts the FULU BambuNetwork bridge host. Defaults to " +
+                    "FULU_BAMBU_BRIDGE_COMMAND; requires MCP_ALLOW_BRIDGE_COMMAND_ARG=1 to be " +
+                    "accepted here."
                 },
                 method: {
                   type: "string",
@@ -1303,7 +1319,10 @@ class ThreeDPrinterMCPServer {
                 },
                 bridge_command: {
                   type: "string",
-                  description: "Optional override command for invoking a local Blender MCP bridge."
+                  description:
+                    "Optional override command for invoking a local Blender MCP bridge. Read from " +
+                    "BLENDER_MCP_BRIDGE_COMMAND by default; requires MCP_ALLOW_BRIDGE_COMMAND_ARG=1 " +
+                    "to be accepted here."
                 },
                 execute: {
                   type: "boolean",
@@ -1845,13 +1864,33 @@ class ThreeDPrinterMCPServer {
           }
 
           case "check_fulu_orca_setup": {
+            const runBridgeProbe = Boolean(args?.run_bridge_probe ?? false);
             result = await inspectFuluOrcaSetup({
-              slicerPath: args?.slicer_path !== undefined ? String(args.slicer_path) : undefined,
-              pluginDir: args?.plugin_dir !== undefined ? String(args.plugin_dir) : undefined,
-              runtimeDir: args?.runtime_dir !== undefined ? String(args.runtime_dir) : undefined,
+              slicerPath: this.resolveBridgeExecutableSelectorArg(
+                args?.slicer_path,
+                "check_fulu_orca_setup",
+                "slicer_path",
+                runBridgeProbe
+              ),
+              pluginDir: this.resolveBridgeExecutableSelectorArg(
+                args?.plugin_dir,
+                "check_fulu_orca_setup",
+                "plugin_dir",
+                runBridgeProbe
+              ),
+              runtimeDir: this.resolveBridgeExecutableSelectorArg(
+                args?.runtime_dir,
+                "check_fulu_orca_setup",
+                "runtime_dir",
+                runBridgeProbe
+              ),
               platform: args?.platform !== undefined ? String(args.platform) : undefined,
-              bridgeCommand: args?.bridge_command !== undefined ? String(args.bridge_command) : undefined,
-              runBridgeProbe: Boolean(args?.run_bridge_probe ?? false),
+              bridgeCommand: this.resolveBridgeExecutableSelectorArg(
+                args?.bridge_command,
+                "check_fulu_orca_setup",
+                "bridge_command"
+              ),
+              runBridgeProbe,
               probeTimeoutMs:
                 args?.probe_timeout_ms !== undefined ? Number(args.probe_timeout_ms) : undefined,
             });
@@ -1875,8 +1914,11 @@ class ThreeDPrinterMCPServer {
                 : undefined;
 
             result = await invokeFuluBridgeRpc({
-              bridgeCommand:
-                args?.bridge_command !== undefined ? String(args.bridge_command) : undefined,
+              bridgeCommand: this.resolveBridgeExecutableSelectorArg(
+                args?.bridge_command,
+                "fulu_bambu_network_rpc",
+                "bridge_command"
+              ),
               method,
               payload,
               timeoutMs: args?.timeout_ms !== undefined ? Number(args.timeout_ms) : undefined,
@@ -1918,8 +1960,11 @@ class ThreeDPrinterMCPServer {
               stlPath: String(args.stl_path),
               operations: args.operations.map((entry) => String(entry)),
               execute: Boolean(args.execute ?? false),
-              bridgeCommand:
-                args.bridge_command !== undefined ? String(args.bridge_command) : undefined,
+              bridgeCommand: this.resolveBridgeExecutableSelectorArg(
+                args.bridge_command,
+                "blender_mcp_edit_model",
+                "bridge_command"
+              ),
             });
             break;
             
@@ -2238,6 +2283,35 @@ class ThreeDPrinterMCPServer {
     console.error(
       `3D Printer MCP server running on streamable-http at http://${this.runtimeConfig.httpHost}:${this.runtimeConfig.httpPort}${this.runtimeConfig.httpPath}`
     );
+  }
+
+  /**
+   * Bridge commands and path-derived bridge executables are machine-local
+   * settings. Accepting their selectors as tool arguments means anything that
+   * can steer the model — a model description, a README in a downloaded
+   * archive, 3MF metadata — can choose the program this server runs. They are
+   * read from environment configuration by default and only accepted for
+   * execution when MCP_ALLOW_BRIDGE_COMMAND_ARG is set.
+   */
+  private resolveBridgeExecutableSelectorArg(
+    rawValue: unknown,
+    toolName: string,
+    argumentName: string,
+    bridgeExecutionRequested = true
+  ): string | undefined {
+    if (rawValue === undefined) {
+      return undefined;
+    }
+
+    if (bridgeExecutionRequested && !this.runtimeConfig.allowBridgeCommandArg) {
+      throw new Error(
+        `${toolName}: the ${argumentName} argument cannot select a bridge executable by default. ` +
+        "Bridge executables and their paths are read from server environment configuration. Set " +
+        `MCP_ALLOW_BRIDGE_COMMAND_ARG=1 to accept ${argumentName} for bridge execution.`
+      );
+    }
+
+    return String(rawValue);
   }
 
   private async invokeBlenderBridge(params: {

@@ -256,6 +256,12 @@ MCP_HTTP_ALLOWED_ORIGINS=http://localhost
 
 # Optional bridge command for blender_mcp_edit_model execute=true mode
 BLENDER_MCP_BRIDGE_COMMAND=
+
+# Accept per-call bridge executable selectors instead of reading commands and
+# paths from server environment configuration. Off by default: bridge_command
+# and active-probe slicer_path/plugin_dir/runtime_dir overrides can select which
+# local executable launches. Set to 1 for iterative FULU bridge diagnostics.
+MCP_ALLOW_BRIDGE_COMMAND_ARG=false
 ```
 
 ## Usage
@@ -392,6 +398,15 @@ Ask your MCP client to call `check_fulu_orca_setup`, or call it from an agent wi
 ```
 
 The result reports missing payload files, install/verify commands, the MCP env values to use, and bridge handshake/capability/runtime info when probing is enabled.
+
+> **Per-call executable selectors require `MCP_ALLOW_BRIDGE_COMMAND_ARG=1` for a live probe.**
+> By default the bridge command and its derived paths are read from server environment
+> configuration. Passing `bridge_command`, or passing `slicer_path`, `plugin_dir`, or
+> `runtime_dir` with `run_bridge_probe=true`, returns an error naming the opt-in flag.
+> Non-executing setup inspection can still use the path arguments without the flag. These values
+> select which local executable this server launches, so accepting them for a probe lets whatever
+> is steering the model — a downloaded model's description, a README in an archive, 3MF metadata —
+> choose that program. Set the flag for iterative bridge diagnostics; leave it off for normal use.
 
 #### FULU Bridge RPC
 
@@ -865,6 +880,8 @@ For Bambu printers, this dispatches firmware G-code temperature commands (`M104`
 #### check_fulu_orca_setup
 
 Inspects the FULU OrcaSlicer-bambulab executable, platform runtime payload, setup commands, and optional BambuNetwork bridge probe.
+
+The `bridge_command` shown below requires `MCP_ALLOW_BRIDGE_COMMAND_ARG=1`; otherwise it is read from `FULU_BAMBU_BRIDGE_COMMAND`. See [Check The Setup Through MCP](#check-the-setup-through-mcp).
 
 ```json
 {

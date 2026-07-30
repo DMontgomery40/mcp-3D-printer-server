@@ -725,6 +725,7 @@ test("FULU setup check validates macOS runtime payload and probes bridge", async
       ...process.env,
       MCP_TRANSPORT: "stdio",
       BAMBU_MODEL: "",
+      MCP_ALLOW_BRIDGE_COMMAND_ARG: "1",
     },
     stderr: "pipe",
   });
@@ -777,6 +778,7 @@ test("FULU bridge RPC allows read-only methods and gates mutating print methods"
       MCP_TRANSPORT: "stdio",
       PRINTER_TYPE: "bambu",
       BAMBU_MODEL: "",
+      MCP_ALLOW_BRIDGE_COMMAND_ARG: "1",
     },
     stderr: "pipe",
   });
@@ -839,6 +841,138 @@ test("FULU bridge RPC allows read-only methods and gates mutating print methods"
   assert.equal(allowedPrintPayload.printMethod, true);
   assert.equal(allowedPrintPayload.bambuModel, "p1s");
   assert.equal(allowedPrintPayload.response.method, "net.start_print");
+});
+
+test("bridge_command argument is rejected by default and the env var still works", async (t) => {
+  const bridgeCommand = await createFakeFuluBridge(t);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_MODEL: "",
+      FULU_BAMBU_BRIDGE_COMMAND: bridgeCommand,
+      // Empty rather than "0" so this exercises the shipped default.
+      MCP_ALLOW_BRIDGE_COMMAND_ARG: "",
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await client.connect(transport);
+
+  // The argument is refused on every tool that reaches a bridge spawn.
+  for (const call of [
+    { name: "check_fulu_orca_setup", arguments: { bridge_command: bridgeCommand, run_bridge_probe: true } },
+    { name: "fulu_bambu_network_rpc", arguments: { bridge_command: bridgeCommand, method: "bridge.ping" } },
+    {
+      name: "blender_mcp_edit_model",
+      arguments: {
+        stl_path: SAMPLE_STL,
+        operations: ["remesh"],
+        execute: true,
+        bridge_command: bridgeCommand,
+      },
+    },
+  ]) {
+    const rejected = await client.callTool(call);
+    assert.equal(rejected.isError, true, `${call.name} must reject bridge_command by default`);
+    assert.match(
+      rejected.content?.[0]?.text || "",
+      /MCP_ALLOW_BRIDGE_COMMAND_ARG/,
+      `${call.name} must name the opt-in env var so the fix is discoverable`
+    );
+  }
+
+  // The capability itself is untouched: the env var still drives the bridge.
+  const viaEnv = await client.callTool({
+    name: "fulu_bambu_network_rpc",
+    arguments: { method: "bridge.ping" },
+  });
+  assert.equal(viaEnv.isError, undefined, "FULU_BAMBU_BRIDGE_COMMAND must still reach the bridge");
+  assert.equal(parseJsonResult(viaEnv).response.value, "pong");
+});
+
+test("bridge probes reject every per-call executable path selector by default", async (t) => {
+  const bundle = await createFakeFuluBundle(t);
+  const markerPath = path.join(path.dirname(bundle.pluginDir), "unexpected-bridge-execution");
+  await fs.writeFile(
+    path.join(bundle.pluginDir, "pjarczak-bambu-linux-host-wrapper"),
+    `#!/bin/sh\nprintf executed > '${markerPath}'\nexit 0\n`,
+    { mode: 0o755 }
+  );
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [SERVER_ENTRY],
+    env: {
+      ...process.env,
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      BAMBU_MODEL: "",
+      FULU_BAMBU_BRIDGE_COMMAND: "",
+      FULU_ORCA_PLUGIN_DIR: "",
+      ORCASLICER_BAMBULAB_PLUGIN_DIR: "",
+      MCP_ALLOW_BRIDGE_COMMAND_ARG: "",
+    },
+    stderr: "pipe",
+  });
+
+  const client = createClient();
+
+  t.after(async () => {
+    await closeTransport(transport);
+  });
+
+  await client.connect(transport);
+
+  for (const [argumentName, argumentValue] of [
+    ["slicer_path", bundle.slicerPath],
+    ["plugin_dir", bundle.pluginDir],
+    ["runtime_dir", bundle.runtimeDir],
+  ]) {
+    const rejected = await client.callTool({
+      name: "check_fulu_orca_setup",
+      arguments: {
+        platform: "darwin",
+        [argumentName]: argumentValue,
+        run_bridge_probe: true,
+      },
+    });
+    assert.equal(
+      rejected.isError,
+      true,
+      `${argumentName} must not select a spawned executable without the explicit opt-in`
+    );
+    assert.match(rejected.content?.[0]?.text || "", new RegExp(argumentName));
+    assert.match(rejected.content?.[0]?.text || "", /MCP_ALLOW_BRIDGE_COMMAND_ARG/);
+  }
+
+  assert.equal(
+    await fs.access(markerPath).then(() => true, () => false),
+    false,
+    "a rejected path override must not execute the derived bridge command"
+  );
+
+  const inspection = await client.callTool({
+    name: "check_fulu_orca_setup",
+    arguments: {
+      platform: "darwin",
+      slicer_path: bundle.slicerPath,
+      plugin_dir: bundle.pluginDir,
+      runtime_dir: bundle.runtimeDir,
+      run_bridge_probe: false,
+    },
+  });
+  assert.equal(inspection.isError, undefined, "path overrides remain available for non-executing inspection");
+  assert.equal(parseJsonResult(inspection).status, "ready");
 });
 
 test("printer model safety: BAMBU_MODEL env var accepted as default", async (t) => {
