@@ -154,7 +154,8 @@ npm install -g mcp-3d-printer-server
 ```bash
 git clone https://github.com/dmontgomery40/mcp-3d-printer-server.git
 cd mcp-3d-printer-server
-npm install
+npm ci
+npm run build
 npm link  # Makes the command available globally
 ```
 
