@@ -504,6 +504,8 @@ are `decimate:<ratio>` (greater than zero through one), `remesh:<positive voxel
 size in STL units>`, and `boolean_union:<STL path>`. The helper requires Object
 Mode, preserves existing scene objects and selection, and publishes a new STL
 only after checking a matching export receipt and a finite triangle mesh.
+Binary STLs are validated in small chunks and may be up to 256 MiB. ASCII STLs
+are limited to 4 MiB; export larger meshes as binary STL.
 Existing input and output files are never overwritten. Inspect the result
 before slicing: valid STL geometry does not guarantee printability.
 

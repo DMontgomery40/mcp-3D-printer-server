@@ -197,6 +197,68 @@ test("Blender edits validate inputs and never overwrite an existing file", async
   assert.deepEqual(peer.events(), []);
 });
 
+test("Blender validates large binary STLs in bounded memory and checks the final triangle", async (t) => {
+  const peer = await start(t, "normal", { NODE_OPTIONS: "--max-old-space-size=64" });
+  const input = path.join(peer.directory, "large.stl");
+  const triangles = Math.floor((256 * 1024 * 1024 - 84) / 50);
+  const bytes = 84 + triangles * 50;
+  const header = Buffer.alloc(84);
+  header.write("solid binary headers may begin with this word");
+  header.writeUInt32LE(triangles, 80);
+  const fd = fs.openSync(input, "w");
+  fs.writeSync(fd, header);
+  fs.ftruncateSync(fd, bytes); // Sparse, finite triangles: no large test allocation.
+  fs.closeSync(fd);
+  const request = { stl_path: input, operations: ["decimate:0.5"] };
+  const preview = await peer.call("blender_mcp_edit_model", request);
+  assert.equal(preview.isError, undefined, errorText(preview));
+  const invalid = Buffer.alloc(4);
+  invalid.writeFloatLE(NaN);
+  const changed = fs.openSync(input, "r+");
+  fs.writeSync(changed, invalid, 0, 4, bytes - 6);
+  fs.closeSync(changed);
+  const rejected = await peer.call("blender_mcp_edit_model", request);
+  assert.equal(rejected.isError, true);
+  assert.match(errorText(rejected), /finite triangle/);
+  assert.deepEqual(peer.events(), []);
+});
+
+test("Blender rejects oversized ASCII STLs before parsing or launching Blender", async (t) => {
+  const peer = await start(t);
+  const input = path.join(peer.directory, "large-ascii.stl");
+  fs.writeFileSync(input, fs.readFileSync(sample, "utf8") + " ".repeat(4 * 1024 * 1024));
+  const result = await peer.call("blender_mcp_edit_model", { stl_path: input, operations: ["decimate:0.5"] });
+  assert.equal(result.isError, true);
+  assert.match(errorText(result), /ASCII.*4 MiB/);
+  assert.deepEqual(peer.events(), []);
+});
+
+test("Blender rejects invalid binary counts before allocating a mesh", async (t) => {
+  const peer = await start(t, "normal", { NODE_OPTIONS: "--max-old-space-size=64" });
+  const input = path.join(peer.directory, "malformed.stl");
+  for (const count of [0, 2, 0xffffffff]) {
+    const buffer = Buffer.alloc(134);
+    buffer.writeUInt32LE(count, 80);
+    fs.writeFileSync(input, buffer);
+    const result = await peer.call("blender_mcp_edit_model", { stl_path: input, operations: ["decimate:0.5"] });
+    assert.equal(result.isError, true);
+    assert.match(errorText(result), /finite triangle/);
+  }
+  assert.deepEqual(peer.events(), []);
+});
+
+test("Blender keeps supported ASCII header variants", async (t) => {
+  const peer = await start(t);
+  const input = path.join(peer.directory, "ascii.stl");
+  const mesh = fs.readFileSync(sample, "utf8");
+  for (const text of ["\n" + mesh, "\uFEFF" + mesh, mesh.replace(/^solid exported/, "solidCube")]) {
+    fs.writeFileSync(input, text);
+    const result = await peer.call("blender_mcp_edit_model", { stl_path: input, operations: ["decimate:0.5"] });
+    assert.equal(result.isError, undefined, errorText(result));
+  }
+  assert.deepEqual(peer.events(), []);
+});
+
 test("Blender execute=true with no standard or legacy configuration errors", async (t) => {
   const peer = await start(t, "normal", { BLENDER_MCP_COMMAND: "" });
   const result = await peer.call("blender_mcp_edit_model", { stl_path: sample, operations: ["remesh"], execute: true });

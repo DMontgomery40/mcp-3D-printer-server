@@ -8,6 +8,7 @@
   confirmation remains outstanding; no printer commands were sent in testing.
 - Port standard Blender MCP discovery, tool forwarding, and verified STL edit
   support from the Bambu fork. Preserve this server's legacy shell/stdin bridge.
+- Validate binary STL edits in bounded memory and cap ASCII inputs at 4 MiB.
 - Require the Bambu model on raw print starts and upload-with-print, matching
   the fork's safety checks. Keep uploads without printing available.
 - Isolate server and inline-upload scratch paths to prevent filename traversal

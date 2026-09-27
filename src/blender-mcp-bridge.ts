@@ -12,6 +12,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
 const MAX_STL_BYTES = 256 * 1024 * 1024;
+const MAX_ASCII_STL_BYTES = 4 * 1024 * 1024;
 const RECEIPT_PREFIX = "BAMBU_STL_RESULT:";
 type Arguments = Record<string, unknown>;
 type Operation = { type: "decimate"; ratio: number } | { type: "remesh"; voxelSize: number } | { type: "boolean_union"; path: string };
@@ -99,15 +100,58 @@ function normalizeToolFailure(result: CallToolResult): CallToolResult {
 async function regularStl(filePath: string): Promise<{ bytes: number; triangles: number }> {
   const stat = await fs.lstat(filePath).catch(() => { throw new BlenderError("STL file does not exist or is not readable."); });
   if (!stat.isFile() || stat.size === 0 || stat.size > MAX_STL_BYTES) throw new BlenderError("STL must be a non-empty regular file of at most 256 MiB.");
-  const buffer = await fs.readFile(filePath);
+  const file = await fs.open(filePath, "r");
   let geometry;
   try {
-    geometry = new STLLoader().parse(Uint8Array.from(buffer).buffer);
+    // Read a fixed number of bytes, even if the file grows during validation.
+    const read = async (buffer: Buffer, position: number, length = buffer.length): Promise<void> => {
+      let offset = 0;
+      while (offset < length) {
+        const { bytesRead } = await file.read(buffer, offset, length - offset, position + offset);
+        if (!bytesRead) throw new Error("truncated STL");
+        offset += bytesRead;
+      }
+    };
+    const current = await file.stat();
+    if (!current.isFile() || current.size !== stat.size) throw new Error("STL changed during validation");
+    const header = Buffer.alloc(Math.min(84, stat.size));
+    await read(header, 0);
+    const triangles = header.length === 84 ? header.readUInt32LE(80) : 0;
+    if (triangles > 0 && 84 + triangles * 50 === stat.size) {
+      // Validate binary records directly; constructing a Three.js geometry would
+      // expand a 256 MiB input into hundreds of MiB of positions/normals/colors.
+      const chunk = Buffer.alloc(50 * 1024);
+      for (let position = 84; position < stat.size; position += chunk.length) {
+        const length = Math.min(chunk.length, stat.size - position);
+        await read(chunk, position, length);
+        for (let face = 0; face < length; face += 50) {
+          for (let coordinate = 12; coordinate < 48; coordinate += 4) {
+            if (!Number.isFinite(chunk.readFloatLE(face + coordinate))) throw new Error("invalid vertices");
+          }
+        }
+      }
+      return { bytes: stat.size, triangles };
+    }
+    // Reject malformed binary headers before a parser can allocate arrays from
+    // an untrusted triangle count. ASCII parsing has its own smaller bound.
+    // Match STLLoader's ASCII detection, including short prefixes/BOMs and the
+    // common "solidName" spelling, so it cannot fall back to binary allocation.
+    if (![0, 1, 2, 3, 4].some((offset) => header.toString("latin1", offset, offset + 5) === "solid")) throw new Error("invalid STL header");
+    if (stat.size > MAX_ASCII_STL_BYTES) throw new BlenderError("ASCII STL files must be at most 4 MiB; export binary STL for larger meshes.");
+    const buffer = Buffer.alloc(stat.size);
+    await read(buffer, 0);
+    if (!buffer.subarray(0, header.length).equals(header)) throw new Error("STL changed during validation");
+    geometry = new STLLoader().parse(buffer.buffer as ArrayBuffer);
     const positions = geometry.getAttribute("position");
     if (!positions || positions.count < 3 || positions.count % 3 !== 0 || !positions.array.every(Number.isFinite)) throw new Error("invalid vertices");
     return { bytes: stat.size, triangles: positions.count / 3 };
-  } catch { throw new BlenderError("STL contains no valid finite triangle mesh."); }
-  finally { geometry?.dispose(); }
+  } catch (error) {
+    if (error instanceof BlenderError) throw error;
+    throw new BlenderError("STL contains no valid finite triangle mesh.");
+  } finally {
+    geometry?.dispose();
+    await file.close();
+  }
 }
 
 async function inputPath(value: unknown, label: string): Promise<string> {
