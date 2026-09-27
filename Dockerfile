@@ -1,7 +1,4 @@
-FROM node:23-alpine@sha256:86703151a18fcd06258e013073508c4afea8e19cd7ed451554221dd00aea83fc
-
-# Install build-time TypeScript compiler
-RUN apk add --no-cache typescript
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
 
 # Add non-root user
 RUN addgroup -S group && adduser -S user -G group

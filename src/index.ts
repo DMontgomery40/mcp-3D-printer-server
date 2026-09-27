@@ -15,6 +15,8 @@ import axios from "axios";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
+import os from "node:os";
+import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
@@ -36,7 +38,7 @@ const DEFAULT_HOST = process.env.PRINTER_HOST || "localhost";
 const DEFAULT_PORT = process.env.PRINTER_PORT || "80";
 const DEFAULT_API_KEY = process.env.API_KEY || "";
 const DEFAULT_TYPE = process.env.PRINTER_TYPE || "octoprint"; // Default to OctoPrint
-const TEMP_DIR = process.env.TEMP_DIR || path.join(process.cwd(), "temp");
+const TEMP_DIR = process.env.TEMP_DIR || fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
 
 // Slicer configuration
 const CANONICAL_SLICER_TYPES = [
@@ -281,6 +283,7 @@ if (!fs.existsSync(TEMP_DIR)) {
 
 class ThreeDPrinterMCPServer {
   private server: Server;
+  private readonly blender = new BlenderMcpBridge();
   private printerFactory: PrinterFactory;
   private stlManipulator: STLManipulator;
   private readonly runtimeConfig: RuntimeConfig;
@@ -291,7 +294,7 @@ class ThreeDPrinterMCPServer {
     this.server = new Server(
       {
         name: "mcp-3d-printer-server",
-        version: "1.2.0"
+        version: JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version
       },
       {
         capabilities: {
@@ -613,6 +616,11 @@ class ThreeDPrinterMCPServer {
                   type: "string",
                   description: "Access token for Bambu Lab printers (default: value from env)"
                 },
+                bambu_model: {
+                  type: "string",
+                  enum: [...VALID_BAMBU_MODELS],
+                  description: "Required for Bambu print operations unless BAMBU_MODEL is configured. Must match the printer and pre-sliced G-code."
+                },
                 filename: {
                   type: "string",
                   description: "Filename to use on the printer. Defaults to the basename of gcode_path when omitted."
@@ -661,6 +669,11 @@ class ThreeDPrinterMCPServer {
                 bambu_token: {
                   type: "string",
                   description: "Access token for Bambu Lab printers (default: value from env)"
+                },
+                bambu_model: {
+                  type: "string",
+                  enum: [...VALID_BAMBU_MODELS],
+                  description: "Required for Bambu print operations unless BAMBU_MODEL is configured. Must match the printer and pre-sliced G-code."
                 },
                 filename: {
                   type: "string",
@@ -1305,33 +1318,53 @@ class ThreeDPrinterMCPServer {
             }
           },
           {
-            name: "blender_mcp_edit_model",
-            description: "Optionally send STL-edit instructions to a Blender MCP bridge command. Use for advanced model edits outside built-in STL tools.",
+            name: "blender_mcp_status",
+            description: "Inspect Blender MCP configuration or connect and discover the remote server's tools and schemas. Connecting does not edit the scene; use get_scene_info through blender_mcp_call to check the Blender addon.",
             inputSchema: {
               type: "object",
               properties: {
-                stl_path: {
-                  type: "string",
-                  description: "Path to the local STL file."
-                },
+                connect: { type: "boolean", description: "Initialize the configured stdio MCP server and discover its tools (default false)." },
+                timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total connection and discovery deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." }
+              },
+              additionalProperties: false
+            }
+          },
+          {
+            name: "blender_mcp_call",
+            description: "Call a discovered tool on the configured Blender MCP server, preserving its full MCP content and errors. Discover tool schemas with blender_mcp_status first; execute_blender_code accepts Python code and user_prompt. Calls can modify the active Blender scene and are never automatically retried.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                tool_name: { type: "string", description: "Exact name advertised by Blender MCP, such as get_scene_info or execute_blender_code." },
+                arguments: { type: "object", description: "Arguments matching the remote tool's discovered input schema. Preserve the user's own words in user_prompt when the remote tool requests it." },
+                timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total connection, discovery, and tool deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." }
+              },
+              required: ["tool_name"],
+              additionalProperties: false
+            }
+          },
+          {
+            name: "blender_mcp_edit_model",
+            description: "Import, edit, and export a local STL through standard Blender MCP with verified output and existing scene objects preserved. Requires a shared local filesystem and Blender Object Mode. Also supports a separately configured legacy executable bridge.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                stl_path: { type: "string", description: "Path to the local STL file" },
                 operations: {
                   type: "array",
-                  description: "Ordered edit operations for Blender (e.g. remesh, boolean, decimate).",
+                  description: "Ordered operations: decimate:<ratio greater than 0 and at most 1>, remesh:<positive voxel size in STL units>, boolean_union:<STL path>. Legacy custom bridges define their own operations.",
+                  minItems: 1,
+                  maxItems: 64,
                   items: { type: "string" }
                 },
-                bridge_command: {
-                  type: "string",
-                  description:
-                    "Optional override command for invoking a local Blender MCP bridge. Read from " +
-                    "BLENDER_MCP_BRIDGE_COMMAND by default; requires MCP_ALLOW_EXECUTABLE_ARG=1 " +
-                    "to be accepted here."
-                },
-                execute: {
-                  type: "boolean",
-                  description: "When true, attempts to execute bridge command; otherwise returns a prepared payload only."
-                }
+                output_path: { type: "string", description: "New local STL output path for standard MCP editing; its parent must exist and existing files are never overwritten." },
+                user_prompt: { type: "string", description: "The user's own words describing the edit, passed unchanged to Blender MCP." },
+                timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total Blender request deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." },
+                bridge_command: { type: "string", description: "Legacy custom bridge executable override, not a standard MCP command. Per-call overrides require MCP_ALLOW_EXECUTABLE_ARG=1." },
+                execute: { type: "boolean", description: "Apply edits and export (true) or validate and return the prepared request without connecting (false, default)." }
               },
-              required: ["stl_path", "operations"]
+              required: ["stl_path", "operations"],
+              additionalProperties: false
             }
           }
         ]
@@ -1339,7 +1372,7 @@ class ThreeDPrinterMCPServer {
     });
 
     // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { name, arguments: args } = request.params;
       
       // Set default values for common parameters
@@ -1375,6 +1408,12 @@ class ThreeDPrinterMCPServer {
             if (!args?.filename && !args?.gcode_path) {
               throw new Error("Missing required parameter: filename");
             }
+            if (args.print !== undefined && typeof args.print !== "boolean") {
+              throw new Error("print must be a boolean.");
+            }
+            if (type.toLowerCase() === "bambu" && args.print === true) {
+              await this.resolveBambuModel(args?.bambu_model as string | undefined);
+            }
             const uploadFilename = String(args?.filename || path.basename(String(args.gcode_path)));
             const uploadGcodeSource = String(args?.gcode_path || args.gcode);
             result = await this.uploadGcode(
@@ -1388,6 +1427,9 @@ class ThreeDPrinterMCPServer {
           case "start_print":
             if (!args?.filename) {
               throw new Error("Missing required parameter: filename");
+            }
+            if (type.toLowerCase() === "bambu") {
+              await this.resolveBambuModel(args?.bambu_model as string | undefined);
             }
             result = await this.startPrint(host, port, type, apiKey, bambuSerial, bambuToken, String(args.filename));
             break;
@@ -1981,24 +2023,27 @@ class ThreeDPrinterMCPServer {
             result = await this.stlManipulator.layFlat(String(args.stl_path));
             break;
 
+          case "blender_mcp_status":
+            result = await this.blender.status(args ?? {}, extra.signal);
+            break;
+
+          case "blender_mcp_call":
+            return await this.blender.call(args ?? {}, extra.signal);
+
           case "blender_mcp_edit_model":
-            if (!args?.stl_path || !Array.isArray(args.operations)) {
-              throw new Error("Missing required parameters: stl_path and operations");
-            }
-            result = await this.invokeBlenderBridge({
-              stlPath: String(args.stl_path),
-              operations: args.operations.map((entry) => String(entry)),
-              execute: Boolean(args.execute ?? false),
-              bridgeCommand: this.resolveExecutableSelectorArg(
-                args.bridge_command,
+            result = await this.blender.edit(
+              args ?? {},
+              this.resolveExecutableSelectorArg(
+                args?.bridge_command,
                 "blender_mcp_edit_model",
                 "bridge_command",
                 true,
                 true
-              ),
-            });
+              ) ?? (!process.env.BLENDER_MCP_COMMAND?.trim() ? this.runtimeConfig.blenderBridgeCommand : undefined),
+              extra.signal
+            );
             break;
-            
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -2100,14 +2145,17 @@ class ThreeDPrinterMCPServer {
     print: boolean
   ) {
     const sourceIsFilePath = fs.existsSync(gcode) && fs.statSync(gcode).isFile();
-    const tempFilePath = sourceIsFilePath ? gcode : path.join(TEMP_DIR, filename);
-
-    if (!sourceIsFilePath) {
-      fs.mkdirSync(TEMP_DIR, { recursive: true });
-      fs.writeFileSync(tempFilePath, gcode);
+    // The remote filename must never select a local write/delete target.
+    const localFilename = path.basename(filename);
+    if (!sourceIsFilePath && (!localFilename || localFilename === "." || localFilename === "..")) {
+      throw new Error("filename must include a file basename.");
     }
+    const scratchDir = sourceIsFilePath ? undefined : fs.mkdtempSync(path.join(TEMP_DIR, "upload-"));
+    // Multipart adapters infer their file-part name from this safe basename.
+    const tempFilePath = scratchDir ? path.join(scratchDir, localFilename) : gcode;
 
     try {
+      if (scratchDir) fs.writeFileSync(tempFilePath, gcode);
       const implementation = this.printerFactory.getImplementation(type);
       
       if (type.toLowerCase() === "bambu") {
@@ -2117,9 +2165,7 @@ class ThreeDPrinterMCPServer {
       
       return await implementation.uploadFile(host, port, apiKey, tempFilePath, filename, print);
     } finally {
-      if (!sourceIsFilePath && fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
-      }
+      if (scratchDir) fs.rmSync(scratchDir, { recursive: true, force: true });
     }
   }
 
@@ -2354,80 +2400,6 @@ class ThreeDPrinterMCPServer {
     }
 
     return value;
-  }
-
-  private async invokeBlenderBridge(params: {
-    stlPath: string;
-    operations: string[];
-    execute: boolean;
-    bridgeCommand?: string;
-  }): Promise<Record<string, unknown>> {
-    const command = params.bridgeCommand ?? this.runtimeConfig.blenderBridgeCommand;
-    const payload = {
-      modelPath: params.stlPath,
-      operations: params.operations,
-      source: "mcp-3d-printer-server"
-    };
-
-    if (!params.execute) {
-      return {
-        status: "prepared",
-        message: "Prepared Blender MCP payload. Set execute=true to run bridge command.",
-        bridgeCommand: command ?? null,
-        payload
-      };
-    }
-
-    if (!command) {
-      throw new Error(
-        "execute=true requires bridge_command or BLENDER_MCP_BRIDGE_COMMAND env var."
-      );
-    }
-
-    const { spawn } = await import("node:child_process");
-    const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(command, {
-        shell: true,
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-
-      let stdout = "";
-      let stderr = "";
-
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => {
-        stdout += chunk;
-      });
-      child.stderr.on("data", (chunk: string) => {
-        stderr += chunk;
-      });
-      child.on("error", reject);
-      child.on("close", (code) => {
-        if (code === 0) {
-          resolve({ stdout, stderr });
-          return;
-        }
-
-        reject(
-          new Error(
-            `Blender bridge command exited with code ${code ?? "unknown"}${
-              stderr.trim() ? `: ${stderr.trim()}` : ""
-            }`
-          )
-        );
-      });
-
-      child.stdin.write(JSON.stringify(payload));
-      child.stdin.end();
-    });
-
-    return {
-      status: "executed",
-      bridgeCommand: command,
-      stdout: result.stdout?.toString() ?? "",
-      stderr: result.stderr?.toString() ?? ""
-    };
   }
 
   async close(): Promise<void> {
