@@ -18,8 +18,18 @@ type Arguments = Record<string, unknown>;
 type Operation = { type: "decimate"; ratio: number } | { type: "remesh"; voxelSize: number } | { type: "boolean_union"; path: string };
 type EditPlan = { requestId: string; stlPath: string; outputPath: string; stagedOutputPath: string; operations: Operation[] };
 type Session = { client: Client; tools: Tool[]; options: () => { signal: AbortSignal; timeout: number }; markDispatched: () => void };
+type EditDeadline = { check: () => void; remaining: () => number };
 
 class BlenderError extends Error {}
+
+function editDeadline(timeout: number, signal?: AbortSignal): EditDeadline {
+  const deadline = performance.now() + timeout;
+  const check = () => {
+    if (signal?.aborted) throw new BlenderError("Blender edit cancelled. If execution started, inspect Blender before retrying.");
+    if (performance.now() >= deadline) throw new BlenderError("Blender edit timed out. If execution started, inspect Blender before retrying.");
+  };
+  return { check, remaining: () => { check(); return Math.max(1, Math.ceil(deadline - performance.now())); } };
+}
 
 class ClosingStdioTransport extends StdioClientTransport {
   private closing?: Promise<void>;
@@ -97,8 +107,10 @@ function normalizeToolFailure(result: CallToolResult): CallToolResult {
   return failed ? { ...result, isError: true } : result;
 }
 
-async function regularStl(filePath: string): Promise<{ bytes: number; triangles: number }> {
+async function regularStl(filePath: string, deadline: EditDeadline): Promise<{ bytes: number; triangles: number }> {
+  deadline.check();
   const stat = await fs.lstat(filePath).catch(() => { throw new BlenderError("STL file does not exist or is not readable."); });
+  deadline.check();
   if (!stat.isFile() || stat.size === 0 || stat.size > MAX_STL_BYTES) throw new BlenderError("STL must be a non-empty regular file of at most 256 MiB.");
   const file = await fs.open(filePath, "r");
   let geometry;
@@ -107,7 +119,9 @@ async function regularStl(filePath: string): Promise<{ bytes: number; triangles:
     const read = async (buffer: Buffer, position: number, length = buffer.length): Promise<void> => {
       let offset = 0;
       while (offset < length) {
+        deadline.check();
         const { bytesRead } = await file.read(buffer, offset, length - offset, position + offset);
+        deadline.check();
         if (!bytesRead) throw new Error("truncated STL");
         offset += bytesRead;
       }
@@ -130,6 +144,7 @@ async function regularStl(filePath: string): Promise<{ bytes: number; triangles:
           }
         }
       }
+      deadline.check();
       return { bytes: stat.size, triangles };
     }
     // Reject malformed binary headers before a parser can allocate arrays from
@@ -144,6 +159,7 @@ async function regularStl(filePath: string): Promise<{ bytes: number; triangles:
     geometry = new STLLoader().parse(buffer.buffer as ArrayBuffer);
     const positions = geometry.getAttribute("position");
     if (!positions || positions.count < 3 || positions.count % 3 !== 0 || !positions.array.every(Number.isFinite)) throw new Error("invalid vertices");
+    deadline.check();
     return { bytes: stat.size, triangles: positions.count / 3 };
   } catch (error) {
     if (error instanceof BlenderError) throw error;
@@ -154,16 +170,17 @@ async function regularStl(filePath: string): Promise<{ bytes: number; triangles:
   }
 }
 
-async function inputPath(value: unknown, label: string): Promise<string> {
+async function inputPath(value: unknown, label: string, deadline: EditDeadline): Promise<string> {
+  deadline.check();
   const filePath = path.resolve(textArgument(value, label));
   if (path.extname(filePath).toLowerCase() !== ".stl") throw new BlenderError(`${label} must name an STL file.`);
   const resolved = await fs.realpath(filePath).catch(() => { throw new BlenderError(`${label} does not exist.`); });
-  await regularStl(resolved);
+  await regularStl(resolved, deadline);
   return resolved;
 }
 
-async function editPlan(args: Arguments): Promise<EditPlan> {
-  const stlPath = await inputPath(args.stl_path, "stl_path");
+async function editPlan(args: Arguments, deadline: EditDeadline): Promise<EditPlan> {
+  const stlPath = await inputPath(args.stl_path, "stl_path", deadline);
   const requestedOutput = args.output_path === undefined
     ? path.join(path.dirname(stlPath), `model-edited-${randomUUID()}.stl`)
     : path.resolve(textArgument(args.output_path, "output_path"));
@@ -177,11 +194,12 @@ async function editPlan(args: Arguments): Promise<EditPlan> {
   if (existing) throw new BlenderError("output_path already exists; choose a new file. Input files are never overwritten.");
   const operations: Operation[] = [];
   for (const operation of args.operations as string[]) {
+    deadline.check();
     const separator = operation.indexOf(":");
     const type = operation.slice(0, separator);
     const value = operation.slice(separator + 1);
     if (separator > 0 && type === "boolean_union") {
-      operations.push({ type, path: await inputPath(value, "boolean_union operand") });
+      operations.push({ type, path: await inputPath(value, "boolean_union operand", deadline) });
     } else if (separator > 0 && type === "decimate" && value.trim() && Number.isFinite(Number(value)) && Number(value) > 0 && Number(value) <= 1) {
       operations.push({ type, ratio: Number(value) });
     } else if (separator > 0 && type === "remesh" && value.trim() && Number.isFinite(Number(value)) && Number(value) > 0) {
@@ -361,20 +379,22 @@ export class BlenderMcpBridge {
     if (!Array.isArray(args.operations) || args.operations.length === 0 || args.operations.length > 64 || args.operations.some((entry) => typeof entry !== "string" || !entry.trim() || entry.includes("\0"))) throw new BlenderError("operations must contain 1 to 64 non-empty strings.");
     const execute = booleanArgument(args.execute, "execute");
     const timeout = timeoutMilliseconds(args.timeout_ms);
+    const deadline = editDeadline(timeout, signal);
+    deadline.check();
     if (args.user_prompt !== undefined && typeof args.user_prompt !== "string") throw new BlenderError("user_prompt must be a string.");
     const command = legacyCommand || (!process.env.BLENDER_MCP_COMMAND?.trim() ? process.env.BLENDER_MCP_BRIDGE_COMMAND?.trim() : undefined);
     if (command || !process.env.BLENDER_MCP_COMMAND?.trim()) {
       const payload = { stlPath, modelPath: stlPath, source: "mcp-3d-printer-server", operations: args.operations, ...(args.output_path !== undefined ? { outputPath: textArgument(args.output_path, "output_path") } : {}) };
       if (!execute) return { status: "prepared", mode: "legacy", bridgeCommand: command ?? null, payload, note: "Legacy bridge payload only. Configure BLENDER_MCP_COMMAND and BLENDER_MCP_ARGS for standard MCP, or BLENDER_MCP_BRIDGE_COMMAND for a custom executable." };
       if (!command) throw new BlenderError("No Blender connection configured. Set BLENDER_MCP_COMMAND and BLENDER_MCP_ARGS, or a legacy BLENDER_MCP_BRIDGE_COMMAND executable.");
-      await inputPath(stlPath, "stl_path");
+      await inputPath(stlPath, "stl_path", deadline);
       let output;
       try {
         const serialized = JSON.stringify(payload);
-        const options = { env: { ...process.env, MCP_BLENDER_PAYLOAD: serialized }, timeout, signal, maxBuffer: 8 * 1024 * 1024 };
         // Preserve this server's trusted legacy shell-command + stdin contract.
         // Bare executable paths (including spaces) also work as in the Bambu fork.
         const isFile = await fs.stat(command).then((stat) => stat.isFile(), () => false);
+        const options = { env: { ...process.env, MCP_BLENDER_PAYLOAD: serialized }, timeout: deadline.remaining(), signal, maxBuffer: 8 * 1024 * 1024 };
         const pending = isFile ? execFileAsync(command, [], options) : execAsync(command, options);
         pending.child.stdin?.on("error", () => {});
         pending.child.stdin?.end(serialized);
@@ -386,18 +406,20 @@ export class BlenderMcpBridge {
       if (parsed?.isError === true || parsed?.ok === false || parsed?.success === false || parsed?.status === "error" || /^\s*(Error\b|Traceback\b)/i.test(output.stdout)) throw new BlenderError("Legacy Blender bridge reported an error; no edited output was verified.");
       return { status: "executed", mode: "legacy", output_verified: false, stdout: output.stdout.trim(), stderr: output.stderr.trim(), ...(parsed !== undefined ? { bridge_result: parsed } : {}) };
     }
-    const plan = await editPlan(args);
+    const plan = await editPlan(args, deadline);
     const code = editScript(plan);
+    deadline.check();
     if (!execute) return { status: "prepared", mode: "mcp", output_path: plan.outputPath, payload: plan, code };
     try {
-      const result = await this.session(timeout, signal, (session) => this.invoke(session, "execute_blender_code", { code, user_prompt: args.user_prompt ?? "" }));
+      const result = await this.session(deadline.remaining(), signal, (session) => this.invoke(session, "execute_blender_code", { code, user_prompt: args.user_prompt ?? "" }));
       if (result.isError) throw new BlenderError("Blender MCP reported an editing error. No output was published.");
       const text = result.content.filter((entry) => entry.type === "text").map((entry) => entry.text).join("\n");
       const receipts = [...text.matchAll(/BAMBU_STL_RESULT:(\{[^\n]*\})/g)];
       let receipt: any;
       try { receipt = JSON.parse(receipts.at(-1)?.[1] ?? "null"); } catch { /* Invalid receipt is a failure. */ }
       if (receipt?.requestId !== plan.requestId || receipt?.outputPath !== plan.stagedOutputPath) throw new BlenderError("Blender did not return a matching export receipt. Inspect its connection and tool result; no output was published.");
-      const metadata = await regularStl(plan.stagedOutputPath);
+      const metadata = await regularStl(plan.stagedOutputPath, deadline);
+      deadline.check();
       // link() publishes without replacing a file created since preflight; staging is on the same filesystem.
       await fs.link(plan.stagedOutputPath, plan.outputPath).catch(() => { throw new BlenderError("Cannot publish the edited STL; output_path may already exist or be unwritable."); });
       return { status: "success", mode: "mcp", output_path: plan.outputPath, ...metadata, output_verified: true, blender_result: result };

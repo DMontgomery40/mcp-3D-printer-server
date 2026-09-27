@@ -513,6 +513,8 @@ before slicing: valid STL geometry does not guarantee printability.
 bounded connection/discovery/call deadlines, close their child connection,
 and never automatically replay interrupted edits. After an interruption,
 inspect Blender before retrying because an edit may already have started.
+The edit deadline also covers input and output validation; cancellation stops
+validation between file reads, including scans of Boolean operands.
 MCP connection success alone does not prove the Blender addon is connected.
 
 Legacy `BLENDER_MCP_BRIDGE_COMMAND` shell commands remain supported. They
