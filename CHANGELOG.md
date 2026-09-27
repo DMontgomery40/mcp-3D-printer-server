@@ -3,7 +3,8 @@
 ## 1.2.9
 
 - Address Bambu FTPS upload failures reported in #22 by using TLS 1.2 control
-  and data channels with verified session reuse. Physical X1C firmware
+  and data channels with explicit host identity and verified session reuse,
+  including the Node 22/24 wrapped-socket session regression. Physical X1C firmware
   confirmation remains outstanding; no printer commands were sent in testing.
 - Port standard Blender MCP discovery, tool forwarding, and verified STL edit
   support from the Bambu fork. Preserve this server's legacy shell/stdin bridge.

@@ -1357,7 +1357,7 @@ class ThreeDPrinterMCPServer {
                   maxItems: 64,
                   items: { type: "string" }
                 },
-                output_path: { type: "string", description: "New local STL output path for standard MCP editing; its parent must exist and existing files are never overwritten." },
+                output_path: { type: "string", description: "New local STL output path for standard MCP editing; defaults to a unique model-edited-<id>.stl beside the input. Its parent must exist and existing files are never overwritten. Reuse the preview's output_path when executing that plan." },
                 user_prompt: { type: "string", description: "The user's own words describing the edit, passed unchanged to Blender MCP." },
                 timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total Blender request deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." },
                 bridge_command: { type: "string", description: "Legacy custom bridge executable override, not a standard MCP command. Per-call overrides require MCP_ALLOW_EXECUTABLE_ARG=1." },

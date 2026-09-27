@@ -104,7 +104,7 @@ async function regularStl(filePath: string): Promise<{ bytes: number; triangles:
   try {
     geometry = new STLLoader().parse(Uint8Array.from(buffer).buffer);
     const positions = geometry.getAttribute("position");
-    if (!positions || positions.count < 3 || positions.count % 3 !== 0 || !Array.from(positions.array).every(Number.isFinite)) throw new Error("invalid vertices");
+    if (!positions || positions.count < 3 || positions.count % 3 !== 0 || !positions.array.every(Number.isFinite)) throw new Error("invalid vertices");
     return { bytes: stat.size, triangles: positions.count / 3 };
   } catch { throw new BlenderError("STL contains no valid finite triangle mesh."); }
   finally { geometry?.dispose(); }
@@ -120,7 +120,9 @@ async function inputPath(value: unknown, label: string): Promise<string> {
 
 async function editPlan(args: Arguments): Promise<EditPlan> {
   const stlPath = await inputPath(args.stl_path, "stl_path");
-  const requestedOutput = path.resolve(textArgument(args.output_path, "output_path"));
+  const requestedOutput = args.output_path === undefined
+    ? path.join(path.dirname(stlPath), `model-edited-${randomUUID()}.stl`)
+    : path.resolve(textArgument(args.output_path, "output_path"));
   if (path.extname(requestedOutput).toLowerCase() !== ".stl") throw new BlenderError("output_path must name a new STL file.");
   const directory = await fs.realpath(path.dirname(requestedOutput)).catch(() => { throw new BlenderError("output_path parent directory must already exist."); });
   const outputPath = path.join(directory, path.basename(requestedOutput));

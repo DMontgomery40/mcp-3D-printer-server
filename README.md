@@ -497,7 +497,8 @@ access the same local files. Printer tools work without Blender configured.
 ```
 
 The default preview validates inputs and returns the generated Python without
-launching Blender. Set `execute` to `true` to apply the edit. Supported operations
+launching Blender. Omitting `output_path` selects a unique `model-edited-<id>.stl`
+beside the input; reuse the returned path when executing a previewed plan. Set `execute` to `true` to apply the edit. Supported operations
 are `decimate:<ratio>` (greater than zero through one), `remesh:<positive voxel
 size in STL units>`, and `boolean_union:<STL path>`. The helper requires Object
 Mode, preserves existing scene objects and selection, and publishes a new STL
@@ -1057,7 +1058,7 @@ Due to the nature of the Bambu Lab printer API, there are some limitations:
 
 3. **Temperature control path:** Temperature updates are implemented through G-code command dispatch (`M104`/`M140`) over MQTT, so effective behavior still depends on printer firmware acceptance and current printer state.
 
-4. **File transfer channel:** Uploads use Bambu's FTPS path (port 990) directly through `basic-ftp` with implicit TLS 1.2 on both channels, allowing the data connection to reuse the control session. This avoids TLS 1.3 session-ticket timing differences. The compatibility path is tested against a local FTPS server; confirmation on the reporting X1C firmware is still needed. Some read/list operations still use `bambu-js` helpers.
+4. **File transfer channel:** Uploads use Bambu's FTPS path (port 990) directly through `basic-ftp` with implicit TLS 1.2 on both channels, allowing the data connection to reuse the control session. TLS options also explicitly preserve the printer host identity on the data connection, fixing [Node session binding](https://github.com/nodejs/node/issues/64402) on current Node 22/24. TLS 1.2 avoids additional TLS 1.3 session-ticket timing differences. The compatibility path is tested against a local FTPS server; confirmation on the reporting X1C firmware is still needed. Some read/list operations still use `bambu-js` helpers.
 
 5. **Direct start path scope:** `startJob` currently targets `.gcode` files on printer storage; `.3mf` jobs should be initiated through `print_3mf` so metadata and plate selection are handled.
 

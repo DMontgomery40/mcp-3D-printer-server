@@ -155,6 +155,24 @@ test("Blender standard edit previews without launching and exports a verified ne
   assert.deepEqual(fs.readdirSync(peer.directory).sort(), [path.basename(output), "peer.jsonl"].sort());
 });
 
+test("standard edits choose a new output beside the input when output_path is omitted", async (t) => {
+  const peer = await start(t);
+  const input = path.join(peer.directory, "input.stl");
+  fs.copyFileSync(sample, input);
+  const request = { stl_path: input, operations: ["decimate:0.5"] };
+  const preview = await peer.call("blender_mcp_edit_model", request);
+  assert.equal(preview.isError, undefined, errorText(preview));
+  const output = data(preview).output_path;
+  assert.equal(path.dirname(output), fs.realpathSync(peer.directory));
+  assert.notEqual(output, input);
+  assert.equal(fs.existsSync(output), false);
+  const result = await peer.call("blender_mcp_edit_model", { ...request, output_path: output, execute: true });
+  assert.equal(result.isError, undefined, errorText(result));
+  assert.equal(data(result).output_verified, true);
+  assert.equal(fs.existsSync(output), true);
+  assert.deepEqual(fs.readFileSync(input), fs.readFileSync(sample));
+});
+
 test("Blender standard edits reject text errors, missing receipts and invalid output instead of reporting success", async (t) => {
   for (const mode of ["text-error", "wrong-receipt", "no-output", "bad-output"]) {
     await t.test(mode, async (t) => {
