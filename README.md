@@ -8,11 +8,11 @@ Thank you to the [FULU Foundation](https://github.com/FULU-Foundation/OrcaSlicer
 [![npm version](https://img.shields.io/npm/v/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
 [![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-4.9%2B-blue)](https://www.typescriptlang.org/)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/yourusername/mcp-3d-printer-server/graphs/commit-activity)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/DMontgomery40/mcp-3D-printer-server/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://makeapullrequest.com)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D%2018.0.0-green.svg)](https://nodejs.org/en/download/)
 [![Downloads](https://img.shields.io/npm/dm/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
-[![GitHub stars](https://img.shields.io/github/stars/dmontgomery40/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/yourusername/mcp-3d-printer-server)
+[![GitHub stars](https://img.shields.io/github/stars/dmontgomery40/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/DMontgomery40/mcp-3D-printer-server)
 
 
 <a href="https://glama.ai/mcp/servers/7f6v2enbgk">
@@ -25,7 +25,7 @@ Thank you to the [FULU Foundation](https://github.com/FULU-Foundation/OrcaSlicer
 - **Dual Local Transports:** Added explicit `stdio` and `streamable-http` runtime modes with environment-based transport selection.
 - **FULU OrcaSlicer-bambulab Support:** Added `orcaslicer-bambulab` / `fulu_orca` slicer support for Bambu project 3MF export, and made it the default Bambu slicer target when no slicer is configured.
 - **Bambu Reliability Pass:** Fixed Bambu argument wiring bugs, added FTP-backed file operations, improved status refresh behavior, and implemented practical command paths for `startJob`, `setTemperature`, and `print_3mf`.
-- **Blender Bridge Tooling:** Added `blender_mcp_edit_model` with optional execution mode for model-edit collaboration workflows.
+- **Blender MCP:** Discover and call a standard Blender MCP server with `blender_mcp_status` and `blender_mcp_call`, or prepare and execute STL edits with verified output through `blender_mcp_edit_model`.
 - **Transport Behavior Tests:** Added real behavior tests for both transports (`initialize`, `tools/list`, success + failing `tools/call`, origin rejection).
 - **Docker Modernization:** Updated Docker build flow to work without BuildKit-specific features and verified streamable HTTP initialization in container smoke testing.
 
@@ -154,7 +154,8 @@ npm install -g mcp-3d-printer-server
 ```bash
 git clone https://github.com/dmontgomery40/mcp-3d-printer-server.git
 cd mcp-3d-printer-server
-npm install
+npm ci
+npm run build
 npm link  # Makes the command available globally
 ```
 
@@ -470,6 +471,59 @@ Anthropic and Cloudflare independently demonstrated this pattern reduces MCP tok
 
 This applies to all MCP servers, not just this one.
 
+### Blender MCP
+
+Set `BLENDER_MCP_COMMAND` to the executable for your standard stdio Blender
+MCP server (for example the full path to `uvx`) and `BLENDER_MCP_ARGS` to a
+JSON argument array such as `["blender-mcp"]`. Install and enable the matching
+addon in Blender, then start its connection. Both processes must be able to
+access the same local files. Printer tools work without Blender configured.
+
+1. Call `blender_mcp_status` with `{"connect":true}` to initialize the server
+   and inspect its advertised tools and input schemas.
+2. Call `blender_mcp_call` with a discovered `tool_name` and `arguments`.
+   For example, use `get_scene_info` with `{"user_prompt":"Inspect my scene"}`
+   when advertised. Preserve the user's request in `user_prompt` when the
+   remote schema asks for it. MCP images, errors, and metadata are preserved.
+3. Use `blender_mcp_edit_model` for an STL import/edit/export operation:
+
+```json
+{
+  "stl_path": "/path/to/model.stl",
+  "output_path": "/path/to/model-edited.stl",
+  "operations": ["decimate:0.5"],
+  "user_prompt": "Reduce the triangle count for printing",
+  "execute": false
+}
+```
+
+The default preview validates inputs and returns the generated Python without
+launching Blender. Omitting `output_path` selects a unique `model-edited-<id>.stl`
+beside the input; reuse the returned path when executing a previewed plan. Set `execute` to `true` to apply the edit. Supported operations
+are `decimate:<ratio>` (greater than zero through one), `remesh:<positive voxel
+size in STL units>`, and `boolean_union:<STL path>`. The helper requires Object
+Mode, preserves existing scene objects and selection, and publishes a new STL
+only after checking a matching export receipt and a finite triangle mesh.
+Binary STLs are validated in small chunks and may be up to 256 MiB. ASCII STLs
+are limited to 4 MiB; export larger meshes as binary STL.
+Existing input and output files are never overwritten. Inspect the result
+before slicing: valid STL geometry does not guarantee printability.
+
+`BLENDER_MCP_TIMEOUT_MS` defaults to 120000 (range 100–300000). Requests have
+bounded connection/discovery/call deadlines, close their child connection,
+and never automatically replay interrupted edits. After an interruption,
+inspect Blender before retrying because an edit may already have started.
+The edit deadline also covers input and output validation; cancellation stops
+validation between file reads, including scans of Boolean operands.
+MCP connection success alone does not prove the Blender addon is connected.
+
+Legacy `BLENDER_MCP_BRIDGE_COMMAND` shell commands remain supported. They
+receive JSON on stdin containing `modelPath`, `operations`, and `source`, plus
+`stlPath` and the same JSON in `MCP_BLENDER_PAYLOAD` for fork compatibility.
+Their result reports `output_verified: false`. Per-call executable overrides
+still require `MCP_ALLOW_EXECUTABLE_ARG=1` (or the legacy bridge-only opt-in).
+The standard MCP executable and its arguments are always server configuration.
+
 ## Supported Printer Management Systems
 
 ### OctoPrint
@@ -505,7 +559,7 @@ Repetier-Server is a host software for 3D printers.
 Bambu Lab printers use MQTT for status and control and FTP for file operations.
 
 - Authentication: Serial number and access token required (set `BAMBU_SERIAL` and `BAMBU_TOKEN`)
-- Printer model: **Required** (set `BAMBU_MODEL`). Valid values: `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`. This ensures the slicer generates correct G-code for your specific printer.
+- Printer model: **Required** (set `BAMBU_MODEL`). Valid values: `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`. The guard applies to `start_print` and `upload_gcode` with `print=true` as well as the slicing/3MF paths. Pre-sliced files must already match the physical printer; the model setting does not inspect or convert their G-code.
 - Requirements: Printer must be on the same network with Developer Mode and LAN Only Mode enabled
 - Compatible with: X1C, X1E, P1S, P1P, A1, A1 Mini, H2D
 
@@ -1009,7 +1063,7 @@ Due to the nature of the Bambu Lab printer API, there are some limitations:
 
 3. **Temperature control path:** Temperature updates are implemented through G-code command dispatch (`M104`/`M140`) over MQTT, so effective behavior still depends on printer firmware acceptance and current printer state.
 
-4. **File transfer channel:** Uploads use Bambu's FTPS path (port 990) directly through `basic-ftp` with implicit TLS. Some read/list operations still use `bambu-js` helpers.
+4. **File transfer channel:** Uploads use Bambu's FTPS path (port 990) directly through `basic-ftp` with implicit TLS 1.2 on both channels, allowing the data connection to reuse the control session. TLS options also explicitly preserve the printer host identity on the data connection, fixing [Node session binding](https://github.com/nodejs/node/issues/64402) on current Node 22/24. TLS 1.2 avoids additional TLS 1.3 session-ticket timing differences. The compatibility path is tested against a local FTPS server; confirmation on the reporting X1C firmware is still needed. Some read/list operations still use `bambu-js` helpers.
 
 5. **Direct start path scope:** `startJob` currently targets `.gcode` files on printer storage; `.3mf` jobs should be initiated through `print_3mf` so metadata and plate selection are handled.
 
@@ -1064,11 +1118,11 @@ Prompt injection is an open problem for tool-using agents. Practical mitigations
 | [![npm version](https://img.shields.io/npm/v/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server) | The current version of the package on npm |
 | [![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html) | This project is licensed under GPL-2.0 |
 | [![TypeScript](https://img.shields.io/badge/TypeScript-4.9%2B-blue)](https://www.typescriptlang.org/) | This project is written in TypeScript 4.9+ |
-| [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/yourusername/mcp-3d-printer-server/graphs/commit-activity) | This project is actively maintained |
+| [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/DMontgomery40/mcp-3D-printer-server/graphs/commit-activity) | This project is actively maintained |
 | [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://makeapullrequest.com) | We welcome contributions via Pull Requests |
 | [![Node.js Version](https://img.shields.io/badge/node-%3E%3D%2018.0.0-green.svg)](https://nodejs.org/en/download/) | Requires Node.js 18.0.0 or higher |
 | [![Downloads](https://img.shields.io/npm/dm/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server) | Number of downloads per month from npm |
-| [![GitHub stars](https://img.shields.io/github/stars/dmontgomery40/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/yourusername/mcp-3d-printer-server) | Number of GitHub stars this project has received |
+| [![GitHub stars](https://img.shields.io/github/stars/dmontgomery40/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/DMontgomery40/mcp-3D-printer-server) | Number of GitHub stars this project has received |
 
 ## License
 

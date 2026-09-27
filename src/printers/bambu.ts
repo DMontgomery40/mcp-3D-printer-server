@@ -473,7 +473,13 @@ export class BambuImplementation extends PrinterImplementation {
         user: "bblp",
         password: token,
         secure: "implicit",
-        secureOptions: { rejectUnauthorized: false },
+        // basic-ftp passes getSession() to the data socket. Keep both channels
+        // on TLS 1.2, where that session is available at handshake completion;
+        // TLS 1.3 tickets arrive later and can break Bambu's required reuse.
+        // Node also binds resumable sessions to the host identity. basic-ftp
+        // retains these options for its wrapped data socket, so explicitly keep
+        // the same host there (nodejs/node#64402 affects implicit FTPS).
+        secureOptions: { host, rejectUnauthorized: false, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
       });
       // Use absolute path to avoid CWD side-effects
       const absoluteRemote = remotePath.startsWith("/") ? remotePath : `/${remotePath}`;

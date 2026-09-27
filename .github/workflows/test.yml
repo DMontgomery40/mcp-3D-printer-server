@@ -1,0 +1,37 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run test:package
+      - run: npm audit --omit=dev
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t printer-mcp:test .
+      - name: Initialize packaged server over stdio
+        run: |
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"docker-smoke","version":"1"}}}' | timeout 15s docker run --rm -i printer-mcp:test > response.jsonl
+          node -e 'const lines=require("fs").readFileSync("response.jsonl","utf8").trim().split("\n").map(JSON.parse); if(!lines.some(x=>x.id===1&&x.result?.serverInfo?.name==="mcp-3d-printer-server")) process.exit(1)'
