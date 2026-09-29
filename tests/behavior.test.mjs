@@ -253,17 +253,36 @@ function assertPrinterControlSchemas(listToolsResult) {
 async function createFakeBambuProjectSlicer(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-orca-"));
   const executableDir = path.join(dir, "FakeOrca.app", "Contents", "MacOS");
-  const presetDir = path.join(dir, "FakeOrca.app", "Contents", "Resources", "profiles", "BBL", "machine");
+  const bblDir = path.join(dir, "FakeOrca.app", "Contents", "Resources", "profiles", "BBL");
   await fs.mkdir(executableDir, { recursive: true });
-  await fs.mkdir(presetDir, { recursive: true });
+  for (const kind of ["machine", "process", "filament"]) {
+    await fs.mkdir(path.join(bblDir, kind), { recursive: true });
+  }
   const executable = path.join(executableDir, "fake-fulu-orca.mjs");
-  const presetPath = path.join(presetDir, "Bambu Lab P1S 0.4 nozzle.json");
-  await fs.writeFile(presetPath, JSON.stringify({ name: "Bambu Lab P1S 0.4 nozzle" }));
+  // Minimal complete BBL tree: inherited machine preset, CLI config, and defaults.
+  const writeProfile = (kind, value) =>
+    fs.writeFile(path.join(bblDir, kind, `${value.name}.json`), JSON.stringify(value));
+  await fs.writeFile(path.join(bblDir, "cli_config.json"), JSON.stringify({
+    printer: { "Bambu Lab P1S": { downward_check: { "Bambu Lab P1S 0.4 nozzle": ["Bambu Lab P1P 0.4 nozzle"] } } },
+  }));
+  await writeProfile("machine", { name: "fake_machine_common", nozzle_diameter: ["0.4"], machine_start_gcode: "; generic" });
+  await writeProfile("machine", {
+    name: "Bambu Lab P1S 0.4 nozzle", inherits: "fake_machine_common", from: "system", printer_model: "Bambu Lab P1S",
+    machine_start_gcode: "; machine: P1S", default_print_profile: "0.20mm Fake @BBL", default_filament_profile: ["Fake PLA @BBL"],
+  });
+  await writeProfile("process", { name: "0.20mm Fake @BBL", from: "system", layer_height: "0.2" });
+  await writeProfile("filament", { name: "Fake PLA @BBL", from: "system", filament_type: ["PLA"] });
+  // The fake cannot import jszip; it copies a real sliced-project archive.
+  const zip = new JSZip();
+  zip.file("Metadata/plate_1.gcode", "; machine: P1S\nG28\n");
+  const slicedFixture = path.join(dir, "fixture_sliced.3mf");
+  await fs.writeFile(slicedFixture, await zip.generateAsync({ type: "nodebuffer" }));
 
   await fs.writeFile(
     executable,
     `#!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
 const args = process.argv.slice(2);
 function fail(message) {
   console.error(message);
@@ -271,13 +290,17 @@ function fail(message) {
 }
 if (!args.includes("--slice")) fail("missing --slice");
 const exportIndex = args.indexOf("--export-3mf");
-if (exportIndex < 0 || !args[exportIndex + 1]) fail("missing --export-3mf output");
+const outputDirIndex = args.indexOf("--outputdir");
+if (exportIndex < 0 || !args[exportIndex + 1] || outputDirIndex < 0) fail("missing --outputdir/--export-3mf output");
 const loadSettingsIndex = args.indexOf("--load-settings");
-if (loadSettingsIndex < 0 || !args[loadSettingsIndex + 1]?.includes("Bambu Lab P1S")) {
-  fail("missing Bambu P1S machine preset");
+const [machinePath, processPath] = (args[loadSettingsIndex + 1] || "").split(";");
+if (loadSettingsIndex < 0 || !machinePath || !processPath) fail("missing machine;process settings");
+if (!fs.existsSync(machinePath) || !fs.existsSync(processPath)) fail("settings path does not exist");
+const machine = JSON.parse(fs.readFileSync(machinePath, "utf8"));
+if (machine.printer_settings_id !== "Bambu Lab P1S 0.4 nozzle" || machine.machine_start_gcode !== "; machine: P1S") {
+  fail("machine preset was not resolved for P1S");
 }
-if (!fs.existsSync(args[loadSettingsIndex + 1])) fail("machine preset path does not exist");
-fs.writeFileSync(args[exportIndex + 1], "fake sliced 3mf");
+fs.copyFileSync(${JSON.stringify(slicedFixture)}, path.join(args[outputDirIndex + 1], args[exportIndex + 1]));
 `,
     { mode: 0o755 }
   );
