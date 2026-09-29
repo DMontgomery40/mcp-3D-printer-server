@@ -9,6 +9,7 @@ This file is the repository's shared source of truth for local agents, scheduled
 - Prioritize substantive defects and regressions in supported workflows. Document and defer obscure edge cases, speculative hardening, and cosmetic objections instead of extending a sound release into an endless review loop.
 - The main-branch Publish Package workflow (`.github/workflows/publish.yml`) runs the checks and `npm publish` with trusted publishing; do not publish from a local checkout. Verify that workflow and the exact npm version before claiming publication. Then create a `v<version>` tag and GitHub release with the accumulated changelog notes. Verify npm, the tag, the release, and a fresh `npx -y mcp-3d-printer-server` startup before declaring the release complete. Never move a published tag.
 - Changes to src/, scripts/, or printer behavior need a present-tense CHANGELOG.md entry under `## Unreleased`, including evidence limits (mocked transports versus real hardware).
+- Never add AI or agent attribution anywhere in Git or GitHub: no `Co-Authored-By` trailers for Claude, Codex, or other assistants, no "Generated with" footers, and no agent session links in commits, PR titles or bodies, review replies, issue comments, or release notes.
 - Preserve original authorship when integrating contributor PRs. Credit code, issue reports, hardware evidence, and useful superseded proposals in CONTRIBUTORS.md.
 
 ## Community triage
