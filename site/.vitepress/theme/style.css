@@ -1,0 +1,375 @@
+/*
+ * Theme for the mcp-3d-printer-server docs.
+ * Cool, quiet chrome (slate ink, one teal accent) so the warm slicer-preview
+ * colours in the home hero carry the page. Archivo's width axis does the
+ * typographic work: expanded for display, normal for reading.
+ */
+
+:root {
+  --bp-paper: #f6f7f9;
+  --bp-panel: #eceff3;
+  --bp-raised: #ffffff;
+  --bp-ink: #16202a;
+  --bp-ink-2: #465262;
+  --bp-ink-3: #697586;
+  --bp-line: #d5dbe2;
+  --bp-accent: #0c6f6a;
+  --bp-accent-strong: #09544f;
+  --bp-accent-soft: #d8eeeb;
+
+  /* Slicer preview colours (hero and small legend accents only). */
+  --tp-plate: #1c232b;
+  --tp-grid: #28313b;
+  --tp-outer: #ff8a3d;
+  --tp-inner: #f5ce4a;
+  --tp-infill: #e0474c;
+
+  --vp-font-family-base: 'Archivo Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --vp-font-family-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --vp-c-bg: var(--bp-paper);
+  --vp-c-bg-alt: var(--bp-panel);
+  --vp-c-bg-elv: var(--bp-raised);
+  --vp-c-bg-soft: var(--bp-panel);
+  --vp-c-text-1: var(--bp-ink);
+  --vp-c-text-2: var(--bp-ink-2);
+  --vp-c-text-3: var(--bp-ink-3);
+  --vp-c-divider: var(--bp-line);
+  --vp-c-border: #c3cbd4;
+  --vp-c-gutter: var(--bp-line);
+
+  --vp-c-brand-1: var(--bp-accent);
+  --vp-c-brand-2: var(--bp-accent-strong);
+  --vp-c-brand-3: var(--bp-accent);
+  --vp-c-brand-soft: rgba(12, 111, 106, 0.12);
+
+  --vp-code-bg: rgba(22, 32, 42, 0.06);
+  --vp-code-color: #213041;
+  --vp-code-block-bg: #eef1f4;
+  --vp-code-copy-code-bg: var(--bp-raised);
+
+  --vp-button-brand-bg: var(--bp-accent);
+  --vp-button-brand-hover-bg: var(--bp-accent-strong);
+  --vp-button-brand-active-bg: var(--bp-accent-strong);
+
+  --vp-nav-bg-color: rgba(246, 247, 249, 0.92);
+  --vp-sidebar-bg-color: var(--bp-panel);
+  --vp-local-search-highlight-bg: var(--bp-accent);
+}
+
+.dark {
+  --bp-paper: #141a21;
+  --bp-panel: #19212a;
+  --bp-raised: #1f2832;
+  --bp-ink: #e6eaef;
+  --bp-ink-2: #aab4c0;
+  --bp-ink-3: #8390a0;
+  --bp-line: #2a3440;
+  --bp-accent: #4cc7bc;
+  --bp-accent-strong: #7fdad2;
+  --bp-accent-soft: rgba(76, 199, 188, 0.14);
+
+  --vp-c-border: #3a4552;
+  --vp-c-brand-soft: rgba(76, 199, 188, 0.16);
+  --vp-code-bg: rgba(230, 234, 239, 0.08);
+  --vp-code-color: #d8dee6;
+  --vp-code-block-bg: #10151b;
+  --vp-button-brand-text: #0d1a1a;
+  --vp-button-brand-hover-text: #0d1a1a;
+  --vp-button-brand-active-text: #0d1a1a;
+  --vp-nav-bg-color: rgba(20, 26, 33, 0.92);
+}
+
+body {
+  background: var(--vp-c-bg);
+  font-optical-sizing: auto;
+}
+
+/* ---------- Navigation ---------- */
+
+.VPNavBarTitle .title {
+  font-stretch: 116%;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+}
+
+.VPNavBar:not(.home.top) .divider-line {
+  background-color: var(--bp-line);
+}
+
+.VPSidebarItem.level-0 > .item > .text,
+.VPSidebarItem.level-0 > .item > .link > .text {
+  font-stretch: 112%;
+  font-weight: 700;
+}
+
+/* ---------- Documentation typography ---------- */
+
+.vp-doc {
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.vp-doc h4 {
+  letter-spacing: -0.012em;
+}
+
+.vp-doc h1 {
+  font-size: clamp(2rem, 1.6rem + 1.4vw, 2.55rem);
+  line-height: 1.12;
+  font-stretch: 114%;
+  font-weight: 780;
+  text-wrap: balance;
+}
+
+.vp-doc h2 {
+  font-size: 1.5rem;
+  line-height: 1.25;
+  font-stretch: 110%;
+  font-weight: 720;
+  border-top-color: var(--bp-line);
+}
+
+.vp-doc h3 {
+  font-size: 1.2rem;
+  font-stretch: 106%;
+  font-weight: 680;
+}
+
+.vp-doc h4 {
+  font-size: 1.05rem;
+  font-weight: 660;
+}
+
+/* Tool names are identifiers: set them as code, without the inline-code chip. */
+.vp-doc h2 > code,
+.vp-doc h3 > code {
+  font-size: 0.92em;
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+  background: none;
+  padding: 0;
+}
+
+.vp-doc :not(pre, h1, h2, h3, h4) > code {
+  font-size: 0.86em;
+  font-weight: 450;
+}
+
+.vp-doc a {
+  text-underline-offset: 3px;
+}
+
+.vp-doc blockquote {
+  border-left: 3px solid var(--tp-outer);
+  color: var(--vp-c-text-1);
+  background: var(--bp-panel);
+  padding: 12px 18px;
+  border-radius: 0 6px 6px 0;
+}
+
+.vp-doc blockquote > p {
+  color: var(--vp-c-text-2);
+}
+
+.vp-doc table {
+  font-size: 0.93rem;
+}
+
+.vp-doc th {
+  font-stretch: 108%;
+  font-weight: 680;
+}
+
+.vp-doc img {
+  border-radius: 10px;
+  border: 1px solid var(--bp-line);
+}
+
+.vp-doc p[align='center'] {
+  text-align: center;
+}
+
+.vp-doc p[align='center'] img {
+  display: inline-block;
+}
+
+/* ---------- Home ---------- */
+
+.VPHome {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.home-section:last-child {
+  padding-bottom: 104px;
+}
+
+.home-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+
+@media (max-width: 640px) {
+  .home-wrap {
+    padding: 0 16px;
+  }
+}
+
+.home-section {
+  padding: 88px 0;
+  border-top: 1px solid var(--bp-line);
+}
+
+@media (max-width: 640px) {
+  .home-section {
+    padding: 56px 0;
+  }
+}
+
+.home-h2 {
+  font-size: clamp(1.75rem, 1.35rem + 1.6vw, 2.5rem);
+  line-height: 1.08;
+  font-stretch: 120%;
+  font-weight: 790;
+  letter-spacing: -0.02em;
+  margin: 0 0 16px;
+  text-wrap: balance;
+}
+
+.home-lede {
+  max-width: 62ch;
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+  margin: 0;
+}
+
+.home-lede a,
+.home-link {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.home-lede a:hover,
+.home-link:hover {
+  color: var(--vp-c-brand-2);
+}
+
+/* Thanks band: the project's FULU acknowledgement, kept prominent. */
+.home-thanks {
+  background: var(--bp-panel);
+  border-top: 1px solid var(--bp-line);
+  padding: 44px 0 40px;
+}
+
+.home-thanks__body blockquote {
+  margin: 0;
+  padding: 0 0 0 22px;
+  border-left: 4px solid var(--tp-outer);
+  max-width: 78ch;
+}
+
+.home-thanks__body blockquote p {
+  margin: 0 0 14px;
+  font-size: 1.06rem;
+  line-height: 1.65;
+  color: var(--vp-c-text-2);
+}
+
+.home-thanks__body blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.home-thanks__body strong {
+  color: var(--vp-c-text-1);
+  font-weight: 680;
+}
+
+.home-thanks__body a {
+  color: var(--vp-c-brand-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+/* Setup: the copy-and-paste request is the main call to action. */
+.home-setup__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+  gap: 56px;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .home-setup__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+}
+
+.home-setup__intro > p {
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+  margin: 0 0 28px;
+  max-width: 48ch;
+}
+
+.home-setup__intro strong {
+  color: var(--vp-c-text-1);
+}
+
+.home-setup__prompt.vp-doc div[class*='language-'] {
+  margin: 0;
+  border-radius: 12px;
+  border: 1px solid var(--bp-line);
+}
+
+.home-setup__prompt.vp-doc div[class*='language-'] pre {
+  padding: 22px 0;
+}
+
+.home-setup__prompt.vp-doc div[class*='language-'] code {
+  padding: 0 22px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.home-setup__prompt.vp-doc div[class*='language-'] > button.copy {
+  opacity: 1;
+  width: auto;
+  padding: 0 12px 0 34px;
+  background-position: 9px 50%;
+  background-size: 17px;
+}
+
+.home-setup__prompt.vp-doc div[class*='language-'] > button.copy::after {
+  content: 'Copy request';
+  font-family: var(--vp-font-family-base);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+  line-height: 38px;
+}
+
+.home-setup__prompt.vp-doc div[class*='language-'] > button.copy.copied::before {
+  display: none;
+}
+
+.home-setup__prompt.vp-doc div[class*='language-'] > span.lang {
+  display: none;
+}
+
+.home-setup__prompt.vp-doc div[class*='language-'] > button.copy.copied::after {
+  content: 'Copied';
+}
