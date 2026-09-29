@@ -891,7 +891,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "confirm_temperatures",
-            description: "Confirm temperature settings in a G-code file",
+            description: "Report every heater target in a G-code file (S and R forms, tool-addressed, RepRapFirmware G10/M568 and Klipper SET_HEATER_TEMPERATURE). An expected temperature matches only when it equals the file's highest target. Read-only; printing tools enforce their own safety gate.",
             inputSchema: {
               type: "object",
               properties: {
@@ -901,11 +901,11 @@ class ThreeDPrinterMCPServer {
                 },
                 extruder_temp: {
                   type: "number",
-                  description: "Expected extruder temperature"
+                  description: "Expected highest nozzle target"
                 },
                 bed_temp: {
                   type: "number",
-                  description: "Expected bed temperature"
+                  description: "Expected highest bed target"
                 }
               },
               required: ["gcode_path"]
@@ -1960,7 +1960,14 @@ class ThreeDPrinterMCPServer {
                 console.log("Auto-sliced to: " + threeMFPath);
               } catch (sliceErr: any) {
                 // Never fall back to uploading the original unsliced project.
-                throw new Error(`Auto-slicing failed; nothing was uploaded or started: ${sliceErr?.message ?? String(sliceErr)}`);
+                // Rethrow the original instance (for example a SlicerError) so
+                // structured slicer suggestions survive.
+                const prefix = "Auto-slicing failed; nothing was uploaded or started: ";
+                if (sliceErr instanceof Error) {
+                  if (!sliceErr.message.startsWith(prefix)) sliceErr.message = `${prefix}${sliceErr.message}`;
+                  throw sliceErr;
+                }
+                throw new Error(`${prefix}${String(sliceErr)}`);
               }
             }
             // Compare the sliced file with an explicit or auto-slice nozzle request.

@@ -197,7 +197,7 @@ test("print_3mf asks a human before upload; decline and clients without elicitat
 
 test("print_3mf never uploads the original project when auto-slicing fails or the selected plate is missing", async (t) => {
   for (const [name, fileOptions, slice, error] of [
-    ["slicer failure", { plateEntry: null }, "fail", /Auto-slicing failed; nothing was uploaded/],
+    ["slicer failure", { plateEntry: null }, "fail", /Auto-slicing failed; nothing was uploaded or started: Simulated slicer failure/],
     ["stray non-plate G-code", { plateEntry: "Metadata/other.gcode" }, "fail", /Auto-slicing failed/],
     ["slicer output without the selected plate", { plateEntry: "Metadata/plate_2.gcode" }, undefined, /selected plate 1 has no printable/],
   ]) {
@@ -209,6 +209,81 @@ test("print_3mf never uploads the original project when auto-slicing fails or th
       assert.equal(result.isError, true);
       assert.match(errorText(result), error);
       assert.deepEqual((await events()).filter(({ action }) => action !== "slice"), [], "nothing may reach the printer");
+    });
+  }
+});
+
+async function octoPrintMock(t, flags = { operational: true, ready: true }) {
+  const requests = [];
+  const http = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    requests.push({ method: request.method, url: request.url, body: Buffer.concat(chunks).toString() });
+    response.writeHead(request.method === "GET" ? 200 : 201, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(request.url === "/api/printer" ? { state: { text: "Operational", flags } } : { done: true }));
+  });
+  t.after(() => new Promise((resolve) => http.close(resolve)));
+  http.listen(0, "127.0.0.1");
+  await once(http, "listening");
+  return { requests, env: { PRINTER_TYPE: "octoprint", PRINTER_HOST: "127.0.0.1", PRINTER_PORT: String(http.address().port) } };
+}
+
+test("generic upload_gcode print, start_print and heating go through the gate end to end", async (t) => {
+  const mock = await octoPrintMock(t);
+  const prompts = [];
+  const client = await server(t, mock.env, { elicitation: async (request) => { prompts.push(request.params.message); return accept(); } });
+  const pla = "; filament_type = PLA\nM140 S60\nM104 S215\nM109 S215\nG1 X1 Y1 E1\n";
+
+  const noMaterial = await client.callTool({ name: "upload_gcode", arguments: { filename: "a.gcode", gcode: "M104 S215\nG1 X1\n", print: true } });
+  assert.match(errorText(noMaterial), /declared material/);
+  const unsafe = await client.callTool({ name: "upload_gcode", arguments: { filename: "a.gcode", gcode: "M104 S220\nM104 S400\nM109 R450\n", material: "PLA", print: true } });
+  assert.match(errorText(unsafe), /Print safety line 2/);
+  const nan = await client.callTool({ name: "set_printer_temperature", arguments: { component: "extruder", temperature: "not-a-number", material: "PLA" } });
+  assert.match(errorText(nan), /finite/);
+  assert.deepEqual(mock.requests, [], "refusals happen before any printer request");
+
+  const printed = await client.callTool({ name: "upload_gcode", arguments: { filename: "a.gcode", gcode: pla, print: true } });
+  assert.notEqual(printed.isError, true, errorText(printed));
+  assert.equal(prompts.length, 1);
+  const upload = mock.requests.find((request) => request.method === "POST");
+  assert.ok(upload.body.includes('filename="a.gcode"') && upload.body.includes("M109 S215") && upload.body.includes('name="print"'));
+
+  const heat = await client.callTool({ name: "set_printer_temperature", arguments: { component: "extruder", temperature: 210, material: "PLA" } });
+  assert.notEqual(heat.isError, true, errorText(heat));
+  assert.deepEqual(JSON.parse(mock.requests.at(-1).body), { command: "target", targets: { tool0: 210 } });
+});
+
+test("generic remote start on an adapter without a download route is refused before contacting it", async (t) => {
+  const client = await server(t, { PRINTER_TYPE: "prusa", PRINTER_HOST: "192.0.2.1", PRINTER_PORT: "9" }, { elicitation: accept });
+  const result = await client.callTool({ name: "start_print", arguments: { filename: "stored.gcode" } });
+  assert.equal(result.isError, true);
+  assert.match(errorText(result), /cannot inspect files already stored on Prusa/);
+});
+
+test("process_and_print_stl on a generic printer refuses the audit G-code before upload", async (t) => {
+  const mock = await octoPrintMock(t);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "generic-process-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  for (const [name, gcode, args, expectation] of [
+    ["audit S220/S400/R450", "; filament_type = PLA\nM104 S220\nM104 S400\nM109 R450\nG1 X1 Y1 E1\n", { extruder_temp: 220 }, /Print safety line 3/],
+    ["R target above expected peak", "; filament_type = PLA\nM104 S220\nM109 R240\nG1 X1 Y1 E1\n", { extruder_temp: 220 }, /highest nozzle target is 240 C/],
+    ["matching peak", "; filament_type = PLA\nM104 S220\nM109 R220\nG1 X1 Y1 E1\n", { extruder_temp: 220 }, "print"],
+  ]) {
+    await t.test(name, async (t) => {
+      mock.requests.length = 0;
+      const sliced = path.join(dir, `${name.replace(/\W+/g, "-")}.gcode`);
+      await fs.writeFile(sliced, gcode);
+      const { preload } = await bambuBoundaries(t, { slice: sliced });
+      const client = await server(t, { ...mock.env, SLICER_TYPE: "prusaslicer", TEMP_DIR: dir }, { preload, elicitation: accept });
+      const result = await client.callTool({ name: "process_and_print_stl", arguments: { stl_path: path.join(root, "test/sample_cube.stl"), extension_inches: 0, ...args } });
+      if (expectation === "print") {
+        assert.notEqual(result.isError, true, errorText(result));
+        assert.equal(mock.requests.filter((request) => request.method === "POST").length, 1);
+      } else {
+        assert.equal(result.isError, true);
+        assert.match(errorText(result), expectation);
+        assert.deepEqual(mock.requests, [], "nothing may reach the printer");
+      }
     });
   }
 });

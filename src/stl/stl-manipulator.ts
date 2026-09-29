@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import { EventEmitter } from 'events';
 import * as crypto from 'crypto';
 import { execFile } from 'child_process';
+import { scanGcodeThermal } from '../safety/gcode-thermal.js';
 
 const readFileAsync = promisify(fs.readFile);
 const writeFileAsync = promisify(fs.writeFile);
@@ -1233,6 +1234,7 @@ export class STLManipulator extends EventEmitter {
   ): Promise<{
     match: boolean;
     actual: { extruder?: number; bed?: number };
+    peak: { extruder?: number; bed?: number };
     expected: { extruder?: number; bed?: number };
     allTemperatures: { extruder: number[]; bed: number[] };
   }> {
@@ -1251,7 +1253,6 @@ export class STLManipulator extends EventEmitter {
       
       // Read the G-code file
       const gcode = await readFileAsync(gcodePath, 'utf8');
-      const lines = gcode.split('\n');
       
       if (!this.activeOperations.get(operationId)) {
         throw new Error("Operation cancelled");
@@ -1259,57 +1260,46 @@ export class STLManipulator extends EventEmitter {
       
       if (progressCallback) progressCallback(50, "Analyzing temperature commands...");
       
-      // Extract temperature settings from G-code
-      const actual: { extruder?: number; bed?: number } = {};
-      const allTemperatures: { extruder: number[]; bed: number[] } = { extruder: [], bed: [] };
-      
-      for (const line of lines) {
-        // Look for extruder temperature (M104 or M109)
-        const extruderMatch = line.match(/M10[49] S(\d+)/);
-        if (extruderMatch) {
-          const temp = parseInt(extruderMatch[1], 10);
-          allTemperatures.extruder.push(temp);
-          
-          // Keep the first temperature for compatibility with original function
-          if (!actual.extruder) {
-            actual.extruder = temp;
-          }
-        }
-        
-        // Look for bed temperature (M140 or M190)
-        const bedMatch = line.match(/M1[49]0 S(\d+)/);
-        if (bedMatch) {
-          const temp = parseInt(bedMatch[1], 10);
-          allTemperatures.bed.push(temp);
-          
-          // Keep the first temperature for compatibility with original function
-          if (!actual.bed) {
-            actual.bed = temp;
-          }
-        }
-      }
-      
+      // Extract every heater target with the shared print-safety scanner: S and
+      // R forms, tool-addressed commands, RepRapFirmware G10/M568 and Klipper
+      // SET_HEATER_TEMPERATURE. Unparseable thermal syntax fails closed.
+      const scan = scanGcodeThermal(gcode);
+      const allTemperatures: { extruder: number[]; bed: number[] } = {
+        extruder: scan.targets.filter((target) => target.heater === "nozzle").map((target) => target.value),
+        bed: scan.targets.filter((target) => target.heater === "bed").map((target) => target.value),
+      };
+      // First positive target, kept for compatibility with the original report.
+      const actual: { extruder?: number; bed?: number } = {
+        extruder: allTemperatures.extruder.find((value) => value > 0),
+        bed: allTemperatures.bed.find((value) => value > 0),
+      };
+      const peak = {
+        extruder: allTemperatures.extruder.length ? Math.max(...allTemperatures.extruder) : undefined,
+        bed: allTemperatures.bed.length ? Math.max(...allTemperatures.bed) : undefined,
+      };
+
       if (progressCallback) progressCallback(80, "Comparing temperatures...");
-      
-      // Compare actual with expected
+
+      // An expected temperature matches only when it is the job's highest
+      // target, so a later or R-form higher target is always a mismatch.
       let match = true;
-      if (expected.extruder !== undefined && actual.extruder !== expected.extruder) {
+      if (expected.extruder !== undefined && peak.extruder !== expected.extruder) {
         match = false;
       }
-      if (expected.bed !== undefined && actual.bed !== expected.bed) {
+      if (expected.bed !== undefined && peak.bed !== expected.bed) {
         match = false;
       }
-      
+
       if (progressCallback) progressCallback(100, "Temperature verification complete");
-      
+
       this.emit('operationComplete', {
         operationId,
         type: 'confirmTemperatures',
         success: true,
-        result: { match, actual, expected, allTemperatures }
+        result: { match, actual, peak, expected, allTemperatures }
       });
-      
-      return { match, actual, expected, allTemperatures };
+
+      return { match, actual, peak, expected, allTemperatures };
     } catch (error) {
       console.error("Error confirming temperatures:", error);
       
