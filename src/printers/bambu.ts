@@ -61,7 +61,11 @@ const COMMAND_VERIFICATION_HMS = { attr: 0x05000500, code: 0x00010007 };
 const COMMAND_REJECTED_MESSAGE =
   "The printer rejected the print command (HMS 0500-0500-0001-0007, \"MQTT command verification failed\"). " +
   "Bambu firmware 01.08.05 and later only accept third-party LAN control with LAN Only Mode and Developer Mode " +
-  "enabled (Settings > WLAN on the printer). The checked file is on the printer's storage, but nothing is printing.";
+  "enabled (Settings > WLAN on the printer). The printer keeps this error until it is dismissed on its screen, and the " +
+  "safety check refuses new prints while it is present. The checked file is on the printer's storage, but nothing is printing.";
+const DISPATCH_CANCELLED_MESSAGE =
+  "The print command was sent, then a stop or heater-off request cancelled it before the printer confirmed the start. " +
+  "Check get_printer_status.";
 
 /** How long to watch fresh reports after a print command (BAMBU_DISPATCH_CHECK_MS, 0 disables). */
 function dispatchCheckMs(): number {
@@ -407,7 +411,7 @@ export class BambuImplementation extends PrinterImplementation {
       },
     };
 
-    const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus);
+    const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
     await printer.publish(projectFileCmd);
     await sleep(COMMAND_SETTLE_MS);
     const dispatch = await watcher.settled();
@@ -439,9 +443,10 @@ export class BambuImplementation extends PrinterImplementation {
    * boards): a new command-verification HMS means the firmware refused the
    * command; PREPARE/SLICING/RUNNING means it started. Attach before publishing.
    */
-  private watchDispatch(printer: any, host: string, serial: string, token: string, before: any): { settled: () => Promise<"started" | "unconfirmed"> } {
+  private watchDispatch(printer: any, host: string, serial: string, token: string, before: any, assertActive: () => void): { settled: () => Promise<"started" | "unconfirmed"> } {
     const windowMs = dispatchCheckMs();
-    if (windowMs === 0 || typeof printer?.on !== "function") return { settled: async () => "unconfirmed" };
+    const stillActive = () => { try { assertActive(); } catch { throw new Error(DISPATCH_CANCELLED_MESSAGE); } };
+    if (windowMs === 0 || typeof printer?.on !== "function") return { settled: async () => { stillActive(); return "unconfirmed"; } };
     const key = (entry: any) => `${Number(entry?.attr)}:${Number(entry?.code)}:${entry?.timestamp ?? ""}`;
     const known = new Set((Array.isArray(before?.raw?.hms) ? before.raw.hms : []).map(key));
     const judge = (report: any): "started" | "rejected" | undefined => {
@@ -451,8 +456,10 @@ export class BambuImplementation extends PrinterImplementation {
       if (["PREPARE", "SLICING", "RUNNING"].includes(String(report?.gcode_state ?? "").toUpperCase())) return "started";
       return undefined;
     };
-    let resolveOutcome!: (value: "started" | "rejected" | undefined) => void;
-    const outcome = new Promise<"started" | "rejected" | undefined>((resolve) => { resolveOutcome = resolve; });
+    let resolveOutcome!: (value: "started" | "rejected" | "cancelled" | undefined) => void;
+    const outcome = new Promise<"started" | "rejected" | "cancelled" | undefined>((resolve) => { resolveOutcome = resolve; });
+    // cancel_print bumps a local generation; notice it without touching the printer.
+    const cancelCheck = setInterval(() => { try { assertActive(); } catch { resolveOutcome("cancelled"); } }, 500);
     const onRaw = (topic: string, payload: Buffer) => {
       if (topic !== `device/${serial}/report`) return;
       let parsed: any;
@@ -464,18 +471,21 @@ export class BambuImplementation extends PrinterImplementation {
     const timer = setTimeout(() => resolveOutcome(undefined), windowMs);
     return {
       settled: async () => {
-        let verdict: "started" | "rejected" | undefined;
+        let verdict: "started" | "rejected" | "cancelled" | undefined;
         try {
           verdict = await outcome;
         } finally {
           clearTimeout(timer);
+          clearInterval(cancelCheck);
           printer.off?.("rawMessage", onRaw);
         }
+        if (verdict === "cancelled") throw new Error(DISPATCH_CANCELLED_MESSAGE);
         // Nothing pushed during the window: take one full report, not a polling loop.
         if (verdict === undefined) {
           try { verdict = judge((await this.getSafetyStatus(host, serial, token))?.raw); } catch { /* stays unconfirmed */ }
         }
         if (verdict === "rejected") throw new Error(COMMAND_REJECTED_MESSAGE);
+        stillActive();
         return verdict ?? "unconfirmed";
       },
     };
@@ -671,7 +681,7 @@ export class BambuImplementation extends PrinterImplementation {
     this.assertBedClearance(dispatchStatus, bedClearance);
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
-    const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus);
+    const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
     await publishBambuCommand(printer, "print", "gcode_file", { param: remotePath });
     const dispatch = await watcher.settled();
     return {

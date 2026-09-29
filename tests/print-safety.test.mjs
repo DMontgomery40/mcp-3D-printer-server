@@ -422,3 +422,20 @@ test("print_3mf reports what the printer did after the command, including firmwa
     });
   }
 });
+
+test("a stop during the dispatch check is reported as cancelled, never as started", async (t) => {
+  const file = await bambuProject(t);
+  const { preload, events } = await bambuBoundaries(t, { afterPublish: {} });
+  const client = await server(t, { ...bambuEnv, BAMBU_DISPATCH_CHECK_MS: "5000" }, { preload, elicitation: accept });
+  const printing = client.callTool({ name: "print_3mf", arguments: { three_mf_path: file } }, undefined, { timeout: 30000 });
+  // Wait until the print command is out, then stop.
+  for (let tries = 0; !(await events()).some(({ action, payload }) => action === "publish" && payload?.print?.command === "project_file"); tries++) {
+    assert.ok(tries < 200, "print command was never published");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const stop = await client.callTool({ name: "cancel_print", arguments: {} });
+  assert.notEqual(stop.isError, true, errorText(stop));
+  const result = await printing;
+  assert.equal(result.isError, true);
+  assert.match(errorText(result), /cancelled it before the printer confirmed the start/);
+});
