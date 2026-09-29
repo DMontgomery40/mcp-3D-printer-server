@@ -26,7 +26,7 @@ async function server(t, env = {}, { preload, elicitation } = {}) {
     command: process.execPath, args: [...(preload ? ["--import", preload] : []), path.join(root, "dist/index.js")], cwd,
     env: {
       ...process.env, MCP_TRANSPORT: "stdio", PRINTER_TYPE: "bambu", PRINTER_HOST: "127.0.0.1", API_KEY: "",
-      BAMBU_MODEL: "", BAMBU_SERIAL: "", BAMBU_TOKEN: "", BAMBU_REQUIRE_CONFIRMATION: "", PRINT_REQUIRE_CONFIRMATION: "", PRINT_CONFIRMATION_TIMEOUT_MS: "",
+      BAMBU_MODEL: "", BAMBU_SERIAL: "", BAMBU_TOKEN: "", BAMBU_REQUIRE_CONFIRMATION: "", PRINT_REQUIRE_CONFIRMATION: "", PRINT_CONFIRMATION_TIMEOUT_MS: "", BAMBU_DISPATCH_CHECK_MS: "0",
       PRINTER_MAX_NOZZLE_TEMP: "", PRINTER_MAX_BED_TEMP: "", PRINTER_MAX_CHAMBER_TEMP: "", ...env,
     },
     stderr: "pipe",
@@ -35,7 +35,7 @@ async function server(t, env = {}, { preload, elicitation } = {}) {
 }
 
 /** Replaces every Bambu transport boundary in the server process and records attempts. */
-async function bambuBoundaries(t, { status = {}, slice } = {}) {
+async function bambuBoundaries(t, { status = {}, slice, afterPublish } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-boundaries-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const eventsPath = path.join(dir, "events.jsonl");
@@ -50,12 +50,14 @@ async function bambuBoundaries(t, { status = {}, slice } = {}) {
     BambuImplementation.prototype.ftpUpload = async (_host, _token, file, remote) => log({ action: "upload", remote, bytes: fs.readFileSync(file).toString("base64") });
     BambuImplementation.prototype.ftpDownload = async () => { throw new Error("Remote artifact unavailable for inspection"); };
     BambuImplementation.prototype.getStatus = async () => { throw new Error("unexpected display status read in test"); };
-    BambuImplementation.prototype.getPrinter = async () => ({ publish: async (payload) => log({ action: "publish", payload }) });
+    let published = false;
+    BambuImplementation.prototype.getPrinter = async () => ({ publish: async (payload) => { published = true; log({ action: "publish", payload }); } });
     BambuImplementation.prototype.getSafetyStatus = async () => {
       log({ action: "status" });
       const now = Date.now();
       return { connected: true, model: "p1s", status: "IDLE", serial: ${JSON.stringify(serial)},
-        raw: { model: "p1s", gcode_state: "IDLE", nozzle_diameter: "0.4", print_error: 0, hms: [], ...${JSON.stringify(status)} },
+        raw: { model: "p1s", gcode_state: "IDLE", nozzle_diameter: "0.4", print_error: 0, hms: [], ...${JSON.stringify(status)},
+          ...(published ? ${JSON.stringify(afterPublish ?? {})} : {}) },
         observation: { source: "mqtt", requestedAt: now, receivedAt: now, identitySource: "report" } };
     };
     STLManipulator.prototype.sliceSTL = async (input) => {
@@ -380,4 +382,30 @@ test("credential rejections and safety refusals get actionable, non-retry advice
   assert.equal(result.isError, true);
   assert.equal(result.structuredContent?.retryable, false);
   assert.match(result.structuredContent?.suggestion ?? "", /Access Code.*BAMBU_TOKEN/);
+});
+
+test("print_3mf reports what the printer did after the command, including firmware rejection", async (t) => {
+  const file = await bambuProject(t);
+  const rejected = { hms: [{ attr: 0x05000500, code: 0x00010007, action: 0, timestamp: 1790665533 }] };
+  for (const [name, afterPublish, expectation] of [
+    ["firmware rejects unsigned command", rejected, /rejected the print command.*0500-0500-0001-0007.*Developer Mode/s],
+    ["printer starts", { gcode_state: "PREPARE" }, "started"],
+    ["no acknowledgement", {}, "unconfirmed"],
+  ]) {
+    await t.test(name, async (t) => {
+      const { preload } = await bambuBoundaries(t, { afterPublish });
+      const client = await server(t, { ...bambuEnv, BAMBU_DISPATCH_CHECK_MS: "2000" }, { preload, elicitation: accept });
+      const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file } }, undefined, { timeout: 30000 });
+      if (expectation instanceof RegExp) {
+        assert.equal(result.isError, true);
+        assert.match(errorText(result), expectation);
+        assert.equal(result.structuredContent?.retryable, false);
+      } else {
+        assert.notEqual(result.isError, true, errorText(result));
+        const body = JSON.parse(result.content[0].text);
+        assert.equal(body.dispatch, expectation);
+        if (expectation === "unconfirmed") assert.match(body.message, /has not reported starting/);
+      }
+    });
+  }
 });

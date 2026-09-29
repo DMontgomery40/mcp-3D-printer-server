@@ -512,6 +512,8 @@ Before anything is uploaded, the server inspects a private copy of the selected 
 
 - If the project has no plate G-code, the server tries to [auto-slice it](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#print_3mf-auto-slicing) with FULU OrcaSlicer-bambulab or Bambu Studio. If slicing fails, or the selected plate still has no G-code, it stops with an error and never uploads the original project.
 - `ams_mapping` is an object whose values are AMS slot numbers. When it is omitted, the mapping embedded in the 3MF is used; with no mapping at all, the print runs without AMS. `use_ams: false` turns AMS off.
+- After sending the command, the server watches fresh reports for up to 15 seconds (`BAMBU_DISPATCH_CHECK_MS`) and returns `dispatch: "started"` or `"unconfirmed"`. If the firmware refuses the command (HMS 0500-0500-0001-0007 on firmware 01.08.05 and later without Developer Mode), the call fails and says so; the checked file stays on the printer's storage.
+- `nozzle_type` (`stainless_steel`, `hardened_steel`, `tungsten_carbide`, `brass`) sets the installed nozzle when the project must be auto-sliced. The job's nozzle type must match the printer's report.
 - `bed_type` is one of `textured_plate`, `cool_plate`, `engineering_plate`, or `hot_plate` (default `BED_TYPE`, else `textured_plate`). It must match the plate's bed metadata, so a file sliced for another plate, or without bed metadata, is refused until `bed_type` matches.
 - `nozzle_diameter` accepts 0.2, 0.4, 0.6, or 0.8 (default `NOZZLE_DIAMETER` or 0.4).
 - Calibration flags default to on (timelapse to off) when omitted.
@@ -581,6 +583,7 @@ Options for the Bambu-compatible path:
 | Argument | What it does |
 |---|---|
 | `bed_type` | Build plate: `textured_plate`, `cool_plate`, `engineering_plate`, or `hot_plate` (default `BED_TYPE` or `textured_plate`) |
+| `nozzle_type` | Installed nozzle: `stainless_steel`, `hardened_steel`, `tungsten_carbide`, or `brass` (default `BAMBU_NOZZLE_TYPE`, else the preset's stock nozzle). Printing requires it to match the printer's reported nozzle |
 | `load_filaments` | Filament profile JSON paths in slot order, `;`-separated. One profile applies to every slot; otherwise give one per slot. `filament_profile` is an alias |
 | `load_filament_ids` | Comma-separated filament IDs mapping filaments to objects, such as `1,2,3,1` |
 | `filament_colours` | One `#RRGGBB` per filament slot, `;`-separated. Defaults to the input 3MF's colours, then each profile's colour |

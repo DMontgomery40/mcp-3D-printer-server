@@ -81,6 +81,7 @@ API_KEY=your_api_key              # OctoPrint, Repetier, Prusa, Creality
 # BAMBU_TOKEN=your_access_code    # LAN access code from the printer screen
 # BAMBU_MODEL=p1s                 # Required for Bambu print operations
 # BED_TYPE=textured_plate         # textured_plate, cool_plate, engineering_plate, hot_plate
+# BAMBU_NOZZLE_TYPE=hardened_steel # Only if you replaced the stock nozzle (P1S/P1P/A1 ship stainless_steel)
 # NOZZLE_DIAMETER=0.4             # 0.2, 0.4, 0.6, or 0.8 for printing and heating
 
 # --- Print and heating safety (see "Print and heating safety" below) ---
@@ -125,6 +126,8 @@ API_KEY=your_api_key              # OctoPrint, Repetier, Prusa, Creality
 | `NOZZLE_DIAMETER` | `0.4` | No | Nozzle diameter in mm. Selects the Bambu machine preset; printing and heating accept 0.2, 0.4, 0.6, or 0.8 and check it against the live printer |
 | `PRINT_REQUIRE_CONFIRMATION` | confirmation on | No | Only an explicit `0` skips the ordinary human confirmation before print starts and positive heating, on every printer type. The first print after a finished job still asks. See [print and heating safety](#print-and-heating-safety) |
 | `BAMBU_REQUIRE_CONFIRMATION` | confirmation on | No | Bambu-only form of `PRINT_REQUIRE_CONFIRMATION=0` |
+| `BAMBU_NOZZLE_TYPE` | model preset's stock nozzle | No | Installed nozzle for slicing: `stainless_steel`, `hardened_steel`, `tungsten_carbide`, or `brass`. Set it if you upgraded the nozzle; printing requires the job's nozzle type to match the printer's report |
+| `BAMBU_DISPATCH_CHECK_MS` | `15000` | No | How long to watch the printer's reports after a print command to confirm it started or was refused (0 to 60000; 0 skips the check) |
 | `PRINT_CONFIRMATION_TIMEOUT_MS` | `600000` (10 minutes) | No | How long a person has to answer a confirmation prompt, from 1000 to 3600000. When it runs out, nothing is sent and the error says so |
 | `PRINTER_MAX_NOZZLE_TEMP` | `300` | No | Nozzle ceiling in °C for non-Bambu printers. Only the server environment can change it; an invalid value refuses printing and positive heating |
 | `PRINTER_MAX_BED_TEMP` | `120` | No | Bed ceiling in °C for non-Bambu printers |
@@ -421,6 +424,8 @@ The endpoint is `http://127.0.0.1:3000/mcp` by default. The server binds to `127
 - **"The printer rejected its LAN access code" (Bambu, MQTT "Not authorized" or FTPS 530):** the access code changes when LAN mode is toggled and after some resets. Read the current code on the printer under Settings > Network (WLAN) and update `BAMBU_TOKEN`.
 - **Prints or heating are refused because the client cannot ask for confirmation:** use an MCP client that supports elicitation. For a deliberately headless setup, set `PRINT_REQUIRE_CONFIRMATION=0`; the first print after a finished job still needs a person to confirm the bed is clear.
 - **A print is refused for a missing material:** the G-code has no `; filament_type` line. Pass `material` (for example `PLA`) to the print or heating tool.
+- **"The printer rejected the print command (HMS 0500-0500-0001-0007)":** Bambu firmware 01.08.05 and later only accept third-party LAN control with LAN Only Mode and Developer Mode on (Settings > WLAN on the printer). LAN Only Mode turns off cloud and Bambu Handy remote access while it is on. Or start the uploaded file from Bambu Studio or the printer's screen.
+- **"Printer nozzle 0 type is unknown or does not match the job":** the file was sliced for a different nozzle material than the printer reports (a stock P1S preset assumes stainless steel). Slice again with `nozzle_type` or set `BAMBU_NOZZLE_TYPE`.
 - **`print_3mf` rejects the bed type:** pass the `bed_type` the plate was sliced for, or slice again for the plate you have installed.
 - **A Bambu slice stops before the slicer runs:** the exact `<model> <nozzle> nozzle` preset is missing from the selected installation, or `SLICER_PROFILE` lists a machine preset. See [Bambu-compatible slicing](./SLICING.md#bambu-compatible-slicing).
 - **A per-call `slicer_path` or `bridge_command` is rejected:** configure the executable in the server environment instead. See [executable settings](#executable-settings-stay-in-server-configuration).

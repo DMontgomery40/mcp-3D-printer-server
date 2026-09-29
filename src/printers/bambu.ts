@@ -56,6 +56,19 @@ interface ProjectFileMetadata {
 }
 
 const COMMAND_SETTLE_MS = 300;
+/** HMS 0500-0500-0001-0007: firmware 01.08.05+ rejected an unsigned MQTT command. */
+const COMMAND_VERIFICATION_HMS = { attr: 0x05000500, code: 0x00010007 };
+const COMMAND_REJECTED_MESSAGE =
+  "The printer rejected the print command (HMS 0500-0500-0001-0007, \"MQTT command verification failed\"). " +
+  "Bambu firmware 01.08.05 and later only accept third-party LAN control with LAN Only Mode and Developer Mode " +
+  "enabled (Settings > WLAN on the printer). The checked file is on the printer's storage, but nothing is printing.";
+
+/** How long to watch fresh reports after a print command (BAMBU_DISPATCH_CHECK_MS, 0 disables). */
+function dispatchCheckMs(): number {
+  const raw = process.env.BAMBU_DISPATCH_CHECK_MS?.trim();
+  const value = raw ? Number(raw) : 15_000;
+  return Number.isInteger(value) && value >= 0 && value <= 60_000 ? value : 15_000;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -396,10 +409,15 @@ export class BambuImplementation extends PrinterImplementation {
 
     await printer.publish(projectFileCmd);
     await sleep(COMMAND_SETTLE_MS);
+    const dispatch = await this.verifyDispatch(host, serial, token, dispatchStatus);
 
     return {
       status: "success",
-      message: `Uploaded and started checked 3MF print: ${options.projectName}`,
+      dispatch,
+      message: dispatch === "started"
+        ? `The printer accepted and started the checked 3MF print: ${options.projectName}`
+        : `Uploaded the checked 3MF and sent the print command for ${options.projectName}; the printer has not reported starting yet. ` +
+          "Check get_printer_status before assuming it is printing.",
       remoteProjectPath,
       plateFile: projectMetadata.plateFileName,
       platePath: projectMetadata.plateInternalPath,
@@ -412,6 +430,32 @@ export class BambuImplementation extends PrinterImplementation {
         chamber: inspection.maxChamberTemperature,
       },
     };
+  }
+
+  /**
+   * A published print command is not proof the printer took it. Watch fresh
+   * reports: a new command-verification HMS means the firmware refused it; a
+   * transition to PREPARE/SLICING/RUNNING means it started.
+   */
+  private async verifyDispatch(host: string, serial: string, token: string, before: any): Promise<"started" | "unconfirmed"> {
+    const windowMs = dispatchCheckMs();
+    if (windowMs === 0) return "unconfirmed";
+    const key = (entry: any) => `${Number(entry?.attr)}:${Number(entry?.code)}:${entry?.timestamp ?? ""}`;
+    const known = new Set((Array.isArray(before?.raw?.hms) ? before.raw.hms : []).map(key));
+    const deadline = Date.now() + windowMs;
+    while (Date.now() < deadline) {
+      await sleep(Math.min(1_500, Math.max(0, deadline - Date.now())));
+      let status: any;
+      try { status = await this.getSafetyStatus(host, serial, token); } catch { continue; }
+      const raw = status?.raw ?? {};
+      const hms = Array.isArray(raw.hms) ? raw.hms : [];
+      if (hms.some((entry: any) => Number(entry?.attr) === COMMAND_VERIFICATION_HMS.attr &&
+          Number(entry?.code) === COMMAND_VERIFICATION_HMS.code && !known.has(key(entry)))) {
+        throw new Error(COMMAND_REJECTED_MESSAGE);
+      }
+      if (["PREPARE", "SLICING", "RUNNING"].includes(String(raw.gcode_state ?? "").toUpperCase())) return "started";
+    }
+    return "unconfirmed";
   }
 
   /** Stop is never gated or queued behind pending checked operations. */
@@ -490,20 +534,22 @@ export class BambuImplementation extends PrinterImplementation {
   }
 
   async getFiles(host: string, port: string, apiKey: string) {
-    const [serial, token] = this.extractBambuCredentials(apiKey);
-    const printer = new BambuPrinter(host, serial, token);
+    const [, token] = this.extractBambuCredentials(apiKey);
     const directories = ["cache", "timelapse", "logs"];
     const filesByDirectory: Record<string, string[]> = {};
-
-    await printer.manipulateFiles(async (context) => {
+    // bambu-js swallowed listing failures as empty folders. List read-only over
+    // the shared FTPS options with absolute paths and surface real failures.
+    const client = new FTPClient(15_000);
+    try {
+      await client.access(this.ftpsOptions(host, token));
+      const root = await client.list("/");
       for (const directory of directories) {
-        try {
-          filesByDirectory[directory] = await context.readDir(directory);
-        } catch {
-          filesByDirectory[directory] = [];
-        }
+        const present = root.some((entry) => entry.name === directory && (entry.isDirectory || entry.isSymbolicLink));
+        filesByDirectory[directory] = present ? (await client.list(`/${directory}`)).map((entry) => entry.name) : [];
       }
-    });
+    } finally {
+      client.close();
+    }
 
     const files = Object.entries(filesByDirectory).flatMap(([directory, names]) =>
       names.map((name) => `${directory}/${name}`)
@@ -603,13 +649,17 @@ export class BambuImplementation extends PrinterImplementation {
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
     await publishBambuCommand(printer, "print", "gcode_file", { param: remotePath });
+    const dispatch = await this.verifyDispatch(host, serial, token, dispatchStatus);
     return {
       status: "success",
       uploaded: true,
       printRequested: true,
+      dispatch,
       remotePath,
       sha256: inspection.sha256,
-      message: `Checked and started ${remotePath}.`,
+      message: dispatch === "started"
+        ? `The printer accepted and started ${remotePath}.`
+        : `Sent the print command for ${remotePath}; the printer has not reported starting yet. Check get_printer_status before assuming it is printing.`,
     };
   }
 

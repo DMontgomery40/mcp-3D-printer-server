@@ -39,6 +39,7 @@ export interface BambuSliceOptions {
   loadFilamentIds?: string;    // --load-filament-ids "1,2,3,1": filament-to-object mapping
   filamentColours?: string[];  // positional #RRGGBB per loaded filament slot
   bedType?: string;            // textured_plate, cool_plate, engineering_plate, hot_plate
+  nozzleType?: string;         // installed hotend material written into the machine preset
   enableTimelapse?: boolean;   // --enable-timelapse
   allowMixTemp?: boolean;      // --allow-mix-temp
   scale?: number;              // --scale factor
@@ -504,6 +505,15 @@ export class BambuCliProfilePreparer {
       outputBase, slicerType, activeProfilesRoot, printerPreset, slicerProfile, options);
     const bundle = await this.flattenBundle(
       await this.expandProjectFilaments(inputPath, rawBundle), options, activeProfilesRoot);
+    // The machine preset assumes the stock hotend; record the installed one so
+    // the sliced job's nozzle_type matches what the printer reports.
+    if (options.nozzleType && bundle.settingsArg) {
+      const [machinePath, ...rest] = bundle.settingsArg.split(";");
+      const machine = this.readJsonFile(machinePath);
+      const current = machine.nozzle_type;
+      machine.nozzle_type = Array.isArray(current) && current.length > 0 ? current.map(() => options.nozzleType) : [options.nozzleType];
+      bundle.settingsArg = [this.writeTempJson(outputBase, `machine_${options.nozzleType}`, machine), ...rest].join(";");
+    }
     // Inherited process G-code is now present; apply Orca's existing
     // absolute-extrusion normalization after resolving those ancestors.
     if (slicerType === "orcaslicer" && bundle.settingsArg) {

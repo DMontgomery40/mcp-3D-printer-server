@@ -101,7 +101,7 @@ async function startServer(t, install, extraEnv = {}) {
     PATH: process.env.PATH, HOME: process.env.HOME,
     MCP_TRANSPORT: "stdio", PRINTER_TYPE: "octoprint", PRINTER_HOST: "127.0.0.1",
     SLICER_TYPE: "bambustudio", SLICER_PATH: install.executable, SLICER_PROFILE: "",
-    FILAMENT_PROFILE: "", SLICER_FILAMENT_PROFILE: "", BAMBU_MODEL: "", NOZZLE_DIAMETER: "",
+    FILAMENT_PROFILE: "", SLICER_FILAMENT_PROFILE: "", BAMBU_MODEL: "", NOZZLE_DIAMETER: "", BAMBU_NOZZLE_TYPE: "",
     BAMBU_PROFILES_ROOT: "", BAMBU_SLICER_PROFILE_DIRS: "", BAMBU_TEMPLATE_3MF_PATH: "",
     BAMBU_TEMPLATE_DIR: path.join(install.root, "templates"), MCP_ALLOW_EXECUTABLE_ARG: "1",
     TEMP_DIR: tempDir, ...extraEnv,
@@ -155,6 +155,35 @@ test("slice_stl never passes the raw inherited machine preset to the CLI (P1S re
   assert.deepEqual(JSON.parse(await fs.readFile(filaments[0], "utf8")).nozzle_temperature, ["220"]);
   assert.ok(args.includes("--allow-newer-file"));
   assert.equal(args.at(-1), SAMPLE_STL);
+});
+
+test("slice_stl writes the installed nozzle type into the machine preset so printing can match the printer", async (t) => {
+  const install = await createFakeInstall(t);
+  const machineOf = async () => {
+    const args = await install.args();
+    return JSON.parse(await fs.readFile(args[args.indexOf("--load-settings") + 1].split(";")[0], "utf8"));
+  };
+  const { call } = await startServer(t, install);
+  let result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", nozzle_type: "hardened_steel" });
+  assert.equal(result.isError, undefined, text(result));
+  assert.deepEqual((await machineOf()).nozzle_type, ["hardened_steel"]);
+  // Without a choice the preset's stock nozzle is kept.
+  await install.resetCapture();
+  result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s" });
+  assert.equal(result.isError, undefined, text(result));
+  assert.notDeepEqual((await machineOf()).nozzle_type, ["hardened_steel"]);
+  // Invalid values stop before the slicer runs.
+  await install.resetCapture();
+  result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", nozzle_type: "diamond" });
+  assert.equal(result.isError, true);
+  assert.match(text(result), /Invalid nozzle type/);
+  await assertNotExecuted(install);
+  // BAMBU_NOZZLE_TYPE supplies the default.
+  const envServer = await startServer(t, install, { BAMBU_NOZZLE_TYPE: "hardened-steel" });
+  await install.resetCapture();
+  result = await envServer.call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s" });
+  assert.equal(result.isError, undefined, text(result));
+  assert.deepEqual((await machineOf()).nozzle_type, ["hardened_steel"]);
 });
 
 test("slice_stl preparation failures stop before the slicer and give slicer-specific advice", async (t) => {

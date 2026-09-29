@@ -56,6 +56,15 @@
   and report an unanswered prompt as a timeout. Previously a slow answer was
   reported as missing elicitation support, which pointed users at disabling
   the prompt.
+- Report what a Bambu printer did after a print command instead of assuming
+  success: watch fresh reports (BAMBU_DISPATCH_CHECK_MS, default 15 s) and
+  return `dispatch: "started"` or `"unconfirmed"`, or fail with an explanation
+  when firmware 01.08.05+ refuses the command (HMS 0500-0500-0001-0007, needs
+  LAN Only Mode and Developer Mode). Found on a real P1S, where the old code
+  reported "sent successfully" while nothing printed.
+- List Bambu files over FTPS directly (ported from bambu-printer-mcp): the
+  previous bambu-js listing returned empty folders on every failure,
+  including on a healthy P1S with 286 files.
 - Explain credential rejections (Bambu MQTT "Not authorized", FTPS 530,
   HTTP 401/403) as a changed access code or API key instead of advising a
   retry, and mark safety refusals as not retryable.
@@ -81,6 +90,11 @@
 - Require a nonempty `Metadata/plate_<n>.gcode` in Bambu-compatible output.
   A checksum-only archive, missing output, or stale file from an earlier run
   is an error.
+- Add `nozzle_type` (and `BAMBU_NOZZLE_TYPE`) so jobs can be sliced for the
+  installed nozzle. Bambu machine presets assume the stock nozzle (stainless
+  steel on P1S/P1P/A1), and the print gate compares the job with the
+  printer's report, so a P1S with a hardened-steel nozzle could never print a
+  CLI-sliced job.
 - Keep OrcaSlicer's absolute-extrusion normalization when the machine preset
   owns the layer-change G-code, so isolating machine settings cannot pair
   absolute E with the machine's `G92 E0` resets.

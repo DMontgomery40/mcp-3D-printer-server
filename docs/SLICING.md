@@ -79,7 +79,7 @@ Bambu Studio, FULU OrcaSlicer-bambulab, and OrcaSlicer with `bambu_model` produc
 
 Slicing accepts `p1s`, `p1p`, `p2s`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`, `h2s`, and `h2c` when the installed slicer has that preset. Printing accepts `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, and `h2d`.
 
-`slice_stl` and `slice_with_template` also take `bed_type`, `load_filaments`, `load_filament_ids`, `filament_colours`, template selection, and the Bambu CLI placement and transform options (`orient`, `arrange`, `ensure_on_bed`, `repetitions`, `clone_objects`, `skip_objects`, `slice_plate`, `scale`, `rotate`, `rotate_x`, `rotate_y`, `uptodate`, `min_save`, `skip_modified_gcodes`, `enable_timelapse`, `allow_mix_temp`). See the [slicing tools reference](../README.md#slice_stl).
+`slice_stl` and `slice_with_template` also take `bed_type`, `nozzle_type`, `load_filaments`, `load_filament_ids`, `filament_colours`, template selection, and the Bambu CLI placement and transform options (`orient`, `arrange`, `ensure_on_bed`, `repetitions`, `clone_objects`, `skip_objects`, `slice_plate`, `scale`, `rotate`, `rotate_x`, `rotate_y`, `uptodate`, `min_save`, `skip_modified_gcodes`, `enable_timelapse`, `allow_mix_temp`). See the [slicing tools reference](../README.md#slice_stl).
 
 **Evidence.** Bambu Studio 02.01.01.52 sliced a P1S 0.4 nozzle job through this path, including a 9.7 MB refitted phone-case STL in Bambu TPU 95A HF (230 °C nozzle, 35 °C plate, about 1 h 38 min and 21 g); see the [Blender guide's worked example](./BLENDER.md#worked-example-refit-a-phone-case-for-a-new-phone). Before this change, Bambu Studio rejected the raw inherited P1S preset with exit 239 ("process not compatible with printer"). Other slicer versions and models have not been tested here.
 
@@ -97,7 +97,7 @@ A template is a saved `.3mf`, `.json`, or `.config` file whose slicer settings a
 ## Printing what you sliced
 
 - **G-code (any backend):** `upload_gcode` with `gcode_path` and `print: true` inspects the exact file, checks the printer, asks a human to confirm, and starts it. Without `print`, the file is only uploaded. Printing needs a declared material: `; filament_type` in the G-code or the `material` argument.
-- **Sliced Bambu `.3mf`:** `print_3mf` inspects the selected plate, compares it with a fresh printer report, asks a human to confirm, then uploads the project over FTPS and starts it over MQTT. It works only with `PRINTER_TYPE=bambu`, and `bed_type` must match the plate's bed metadata.
+- **Sliced Bambu `.3mf`:** `print_3mf` inspects the selected plate, compares it with a fresh printer report, asks a human to confirm, then uploads the project over FTPS and starts it over MQTT. It works only with `PRINTER_TYPE=bambu`, and `bed_type` must match the plate's bed metadata. The job's nozzle type must also match the printer's reported nozzle: Bambu machine presets assume the stock nozzle (stainless steel on P1S, P1P, and A1; hardened steel on X1C and X1E), so if you upgraded yours, slice with `nozzle_type` (or set `BAMBU_NOZZLE_TYPE`). After the print command, the server watches the printer's reports and says whether it started, stayed silent, or was refused by the firmware.
 - **Check first:** `confirm_temperatures` reports every heater target in a G-code file (`S` and `R` forms, tool-addressed, RepRapFirmware `G10`/`M568`, and Klipper `SET_HEATER_TEMPERATURE`). An expected temperature matches only when it equals the file's highest target, returned as `peak`. It does not change the file.
 
 ### `print_3mf` auto-slicing

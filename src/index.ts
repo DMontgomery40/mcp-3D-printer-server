@@ -188,6 +188,18 @@ const SLICE_BAMBU_MODEL_PRESETS: Record<string, (nozzle: string) => string> = {
   h2c: (n) => `Bambu Lab H2C ${n} nozzle`,
 };
 const DEFAULT_TEMPLATE_3MF_PATH = process.env.BAMBU_TEMPLATE_3MF_PATH || "";
+const VALID_NOZZLE_TYPES = ["stainless_steel", "hardened_steel", "tungsten_carbide", "brass"] as const;
+
+/** The installed hotend material. Bambu machine presets assume the stock nozzle; the print gate compares this with the printer. */
+function resolveNozzleType(value: unknown): string | undefined {
+  const raw = value === undefined || value === null || value === "" ? process.env.BAMBU_NOZZLE_TYPE?.trim() : value;
+  if (raw === undefined || raw === "") return undefined;
+  const normalized = String(raw).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!(VALID_NOZZLE_TYPES as readonly string[]).includes(normalized)) {
+    throw new Error(`Invalid nozzle type "${raw}". Valid types: ${VALID_NOZZLE_TYPES.join(", ")}`);
+  }
+  return normalized;
+}
 
 // Shared slice_stl / slice_with_template argument schema.
 const SLICE_TOOL_PROPERTIES = {
@@ -239,6 +251,11 @@ const SLICE_TOOL_PROPERTIES = {
     type: "string",
     enum: [...VALID_BED_TYPES],
     description: "Bambu-compatible slicing: build plate type (default: BED_TYPE or textured_plate).",
+  },
+  nozzle_type: {
+    type: "string",
+    enum: [...VALID_NOZZLE_TYPES],
+    description: "Bambu-compatible slicing: the hotend nozzle material installed on the printer (default: BAMBU_NOZZLE_TYPE, else the model preset's stock nozzle, usually stainless_steel; X1C/X1E presets use hardened_steel). Printing compares it with the printer's reported nozzle.",
   },
   template_3mf_path: {
     type: "string",
@@ -353,6 +370,7 @@ function buildBambuSliceOptions(args: Record<string, unknown> | undefined): Bamb
   const colours = text("filament_colours");
   if (colours) options.filamentColours = parseFilamentColours(colours);
   options.bedType = resolveBedType(args?.bed_type as string | undefined);
+  options.nozzleType = resolveNozzleType(args?.nozzle_type);
   return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) as BambuSliceOptions;
 }
 
@@ -1519,6 +1537,11 @@ class ThreeDPrinterMCPServer {
                   enum: ["textured_plate", "cool_plate", "engineering_plate", "hot_plate"],
                   description: "Bed/plate type installed on the printer (default: textured_plate)."
                 },
+                nozzle_type: {
+                  type: "string",
+                  enum: [...VALID_NOZZLE_TYPES],
+                  description: "Installed nozzle material, used when the 3MF must be auto-sliced (default: BAMBU_NOZZLE_TYPE, else the preset's stock nozzle)."
+                },
                 nozzle_diameter: {
                   type: "string",
                   description: "Nozzle diameter in mm (default: 0.4)."
@@ -2321,8 +2344,8 @@ class ThreeDPrinterMCPServer {
                   undefined, // progressCallback
                   printPreset,
                   filamentProfile || undefined,
-                  // Slice for the plate the print will be checked against.
-                  { bedType: printBedType }
+                  // Slice for the plate and nozzle the print will be checked against.
+                  { bedType: printBedType, ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}) }
                 );
                 console.log("Auto-sliced to: " + threeMFPath);
               } catch (sliceErr: any) {
@@ -2392,7 +2415,7 @@ class ThreeDPrinterMCPServer {
                     plateIndex: 0, 
                     ...printOptions // Spread the final options
                 });
-                result = `Print command for ${threeMfFilename} sent successfully.`;
+                // Report what the printer did, not merely that a command was published.
             } catch (printError) {
                  console.error(`Error starting 3MF print for ${threeMfFilename}:`, printError);
                  throw new Error(`Failed to start print: ${(printError as Error).message}`);
@@ -2732,7 +2755,7 @@ class ThreeDPrinterMCPServer {
       return { status: "error", retryable: false, suggestion: credentialSuggestion(), message, tool };
     }
     // Safety refusals stop before the printer is touched; retrying unchanged repeats the refusal.
-    if (/nothing was (?:sent|uploaded)|no command was sent|print safety|hardware limit|material policy|declared material|confirmation was declined|are refused|is refused|refused because|refused until|refused before/i.test(message)) {
+    if (/nothing was (?:sent|uploaded)|no command was sent|print safety|hardware limit|material policy|declared material|confirmation was declined|are refused|is refused|refused because|refused until|refused before|does not match the job|is ambiguous|is missing or ambiguous|rejected the print command/i.test(message)) {
       return {
         status: "error",
         retryable: false,
