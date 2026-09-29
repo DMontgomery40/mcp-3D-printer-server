@@ -36,7 +36,7 @@ import {
   inspectFuluOrcaSetup,
   invokeFuluBridgeRpc,
 } from "./fulu-orca.js";
-import { CONFIRMATION_UNAVAILABLE } from "./safety/confirmation.js";
+import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
 import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "./safety/expected-peaks.js";
 
 // Load environment variables from .env file
@@ -509,6 +509,19 @@ if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
 
+
+/** MQTT "Not authorized", FTP 530, and HTTP 401/403 all mean the printer rejected its credentials. */
+function isCredentialRejection(message: string): boolean {
+  return /not authori[sz]ed|\b530\b|login incorrect|\b401\b|\b403\b|unauthori[sz]ed|forbidden|bad user name or password/i.test(message);
+}
+
+function credentialSuggestion(): string {
+  return (process.env.PRINTER_TYPE ?? "").toLowerCase() === "bambu"
+    ? "The printer rejected its LAN access code. Read the current Access Code on the printer (Settings > Network/WLAN; it changes " +
+        "when LAN mode is toggled and after some resets), update BAMBU_TOKEN, and check BAMBU_SERIAL. Retrying unchanged will not help."
+    : "The printer rejected its credentials. Check API_KEY (and PRINTER_HOST/PRINTER_PORT) for this printer system. Retrying unchanged will not help.";
+}
+
 class ThreeDPrinterMCPServer {
   private server: Server;
   private readonly blender = new BlenderMcpBridge();
@@ -542,6 +555,7 @@ class ThreeDPrinterMCPServer {
   /** Human MCP elicitation before a print start or positive heating command. */
   private async confirmHardware(message: string): Promise<boolean> {
     let response;
+    const timeout = confirmationTimeoutMs();
     try {
       response = await this.server.elicitInput({
         mode: "form",
@@ -553,8 +567,10 @@ class ThreeDPrinterMCPServer {
           },
           required: ["confirmed"],
         },
-      });
-    } catch {
+      }, { timeout });
+    } catch (error) {
+      // A person may take minutes to check the bed; a timeout is not a missing capability.
+      if ((error as { code?: unknown })?.code === ErrorCode.RequestTimeout) throw new Error(confirmationTimedOut(timeout));
       throw new Error(CONFIRMATION_UNAVAILABLE);
     }
     return response.action === "accept" && response.content?.confirmed === true;
@@ -593,7 +609,7 @@ class ThreeDPrinterMCPServer {
           },
           required: ["bambu_model"],
         },
-      });
+      }, { timeout: confirmationTimeoutMs() });
 
       if (result.action === "accept" && result.content?.bambu_model) {
         return validateBambuModel(String(result.content.bambu_model));
@@ -604,6 +620,12 @@ class ThreeDPrinterMCPServer {
       );
     } catch (elicitError: any) {
       const msg = elicitError?.message || String(elicitError);
+      if (elicitError?.code === ErrorCode.RequestTimeout) {
+        throw new Error(
+          "No printer model was chosen in time; nothing was sent. Set BAMBU_MODEL or pass bambu_model, " +
+          `or answer the prompt within PRINT_CONFIRMATION_TIMEOUT_MS. Valid models: ${VALID_BAMBU_MODELS.join(", ")}`
+        );
+      }
       if (
         elicitError?.code === -32601 || elicitError?.code === -32600 ||
         msg.includes("does not support") || msg.includes("elicitation")
@@ -2702,6 +2724,19 @@ class ThreeDPrinterMCPServer {
         status: "error",
         retryable: false,
         suggestion: "Check the slicing arguments, template, and profile paths named in the error, then retry.",
+        message,
+        tool,
+      };
+    }
+    if (isCredentialRejection(message)) {
+      return { status: "error", retryable: false, suggestion: credentialSuggestion(), message, tool };
+    }
+    // Safety refusals stop before the printer is touched; retrying unchanged repeats the refusal.
+    if (/nothing was (?:sent|uploaded)|no command was sent|print safety|hardware limit|material policy|declared material|confirmation was declined|are refused|is refused|refused because|refused until|refused before/i.test(message)) {
+      return {
+        status: "error",
+        retryable: false,
+        suggestion: "A safety check stopped this before anything reached the printer. Read the reason, fix the file, arguments, or printer state, and ask again.",
         message,
         tool,
       };

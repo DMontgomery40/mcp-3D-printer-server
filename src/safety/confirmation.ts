@@ -18,6 +18,22 @@ export function confirmationOptOut(scope: ConfirmationScope): boolean {
   return values.length > 0 && values.every((value) => value === "0");
 }
 
+/**
+ * How long a human has to answer a confirmation prompt. The MCP SDK's default
+ * request timeout (60 s) is too short for someone walking to the printer.
+ */
+export function confirmationTimeoutMs(): number {
+  const raw = process.env.PRINT_CONFIRMATION_TIMEOUT_MS?.trim();
+  const value = raw ? Number(raw) : 600_000;
+  return Number.isInteger(value) && value >= 1_000 && value <= 3_600_000 ? value : 600_000;
+}
+
+export function confirmationTimedOut(timeoutMs: number): string {
+  const minutes = timeoutMs / 60_000;
+  return `No confirmation was received within ${minutes >= 1 ? `${Number(minutes.toFixed(1))} minute(s)` : `${timeoutMs / 1000} seconds`}; ` +
+    "nothing was sent to the printer. Ask again when you are at the printer, or raise PRINT_CONFIRMATION_TIMEOUT_MS.";
+}
+
 export const CONFIRMATION_UNAVAILABLE =
   "Human hardware confirmation requires an MCP client with elicitation support. For deliberately headless operation, " +
   "PRINT_REQUIRE_CONFIRMATION=0 (or BAMBU_REQUIRE_CONFIRMATION=0 for Bambu printers) disables ordinary print/heat prompts; " +

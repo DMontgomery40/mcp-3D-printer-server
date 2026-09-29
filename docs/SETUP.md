@@ -125,6 +125,7 @@ API_KEY=your_api_key              # OctoPrint, Repetier, Prusa, Creality
 | `NOZZLE_DIAMETER` | `0.4` | No | Nozzle diameter in mm. Selects the Bambu machine preset; printing and heating accept 0.2, 0.4, 0.6, or 0.8 and check it against the live printer |
 | `PRINT_REQUIRE_CONFIRMATION` | confirmation on | No | Only an explicit `0` skips the ordinary human confirmation before print starts and positive heating, on every printer type. The first print after a finished job still asks. See [print and heating safety](#print-and-heating-safety) |
 | `BAMBU_REQUIRE_CONFIRMATION` | confirmation on | No | Bambu-only form of `PRINT_REQUIRE_CONFIRMATION=0` |
+| `PRINT_CONFIRMATION_TIMEOUT_MS` | `600000` (10 minutes) | No | How long a person has to answer a confirmation prompt, from 1000 to 3600000. When it runs out, nothing is sent and the error says so |
 | `PRINTER_MAX_NOZZLE_TEMP` | `300` | No | Nozzle ceiling in °C for non-Bambu printers. Only the server environment can change it; an invalid value refuses printing and positive heating |
 | `PRINTER_MAX_BED_TEMP` | `120` | No | Bed ceiling in °C for non-Bambu printers |
 | `PRINTER_MAX_CHAMBER_TEMP` | `60` | No | Chamber ceiling in °C for non-Bambu printers |
@@ -416,6 +417,8 @@ The endpoint is `http://127.0.0.1:3000/mcp` by default. The server binds to `127
 - **Klipper returns 401 or 403:** Moonraker is enforcing authorization. Add the MCP host to `trusted_clients`.
 - **Bambu uploads fail with "Premature close":** update to 1.2.9 or later, which negotiates the TLS session reuse the printer requires.
 - **Bambu print tools ask for or reject the model:** set `BAMBU_MODEL` to your exact model. Do not substitute a similar model.
+- **"No confirmation was received within 10 minutes":** nobody answered the prompt in time, so nothing was sent. Ask again when you are at the printer, or raise `PRINT_CONFIRMATION_TIMEOUT_MS`.
+- **"The printer rejected its LAN access code" (Bambu, MQTT "Not authorized" or FTPS 530):** the access code changes when LAN mode is toggled and after some resets. Read the current code on the printer under Settings > Network (WLAN) and update `BAMBU_TOKEN`.
 - **Prints or heating are refused because the client cannot ask for confirmation:** use an MCP client that supports elicitation. For a deliberately headless setup, set `PRINT_REQUIRE_CONFIRMATION=0`; the first print after a finished job still needs a person to confirm the bed is clear.
 - **A print is refused for a missing material:** the G-code has no `; filament_type` line. Pass `material` (for example `PLA`) to the print or heating tool.
 - **`print_3mf` rejects the bed type:** pass the `bed_type` the plate was sliced for, or slice again for the plate you have installed.

@@ -26,7 +26,7 @@ async function server(t, env = {}, { preload, elicitation } = {}) {
     command: process.execPath, args: [...(preload ? ["--import", preload] : []), path.join(root, "dist/index.js")], cwd,
     env: {
       ...process.env, MCP_TRANSPORT: "stdio", PRINTER_TYPE: "bambu", PRINTER_HOST: "127.0.0.1", API_KEY: "",
-      BAMBU_MODEL: "", BAMBU_SERIAL: "", BAMBU_TOKEN: "", BAMBU_REQUIRE_CONFIRMATION: "", PRINT_REQUIRE_CONFIRMATION: "",
+      BAMBU_MODEL: "", BAMBU_SERIAL: "", BAMBU_TOKEN: "", BAMBU_REQUIRE_CONFIRMATION: "", PRINT_REQUIRE_CONFIRMATION: "", PRINT_CONFIRMATION_TIMEOUT_MS: "",
       PRINTER_MAX_NOZZLE_TEMP: "", PRINTER_MAX_BED_TEMP: "", PRINTER_MAX_CHAMBER_TEMP: "", ...env,
     },
     stderr: "pipe",
@@ -198,6 +198,33 @@ test("print_3mf asks a human before upload; decline and clients without elicitat
   }
 });
 
+test("confirmation prompts wait for a slow human and report a timeout as a timeout", async (t) => {
+  const { confirmationTimeoutMs } = await import(pathToFileURL(path.join(root, "dist/safety/confirmation.js")).href);
+  const saved = process.env.PRINT_CONFIRMATION_TIMEOUT_MS;
+  delete process.env.PRINT_CONFIRMATION_TIMEOUT_MS;
+  assert.equal(confirmationTimeoutMs(), 600_000, "default must outlast the SDK's 60 s request timeout");
+  if (saved !== undefined) process.env.PRINT_CONFIRMATION_TIMEOUT_MS = saved;
+  const file = await bambuProject(t);
+  const slowAccept = async () => { await new Promise((resolve) => setTimeout(resolve, 1500)); return accept(); };
+  for (const [name, timeout, expectation] of [["answered in time", "4000", "print"], ["no answer in time", "1000", /No confirmation was received within 1 seconds; nothing was sent/]]) {
+    await t.test(name, async (t) => {
+      const { preload, events } = await bambuBoundaries(t);
+      const client = await server(t, { ...bambuEnv, PRINT_CONFIRMATION_TIMEOUT_MS: timeout }, { preload, elicitation: slowAccept });
+      const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file } }, undefined, { timeout: 30000 });
+      const actions = (await events()).map(({ action }) => action);
+      if (expectation === "print") {
+        assert.notEqual(result.isError, true, errorText(result));
+        assert.ok(actions.includes("publish"));
+      } else {
+        assert.equal(result.isError, true);
+        assert.match(errorText(result), expectation);
+        assert.doesNotMatch(errorText(result), /elicitation support/, "a timeout must not tell users to disable prompts");
+        assert.deepEqual(actions, ["status"], "only the preflight status read may happen");
+      }
+    });
+  }
+});
+
 test("print_3mf never uploads the original project when auto-slicing fails or the selected plate is missing", async (t) => {
   for (const [name, fileOptions, slice, error] of [
     ["slicer failure", { plateEntry: null }, "fail", /Auto-slicing failed; nothing was uploaded or started: Simulated slicer failure/],
@@ -333,4 +360,24 @@ test("process_and_print_stl refuses an expected-temperature mismatch before uplo
       }
     });
   }
+});
+
+test("credential rejections and safety refusals get actionable, non-retry advice", async (t) => {
+  const { preload } = await bambuBoundaries(t);
+  const client = await server(t, bambuEnv, { preload, elicitation: accept });
+  // Heating over the model limit is a safety refusal before any connection.
+  const refused = await client.callTool({ name: "set_printer_temperature", arguments: { component: "bed", temperature: 300 } });
+  assert.equal(refused.structuredContent?.retryable, false);
+  assert.match(refused.structuredContent?.suggestion ?? "", /safety check stopped this/i);
+  // An FTPS 530 from list_printer_files names the access code instead of "retry".
+  const ftpDenied = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ftp-denied-")), "deny.mjs");
+  await fs.writeFile(ftpDenied, `
+    import { BambuImplementation } from ${JSON.stringify(pathToFileURL(path.join(root, "dist/printers/bambu.js")).href)};
+    BambuImplementation.prototype.getFiles = async () => { throw new Error("530 Login incorrect."); };
+  `);
+  const denied = await server(t, bambuEnv, { preload: ftpDenied });
+  const result = await denied.callTool({ name: "list_printer_files", arguments: {} });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent?.retryable, false);
+  assert.match(result.structuredContent?.suggestion ?? "", /Access Code.*BAMBU_TOKEN/);
 });

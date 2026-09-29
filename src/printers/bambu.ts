@@ -279,7 +279,13 @@ export class BambuImplementation extends PrinterImplementation {
       };
     } catch (error) {
       console.error(`Failed to get Bambu status for ${serial}:`, error);
-      return { status: "error", connected: false, error: (error as Error).message };
+      const message = (error as Error).message;
+      return {
+        status: "error", connected: false, error: message,
+        ...(/not authori[sz]ed|\b530\b|login incorrect/i.test(message)
+          ? { hint: "The printer rejected its LAN access code. Read the current Access Code on the printer (Settings > Network/WLAN), update BAMBU_TOKEN, and check BAMBU_SERIAL." }
+          : {}),
+      };
     }
   }
 

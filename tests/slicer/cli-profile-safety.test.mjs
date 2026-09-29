@@ -181,6 +181,24 @@ for (const slicerType of ['bambustudio', 'orcaslicer', 'orcaslicer-bambulab']) {
     }
   });
 
+  if (slicerType === 'orcaslicer') {
+    test('orcaslicer keeps absolute-extrusion normalization when the machine owns layer G-code', async t => {
+      const f = await fixture(t, slicerType);
+      const machine = JSON.parse(await fs.readFile(f.machine, 'utf8'));
+      await fs.writeFile(f.machine, JSON.stringify({ ...machine, use_relative_e_distances: '1', layer_change_gcode: 'G92 E0\n; machine layer' }));
+      await f.write('process', { name: 'SAFETY process base', layer_height: '0.2', layer_change_gcode: 'G92 E0\n; process layer' });
+      await f.slice({ loadFilaments: f.filament });
+      const args = await f.args();
+      const [machineFile, processFile] = args[args.indexOf('--load-settings') + 1].split(';');
+      const loadedMachine = JSON.parse(await fs.readFile(machineFile, 'utf8'));
+      const loadedProcess = JSON.parse(await fs.readFile(processFile, 'utf8'));
+      assert.equal(loadedMachine.use_relative_e_distances, '0');
+      assert.equal(loadedMachine.layer_change_gcode, '; machine layer');
+      assert.equal(loadedProcess.layer_change_gcode, undefined, 'machine-owned keys stay out of the process');
+      assert.equal(loadedProcess.use_relative_e_distances, undefined);
+    });
+  }
+
   for (const missing of ['SAFETY base.json', 'SAFETY start.json', '../cli_config.json']) {
     test(`${slicerType} rejects missing machine dependency ${missing}`, async t => {
       const f = await fixture(t, slicerType);

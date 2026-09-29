@@ -51,6 +51,14 @@
   terminating the server, without patching bambu-node.
 - Fix OctoPrint nozzle targets (tool0 instead of extruder) and use the DSF
   raw-text /machine/code and PUT /machine/file routes for Duet.
+- Give people 10 minutes to answer confirmation prompts
+  (PRINT_CONFIRMATION_TIMEOUT_MS) instead of the MCP SDK's 60-second default,
+  and report an unanswered prompt as a timeout. Previously a slow answer was
+  reported as missing elicitation support, which pointed users at disabling
+  the prompt.
+- Explain credential rejections (Bambu MQTT "Not authorized", FTPS 530,
+  HTTP 401/403) as a changed access code or API key instead of advising a
+  retry, and mark safety refusals as not retryable.
 - Evidence: unit tests and MCP-level tests with mocked MQTT/FTPS boundaries and
   loopback HTTP printer APIs. No physical printer was contacted, heated or
   asked to print; acceptance at a mocked boundary does not prove firmware
@@ -73,6 +81,9 @@
 - Require a nonempty `Metadata/plate_<n>.gcode` in Bambu-compatible output.
   A checksum-only archive, missing output, or stale file from an earlier run
   is an error.
+- Keep OrcaSlicer's absolute-extrusion normalization when the machine preset
+  owns the layer-change G-code, so isolating machine settings cannot pair
+  absolute E with the machine's `G92 E0` resets.
 - Drop machine settings carried by process or filament files, including
   template 3MF project settings exported for another printer, so they
   cannot replace the selected preset's start G-code.

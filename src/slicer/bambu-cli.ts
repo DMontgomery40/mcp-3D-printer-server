@@ -176,6 +176,21 @@ export class BambuCliProfilePreparer {
   }
 
   /**
+   * The same normalization for the machine file. Machine isolation drops these
+   * keys from the process when the machine defines them, so the machine copy
+   * must carry the absolute-extrusion values or Orca would pair absolute E with
+   * the machine's G92 E0 resets.
+   */
+  sanitizeMachineForOrca(machineConfig: any): any {
+    const sanitized = { ...machineConfig };
+    if (sanitized.use_relative_e_distances !== undefined) sanitized.use_relative_e_distances = "0";
+    for (const key of ["before_layer_change_gcode", "layer_gcode", "layer_change_gcode"]) {
+      if (sanitized[key] !== undefined) sanitized[key] = this.stripAbsoluteExtruderResets(sanitized[key]);
+    }
+    return sanitized;
+  }
+
+  /**
    * Select the machine preset, process, and positional filament profiles
    * from the active installation. Throws before any slicer runs when the
    * exact machine preset or a named dependency is missing.
@@ -493,10 +508,10 @@ export class BambuCliProfilePreparer {
     // absolute-extrusion normalization after resolving those ancestors.
     if (slicerType === "orcaslicer" && bundle.settingsArg) {
       const [machinePath, processPath] = bundle.settingsArg.split(";");
-      bundle.settingsArg = [machinePath, this.writeTempJson(
-        outputBase, "process_orca_resolved",
-        this.sanitizeProcessForOrca(this.readJsonFile(processPath), printerPreset)
-      )].join(";");
+      bundle.settingsArg = [
+        this.writeTempJson(outputBase, "machine_orca_resolved", this.sanitizeMachineForOrca(this.readJsonFile(machinePath))),
+        this.writeTempJson(outputBase, "process_orca_resolved", this.sanitizeProcessForOrca(this.readJsonFile(processPath), printerPreset)),
+      ].join(";");
     }
     return this.isolateMachineSettings(bundle);
   }
