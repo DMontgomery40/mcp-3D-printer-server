@@ -7,7 +7,18 @@ import path from 'path';
 import { promisify } from 'util';
 import { EventEmitter } from 'events';
 import * as crypto from 'crypto';
-import { execFile } from 'child_process';
+import { detectProfilesRoot } from '../slicer/profile-flatten.js';
+import {
+  BambuCliProfilePreparer,
+  assertSlicedProjectOutput,
+  buildBambuCliArgs,
+  type BambuCliSlicerType,
+  type BambuSliceOptions,
+} from '../slicer/bambu-cli.js';
+import { runSlicerProcess } from '../slicer/run-slicer.js';
+import { SlicerError, asPreparationError } from '../slicer/slicer-error.js';
+
+export type { BambuSliceOptions } from '../slicer/bambu-cli.js';
 
 const readFileAsync = promisify(fs.readFile);
 const writeFileAsync = promisify(fs.writeFile);
@@ -141,49 +152,6 @@ export class STLManipulator extends EventEmitter {
     }
 
     return path.join(outputDir, plateOutputs[0]);
-  }
-
-  private resolveBambuMachinePresetPath(slicerPath: string, printerPreset: string): string {
-    if (fs.existsSync(printerPreset)) {
-      return printerPreset;
-    }
-
-    const presetFile = printerPreset.endsWith(".json") ? printerPreset : `${printerPreset}.json`;
-    const candidateDirs: string[] = [];
-    const macAppMarker = `${path.sep}Contents${path.sep}MacOS${path.sep}`;
-    const macAppIndex = slicerPath.indexOf(macAppMarker);
-
-    if (macAppIndex >= 0) {
-      candidateDirs.push(
-        path.join(
-          slicerPath.slice(0, macAppIndex + `${path.sep}Contents`.length),
-          "Resources",
-          "profiles",
-          "BBL",
-          "machine"
-        )
-      );
-    }
-
-    const executableDir = path.dirname(slicerPath);
-    candidateDirs.push(
-      path.join(executableDir, "..", "Resources", "profiles", "BBL", "machine"),
-      path.join(executableDir, "..", "share", "OrcaSlicer", "resources", "profiles", "BBL", "machine"),
-      path.join(executableDir, "..", "resources", "profiles", "BBL", "machine"),
-      path.join(executableDir, "resources", "profiles", "BBL", "machine")
-    );
-
-    for (const candidateDir of candidateDirs) {
-      const candidate = path.resolve(candidateDir, presetFile);
-      if (fs.existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
-    throw new Error(
-      `Could not find Bambu machine preset "${presetFile}" near slicer executable ${slicerPath}. ` +
-      "Pass slicer_profile with an explicit machine/process settings file, or use a slicer bundle that includes Resources/profiles/BBL/machine."
-    );
   }
 
   private resolveSlicerTimeoutMs(): number {
@@ -984,12 +952,30 @@ export class STLManipulator extends EventEmitter {
   }
 
   /**
+   * Bambu-compatible CLI slicing applies when the slicer is BambuStudio or
+   * FULU OrcaSlicer-bambulab, or when generic OrcaSlicer is given an explicit
+   * Bambu machine preset. Generic OrcaSlicer without a preset keeps its
+   * user-supplied machine/process profile path.
+   */
+  static usesBambuCliPreparation(slicerType: SlicerType, printerPreset?: string): boolean {
+    return (
+      slicerType === 'bambustudio' ||
+      slicerType === 'orcaslicer-bambulab' ||
+      (slicerType === 'orcaslicer' && Boolean(printerPreset))
+    );
+  }
+
+  /**
    * Slice an STL or 3MF file using the specified slicer
    * @param stlFilePath Path to the input STL or 3MF file
    * @param slicerType Type of slicer (prusaslicer, cura, slic3r, orcaslicer, orcaslicer-bambulab, bambustudio)
    * @param slicerPath Path to the slicer executable
-   * @param slicerProfile Optional path to the slicer profile/config file
+   * @param slicerProfile Optional slicer profile/config file. For Bambu-compatible
+   *   CLI slicing this is a process profile; the machine comes from printerPreset.
    * @param progressCallback Optional callback for progress updates
+   * @param printerPreset Bambu machine preset name, e.g. "Bambu Lab P1S 0.4 nozzle"
+   * @param filamentProfile Optional filament profile path(s), ';'-separated
+   * @param bambuOptions Optional Bambu-compatible CLI options (added last for compatibility)
    * @returns Path to the generated G-code or sliced 3MF file
    */
   async sliceSTL(
@@ -999,199 +985,175 @@ export class STLManipulator extends EventEmitter {
     slicerProfile?: string,
     progressCallback?: ProgressCallback,
     printerPreset?: string,
-    filamentProfile?: string
+    filamentProfile?: string,
+    bambuOptions?: BambuSliceOptions
   ): Promise<string> {
     const operationId = this.generateOperationId();
     this.activeOperations.set(operationId, true);
+    const bambuCli = STLManipulator.usesBambuCliPreparation(slicerType, printerPreset);
 
-    this.validateSlicerExecutable(slicerPath);
-    const orcaProfiles = this.parseOrcaProfileArgs(slicerProfile, filamentProfile);
-    if (slicerType === 'orcaslicer') {
-      this.warnForMissingProfiles(orcaProfiles.settingsProfiles, 'Slicer profile');
-      this.warnForMissingProfiles(orcaProfiles.filamentProfiles, 'Filament profile');
-    } else if (slicerProfile && !fs.existsSync(slicerProfile)) {
-      console.warn(`Slicer profile specified but not found: ${slicerProfile}. Slicer might use defaults.`);
-      // Allow proceeding without profile, slicer might handle it
-    }
-    if (slicerType !== 'orcaslicer' && filamentProfile && !fs.existsSync(filamentProfile)) {
-      console.warn(`Filament profile specified but not found: ${filamentProfile}. Slicer might use defaults.`);
-    }
-
-    const outputFileName = path.basename(stlFilePath, '.stl') + '.gcode';
-    let outputFilePath = path.join(this.tempDir, outputFileName);
     let orcaOutputDir: string | undefined;
-
-    let args: string[] = [];
+    let bambuOutputDir: string | undefined;
 
     try {
-      if (progressCallback) progressCallback(0, `Starting slicing with ${slicerType}...`);
-
-      switch (slicerType) {
-        case 'prusaslicer':
-        case 'slic3r': // PrusaSlicer and Slic3r share similar CLI args
-          args = [
-            '--slice',
-            '--output', outputFilePath,
-            '--load', slicerProfile || '', // Pass profile path
-            stlFilePath
-          ];
-          // Remove empty profile arg if not provided
-          args = args.filter(arg => arg !== ''); 
-          break;
-
-        case 'orcaslicer': // Add OrcaSlicer case
-           orcaOutputDir = path.join(this.tempDir, `${operationId}-orca-output`);
-           fs.mkdirSync(orcaOutputDir, { recursive: true });
-           args = [
-               '--slice', '0',
-               '--outputdir', orcaOutputDir,
-           ];
-           this.appendOrcaProfileArgs(args, orcaProfiles);
-           args.push(stlFilePath);
-           break;
-
-        case 'cura':
-          // CuraEngine CLI args are different, often requiring -s for settings
-          // Example: curaengine slice -v -j cura_settings.json -s layer_height=0.2 -o output.gcode -l input.stl
-          // This requires parsing the profile or passing individual settings.
-          // Keeping it simple for now, assuming profile contains necessary info.
-          args = [
-            'slice', 
-            '-l', stlFilePath,
-            '-o', outputFilePath
-          ];
-          if (slicerProfile) {
-            args.push('-j', slicerProfile); // Load settings from profile definition file
-          }
-          break;
-
-        case 'orcaslicer-bambulab':
-        case 'bambustudio':
-          // Bambu project slicers: slice and export as 3MF with embedded gcode.
-          // orcaslicer-bambulab is the FULU fork that restores BambuNetwork support.
-          // For 3MF input: slice in place and export sliced 3MF
-          // For STL input: slice and export as 3MF
-          {
-            const is3mf = stlFilePath.toLowerCase().endsWith('.3mf');
-            const outputBase = path.basename(stlFilePath, is3mf ? '.3mf' : '.stl');
-            const bambuOutputPath = path.join(this.tempDir, outputBase + '_sliced.3mf');
-            args = [
-              '--slice', '0',  // Slice all plates
-              '--export-3mf', bambuOutputPath,
-            ];
-            // FULU Orca/Bambu Studio load machine presets as JSON settings files.
-            if (printerPreset && !slicerProfile) {
-              args.push('--load-settings', this.resolveBambuMachinePresetPath(slicerPath, printerPreset));
-            }
-            if (slicerProfile) {
-              args.push('--load-settings', slicerProfile);
-            }
-            if (filamentProfile) {
-              args.push('--load-filaments', filamentProfile);
-            }
-            args.push(stlFilePath);
-            // Override outputFilePath for bambustudio since it produces 3MF, not gcode
-            outputFilePath = bambuOutputPath;
-          }
-          break;
-
-        default:
-          throw new Error(`Unsupported slicer type: ${slicerType}`);
+      try {
+        this.validateSlicerExecutable(slicerPath);
+      } catch (error) {
+        throw asPreparationError(error, { slicerType, slicerPath });
+      }
+      if (!fs.existsSync(stlFilePath)) {
+        throw new SlicerError('preparation', `Input model not found: ${stlFilePath}`, { slicerType, slicerPath });
       }
 
+      const orcaProfiles = this.parseOrcaProfileArgs(slicerProfile, filamentProfile);
+      if (!bambuCli) {
+        if (slicerType === 'orcaslicer') {
+          this.warnForMissingProfiles(orcaProfiles.settingsProfiles, 'Slicer profile');
+          this.warnForMissingProfiles(orcaProfiles.filamentProfiles, 'Filament profile');
+        } else if (slicerProfile && !fs.existsSync(slicerProfile)) {
+          console.warn(`Slicer profile specified but not found: ${slicerProfile}. Slicer might use defaults.`);
+        }
+      }
+
+      const outputFileName = path.basename(stlFilePath, '.stl') + '.gcode';
+      let outputFilePath = path.join(this.tempDir, outputFileName);
+      let args: string[] = [];
+      let bambuExport: { producedPath: string; finalPath: string } | undefined;
+
+      if (progressCallback) progressCallback(0, `Starting slicing with ${slicerType}...`);
+
+      if (bambuCli) {
+        // Bambu-compatible CLI: resolve the exact machine preset and every
+        // profile dependency, then slice and export a 3MF with plate G-code.
+        const cliType = slicerType as BambuCliSlicerType;
+        const is3mf = stlFilePath.toLowerCase().endsWith('.3mf');
+        const outputBase = path.basename(stlFilePath, is3mf ? '.3mf' : '.stl');
+        const exportName = `${outputBase}_sliced.3mf`;
+        try {
+          if (orcaProfiles.settingsProfiles.length > 1) {
+            throw new Error(
+              `slicer_profile (or SLICER_PROFILE) lists ${orcaProfiles.settingsProfiles.length} settings files. Bambu-compatible CLI slicing ` +
+              'takes one process profile; the machine preset comes from bambu_model and nozzle_diameter.'
+            );
+          }
+          const options: BambuSliceOptions = { ...bambuOptions };
+          if (orcaProfiles.filamentProfiles.length > 0) {
+            const legacyFilaments = orcaProfiles.filamentProfiles.join(';');
+            if (options.loadFilaments && this.splitProfileList(options.loadFilaments).join(';') !== legacyFilaments) {
+              throw new Error('Provide either load_filaments or filament_profile, not conflicting values.');
+            }
+            options.loadFilaments = legacyFilaments;
+          }
+          const profilesRoot = detectProfilesRoot(slicerPath, cliType);
+          const preparer = new BambuCliProfilePreparer(path.join(this.tempDir, 'slicer-profiles'));
+          const bundle = await preparer.prepare(
+            stlFilePath,
+            outputBase,
+            cliType,
+            profilesRoot,
+            printerPreset,
+            orcaProfiles.settingsProfiles[0],
+            options
+          );
+          bambuOutputDir = fs.mkdtempSync(path.join(this.tempDir, `${operationId}-bambu-output-`));
+          args = [...buildBambuCliArgs(bundle, bambuOutputDir, exportName, options), stlFilePath];
+          bambuExport = {
+            producedPath: path.join(bambuOutputDir, exportName),
+            finalPath: path.join(this.tempDir, exportName),
+          };
+          outputFilePath = bambuExport.finalPath;
+        } catch (error) {
+          throw asPreparationError(error, { slicerType, slicerPath });
+        }
+      } else {
+        switch (slicerType) {
+          case 'prusaslicer':
+          case 'slic3r': // PrusaSlicer and Slic3r share similar CLI args
+            args = [
+              '--slice',
+              '--output', outputFilePath,
+              '--load', slicerProfile || '', // Pass profile path
+              stlFilePath
+            ];
+            // Remove empty profile arg if not provided
+            args = args.filter(arg => arg !== '');
+            break;
+
+          case 'orcaslicer':
+            orcaOutputDir = path.join(this.tempDir, `${operationId}-orca-output`);
+            fs.mkdirSync(orcaOutputDir, { recursive: true });
+            args = [
+              '--slice', '0',
+              '--outputdir', orcaOutputDir,
+            ];
+            this.appendOrcaProfileArgs(args, orcaProfiles);
+            args.push(stlFilePath);
+            break;
+
+          case 'cura':
+            // CuraEngine CLI args are different, often requiring -s for settings
+            // Example: curaengine slice -v -j cura_settings.json -s layer_height=0.2 -o output.gcode -l input.stl
+            args = [
+              'slice',
+              '-l', stlFilePath,
+              '-o', outputFilePath
+            ];
+            if (slicerProfile) {
+              args.push('-j', slicerProfile); // Load settings from profile definition file
+            }
+            break;
+
+          default:
+            throw new SlicerError('preparation', `Unsupported slicer type: ${slicerType}`, { slicerType, slicerPath });
+        }
+      }
+
+      // Never mistake a previous run's file for this run's result (or overwrite the input).
+      if (path.resolve(outputFilePath) === path.resolve(stlFilePath)) {
+        throw new SlicerError('preparation', `Slicer output would overwrite the input file: ${stlFilePath}`, { slicerType, slicerPath });
+      }
+      if (fs.existsSync(outputFilePath)) fs.rmSync(outputFilePath, { force: true });
+
       if (progressCallback) progressCallback(20, `Executing slicer: ${slicerPath} ${args.join(' ')}`);
-      console.log(`Executing: ${slicerPath} ${args.join(' ')}`);
+      console.error(`Executing: ${slicerPath} ${args.join(' ')}`);
 
-      // Execute the slicer
-      await new Promise<void>((resolve, reject) => {
-        const timeoutMs = this.resolveSlicerTimeoutMs();
-        let settled = false;
-        let slicerProcessKilledByTimeout = false;
-        let timeoutHandle: NodeJS.Timeout | undefined;
-
-        const settle = (callback: () => void) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          if (timeoutHandle) {
-            clearTimeout(timeoutHandle);
-          }
-          callback();
-        };
-
-        const process = execFile(slicerPath, args, (error, stdout, stderr) => {
-          if (error) {
-            console.error(`Slicer Error: ${error.message}`);
-            console.error(`Slicer Stderr: ${stderr}`);
-            const timeoutMessage = slicerProcessKilledByTimeout
-              ? ` Slicer exceeded timeout ${timeoutMs}ms.`
-              : "";
-            settle(() => reject(new Error(`Slicer failed: ${error.message}.${timeoutMessage} Stderr: ${stderr}`)));
-          } else {
-            console.log(`Slicer Stdout: ${stdout}`);
-             if (stderr) {
-                 console.warn(`Slicer Stderr: ${stderr}`); // Log stderr even on success
-             }
-            settle(() => resolve());
-          }
-        });
-
-        timeoutHandle = setTimeout(() => {
-          slicerProcessKilledByTimeout = true;
-          try {
-            process.kill("SIGKILL");
-          } catch (killError) {
-            console.error("Error attempting to kill timed-out slicer process:", killError);
-          }
-          settle(() => reject(new Error(`Slicer exceeded timeout ${timeoutMs}ms.`)));
-        }, timeoutMs);
-
-        // Optional: Add listeners for stdout/stderr for real-time progress if slicer provides it
-        // process.stdout?.on('data', (data) => { console.log(`Slicer stdout: ${data}`); });
-        // process.stderr?.on('data', (data) => { console.log(`Slicer stderr: ${data}`); });
-        
-        // Check for cancellation periodically
-        const checkCancel = setInterval(() => {
-           if (!this.activeOperations.get(operationId)) {
-               clearInterval(checkCancel);
-               try {
-                   process.kill(); // Attempt to kill the slicer process
-                   settle(() => reject(new Error("Slicing operation cancelled")));
-               } catch (killError) {
-                   console.error("Error attempting to kill slicer process:", killError);
-                   settle(() => reject(new Error("Slicing operation cancelled, but failed to kill process.")));
-               }
-           }
-       }, 500); 
-
-       process.on('exit', () => clearInterval(checkCancel));
-       process.on('error', () => clearInterval(checkCancel)); // Ensure interval cleared on process error too
-
+      await runSlicerProcess({
+        command: slicerPath,
+        args,
+        timeoutMs: this.resolveSlicerTimeoutMs(),
+        slicerType,
+        isCancelled: () => !this.activeOperations.get(operationId),
       });
 
       if (!this.activeOperations.get(operationId)) {
-        // This check might be redundant if the promise rejected on kill, but good safety
-        throw new Error("Slicing operation cancelled after process finished");
+        throw new SlicerError('execution', 'Slicing operation cancelled after process finished', { slicerType, slicerPath });
       }
 
-      if (slicerType === 'orcaslicer') {
-        if (!orcaOutputDir) {
-          throw new Error("Internal error: OrcaSlicer output directory was not initialized.");
+      try {
+        if (bambuExport) {
+          if (!fs.existsSync(bambuExport.producedPath)) {
+            throw new Error(`Slicer exited successfully but did not write ${bambuExport.producedPath}.`);
+          }
+          await assertSlicedProjectOutput(bambuExport.producedPath);
+          fs.renameSync(bambuExport.producedPath, bambuExport.finalPath);
+        } else if (slicerType === 'orcaslicer') {
+          if (!orcaOutputDir) {
+            throw new Error("Internal error: OrcaSlicer output directory was not initialized.");
+          }
+          const orcaGcodePath = this.resolveOrcaGcodeOutput(orcaOutputDir);
+          fs.renameSync(orcaGcodePath, outputFilePath);
         }
-        const orcaGcodePath = this.resolveOrcaGcodeOutput(orcaOutputDir);
-        if (fs.existsSync(outputFilePath)) {
-          fs.unlinkSync(outputFilePath);
-        }
-        fs.renameSync(orcaGcodePath, outputFilePath);
-      }
-      
-      if (!fs.existsSync(outputFilePath)) {
+
+        if (!fs.existsSync(outputFilePath)) {
           throw new Error(`Slicer finished but output file not found: ${outputFilePath}`);
+        }
+      } catch (error) {
+        if (error instanceof SlicerError) throw error;
+        throw new SlicerError('output', error instanceof Error ? error.message : String(error), { slicerType, slicerPath });
       }
 
       if (progressCallback) progressCallback(100, "Slicing completed successfully");
-      
+
       this.emit('operationComplete', {
         operationId,
         type: 'slice',
@@ -1201,16 +1163,18 @@ export class STLManipulator extends EventEmitter {
 
       return outputFilePath;
     } catch (error) {
-      console.error(`Slicing failed for ${stlFilePath}:`, error);
+      console.error(`Slicing failed for ${stlFilePath}:`, error instanceof Error ? error.message : error);
       this.emit('operationError', {
         operationId,
         type: 'slice',
         error: error instanceof Error ? error.message : String(error)
       });
-      throw error; 
+      throw error;
     } finally {
-      if (orcaOutputDir && fs.existsSync(orcaOutputDir)) {
-        fs.rmSync(orcaOutputDir, { recursive: true, force: true });
+      for (const dir of [orcaOutputDir, bambuOutputDir]) {
+        if (dir && fs.existsSync(dir)) {
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
       }
       this.activeOperations.delete(operationId);
     }
