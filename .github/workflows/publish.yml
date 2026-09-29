@@ -1,0 +1,57 @@
+name: Publish Package
+
+# Publishes to npm with GitHub Actions trusted publishing (OIDC, with
+# provenance): no npm token or 2FA code is stored or needed. Every merge to
+# main publishes its package.json version once; a version that is already on
+# npm is skipped. Requires the package's trusted publisher on npmjs.com to
+# point at this repository and this workflow file.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Skip versions already on npm
+        id: version
+        run: |
+          name=$(node -p 'require("./package.json").name')
+          version=$(node -p 'require("./package.json").version')
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already published; nothing to do."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm ci
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm test
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm run test:package
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm publish
