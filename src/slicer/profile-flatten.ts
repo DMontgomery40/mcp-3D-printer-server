@@ -770,7 +770,11 @@ async function writeTemp(
   const safe = leafName.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 64);
   const filename = `flat-${kind}-${safe}-${hash}.json`;
   const out = path.join(tempDir, filename);
-  await fs.writeFile(out, serialized, "utf8");
+  // Concurrent slices flatten identical content to the same name; stage a
+  // private file and rename so no reader ever sees a partial profile.
+  const staging = `${out}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(staging, serialized, "utf8");
+  await fs.rename(staging, out);
   return out;
 }
 
