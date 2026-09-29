@@ -1319,11 +1319,13 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "blender_mcp_status",
-            description: "Inspect Blender MCP configuration or connect and discover the remote server's tools and schemas. Connecting does not edit the scene; use get_scene_info through blender_mcp_call to check the Blender addon.",
+            description: "Inspect Blender MCP configuration or connect and discover the remote server's tools. Lists tool names and summaries; pass tool_names for the full input schemas of the tools you will call. Connecting does not edit the scene; use get_scene_info through blender_mcp_call to check the Blender addon.",
             inputSchema: {
               type: "object",
               properties: {
                 connect: { type: "boolean", description: "Initialize the configured stdio MCP server and discover its tools (default false)." },
+                tool_names: { type: "array", items: { type: "string" }, maxItems: 64, description: "Return full input schemas for these discovered tools, such as [\"execute_blender_code\"]." },
+                include_schemas: { type: "boolean", description: "Return every discovered tool's full definition (large; default false)." },
                 timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total connection and discovery deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." }
               },
               additionalProperties: false
@@ -1340,6 +1342,23 @@ class ThreeDPrinterMCPServer {
                 timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total connection, discovery, and tool deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." }
               },
               required: ["tool_name"],
+              additionalProperties: false
+            }
+          },
+          {
+            name: "blender_mcp_export_stl",
+            description: "Export named objects from the live Blender scene to a new, verified STL for slicing. Writes world-space geometry with modifiers applied, without changing the scene, selection, or mode, and reports triangle count and bounding-box dimensions from the written file. Use this after editing or modelling through blender_mcp_call; Blender MCP's own export_scene writes GLB/FBX only. Requires standard Blender MCP and a shared local filesystem.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                object_names: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 64, description: "Blender object names to export together as one STL (mesh, curve, surface, metaball, or text objects)." },
+                output_path: { type: "string", description: "New local .stl path. Its parent must exist; existing files are never overwritten." },
+                apply_modifiers: { type: "boolean", description: "Export the evaluated geometry with modifiers applied (default true)." },
+                scale: { type: "number", exclusiveMinimum: 0, description: "Multiply coordinates before writing (default 1). Slicers read STL units as millimetres, so use 1000 for a scene modelled in metres." },
+                user_prompt: { type: "string", description: "The user's own words, passed unchanged to Blender MCP." },
+                timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total Blender request deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." }
+              },
+              required: ["object_names", "output_path"],
               additionalProperties: false
             }
           },
@@ -2029,6 +2048,10 @@ class ThreeDPrinterMCPServer {
 
           case "blender_mcp_call":
             return await this.blender.call(args ?? {}, extra.signal);
+
+          case "blender_mcp_export_stl":
+            result = await this.blender.exportStl(args ?? {}, extra.signal);
+            break;
 
           case "blender_mcp_edit_model":
             result = await this.blender.edit(
