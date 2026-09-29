@@ -61,6 +61,16 @@ test("every heater command form is inspected: S and R, late targets, tool change
   }
 });
 
+test("RepRapFirmware M568 activation needs a target this file set for that tool", () => {
+  // Activation-only commands heat to a stored printer-side value the inspector cannot see.
+  for (const command of ["M568 P0 A2", "M568 A2", "M568 P0 A1", "G10 P0 R150\nM568 P0 A2", "G10 P1 S215\nM568 P0 A2", "M568 P0 S215\nM568 P0 A1"]) {
+    assert.throws(() => inspect(PLA + command + "\n"), /M568 A[12] activates/, command);
+  }
+  for (const command of ["G10 P0 S215 R150\nM568 P0 A2", "M568 P0 S215 A2", "G10 P0 S215 R150\nM568 P0 A1", "T0\nM104 S215\nM568 A2", "M568 P0 A0"]) {
+    assert.doesNotThrow(() => inspect(PLA + command + "\n"), command);
+  }
+});
+
 test("dynamic, malformed, ambiguous and program-altering thermal syntax fails closed", () => {
   for (const command of [
     "M104 SNaN", "M104 S", "M104 S-1", "M104 S1e309", "M104 S{nozzle_temperature}", "M109 R[first_layer_temperature]",

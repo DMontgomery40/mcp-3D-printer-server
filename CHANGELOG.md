@@ -30,6 +30,9 @@
   and adapter state checks that refuse printing, paused, errored, offline or
   unreadable printers. Klipper macro parameters that name a heater are checked;
   macro bodies on the printer cannot be inspected.
+- Refuse RepRapFirmware `M568 A1/A2` tool activation unless the job itself set
+  that tool's standby/active target first; activation-only commands would heat
+  to an uninspected printer-side value.
 - Fix process_and_print_stl, which only logged a temperature mismatch and kept
   printing and whose check missed R targets. Expected extruder_temp/bed_temp
   must now equal the sliced job's highest S/R target or nothing is uploaded.

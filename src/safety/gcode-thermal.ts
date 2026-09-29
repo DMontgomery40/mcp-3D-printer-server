@@ -194,6 +194,14 @@ export function scanGcodeThermal(text: string): GcodeThermalScan {
   const targets: ThermalTarget[] = [];
   const declarations: string[][] = [];
   let activeTool: number | undefined;
+  // RepRapFirmware tool temperatures this file has set (active S / standby R),
+  // so M568 A1/A2 activation never uses an uninspected printer-side value.
+  const toolTargetsSet = new Map<number, { active: boolean; standby: boolean }>();
+  const noteToolTargets = (tool: number | undefined, active: boolean, standby: boolean) => {
+    if (tool === undefined) return;
+    const current = toolTargetsSet.get(tool) ?? { active: false, standby: false };
+    toolTargetsSet.set(tool, { active: current.active || active, standby: current.standby || standby });
+  };
   let commandCount = 0;
 
   for (let index = 0; index < lines.length; index++) {
@@ -267,6 +275,8 @@ export function scanGcodeThermal(text: string): GcodeThermalScan {
         for (const key of ["S", "R", "B"]) {
           for (const value of params.get(key) ?? []) targets.push({ line: lineNumber, command: code, heater: "nozzle", value, tool });
         }
+        // On RepRapFirmware, M104/M109 S set the tool's active temperature.
+        noteToolTargets(tool, params.has("S") || params.has("R"), false);
       } else if (["M140", "M190", "M141", "M191"].includes(code)) {
         const params = parseParameters(argumentsText, code, "SRPH");
         const heater: Heater = code === "M140" || code === "M190" ? "bed" : "chamber";
@@ -281,12 +291,23 @@ export function scanGcodeThermal(text: string): GcodeThermalScan {
           for (const key of ["S", "R"]) {
             for (const value of params.get(key) ?? []) targets.push({ line: lineNumber, command: code, heater: "nozzle", value, tool });
           }
+          noteToolTargets(tool, params.has("S"), params.has("R"));
         }
       } else if (code === "M568") {
         const params = parseParameters(argumentsText, code, "PSRAF");
         const tool = toolIndex(params.get("P"), code) ?? activeTool;
         for (const key of ["S", "R"]) {
           for (const value of params.get(key) ?? []) targets.push({ line: lineNumber, command: code, heater: "nozzle", value, tool });
+        }
+        noteToolTargets(tool, params.has("S"), params.has("R"));
+        // A1 (standby) / A2 (active) heat to the tool's stored temperature. Only
+        // allow that when this file set it, so the ceilings covered the value.
+        for (const state of params.get("A") ?? []) {
+          if (state !== 1 && state !== 2) continue;
+          const known = tool === undefined ? undefined : toolTargetsSet.get(tool);
+          if (!(state === 2 ? known?.active : known?.standby)) {
+            fail(`M568 A${state} activates ${tool === undefined ? "an unknown tool" : `tool ${tool}`} at a ${state === 2 ? "active (S)" : "standby (R)"} temperature this file does not set; add the literal target first`);
+          }
         }
       } else if (EMBEDDED_THERMAL.test(argumentsText)) {
         fail("multiple commands on one line are unsupported");
