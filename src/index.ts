@@ -21,14 +21,23 @@ import { createServer as createHttpServer, type IncomingMessage, type Server as 
 import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
-import { STLManipulator } from "./stl/stl-manipulator.js";
+import { STLManipulator, type BambuSliceOptions } from "./stl/stl-manipulator.js";
+import { SlicerError } from "./slicer/slicer-error.js";
+import {
+  inspectSliceSettings,
+  listTemplateRegistry,
+  resolveTemplatePath,
+  resolveTemplateSlicerProfilePath,
+  saveTemplate,
+} from "./slicer/templates.js";
 import { parse3MF, ThreeMFData } from './3mf_parser.js';
 import { BambuImplementation } from "./printers/bambu.js";
 import {
   inspectFuluOrcaSetup,
   invokeFuluBridgeRpc,
-  isFuluPrintRpcMethod,
 } from "./fulu-orca.js";
+import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
+import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "./safety/expected-peaks.js";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -168,6 +177,211 @@ const BAMBU_MODEL_PRESETS: Record<string, (nozzle: string) => string> = {
   h2d: (n) => `Bambu Lab H2D ${n} nozzle`,
 };
 
+// Models whose bundled machine presets the Bambu-compatible CLI slicing path
+// can target. The installed slicer must still contain the exact
+// "<model> <nozzle> nozzle" preset; a missing preset stops the slice.
+const SLICE_BAMBU_MODELS = ["p1s", "p1p", "p2s", "x1c", "x1e", "a1", "a1mini", "h2d", "h2s", "h2c"] as const;
+const SLICE_BAMBU_MODEL_PRESETS: Record<string, (nozzle: string) => string> = {
+  ...BAMBU_MODEL_PRESETS,
+  p2s: (n) => `Bambu Lab P2S ${n} nozzle`,
+  h2s: (n) => `Bambu Lab H2S ${n} nozzle`,
+  h2c: (n) => `Bambu Lab H2C ${n} nozzle`,
+};
+const DEFAULT_TEMPLATE_3MF_PATH = process.env.BAMBU_TEMPLATE_3MF_PATH || "";
+const VALID_NOZZLE_TYPES = ["stainless_steel", "hardened_steel", "tungsten_carbide", "brass"] as const;
+
+/** The installed hotend material. Bambu machine presets assume the stock nozzle; the print gate compares this with the printer. */
+function resolveNozzleType(value: unknown): string | undefined {
+  const raw = value === undefined || value === null || value === "" ? process.env.BAMBU_NOZZLE_TYPE?.trim() : value;
+  if (raw === undefined || raw === "") return undefined;
+  const normalized = String(raw).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!(VALID_NOZZLE_TYPES as readonly string[]).includes(normalized)) {
+    throw new Error(`Invalid nozzle type "${raw}". Valid types: ${VALID_NOZZLE_TYPES.join(", ")}`);
+  }
+  return normalized;
+}
+
+// Shared slice_stl / slice_with_template argument schema.
+const SLICE_TOOL_PROPERTIES = {
+  bambu_model: {
+    type: "string",
+    enum: [...SLICE_BAMBU_MODELS],
+    description:
+      "Bambu Lab printer model. Required for bambustudio and orcaslicer-bambulab (elicited or read from BAMBU_MODEL when omitted); " +
+      "passing it with orcaslicer selects the Bambu-compatible path. The installed slicer must contain the exact model/nozzle preset.",
+  },
+  nozzle_diameter: {
+    type: "string",
+    description: "Nozzle diameter in mm (default: NOZZLE_DIAMETER or 0.4). Selects the '<model> <diameter> nozzle' machine preset.",
+  },
+  slicer_type: {
+    type: "string",
+    enum: [...SLICER_TYPE_ENUM],
+    description:
+      "Type of slicer to use (prusaslicer, cura, slic3r, orcaslicer, orcaslicer-bambulab, bambustudio). Use orcaslicer-bambulab for the FULU fork. " +
+      "bambustudio and orcaslicer-bambulab (and orcaslicer with bambu_model) export a sliced 3MF.",
+  },
+  slicer_path: {
+    type: "string",
+    description: "Path to the slicer executable (default: value from env). Per-call overrides require MCP_ALLOW_EXECUTABLE_ARG=1.",
+  },
+  slicer_profile: {
+    type: "string",
+    description:
+      "Profile to use for slicing (default: SLICER_PROFILE env). Bambu-compatible slicing: one process profile JSON (the machine preset comes from bambu_model). " +
+      "Generic OrcaSlicer: machine/process profiles separated with ';', optionally followed by '|filament.json'.",
+  },
+  filament_profile: {
+    type: "string",
+    description: "Filament profile path(s), ';'-separated in slot order, loaded with --load-filaments (default: FILAMENT_PROFILE/SLICER_FILAMENT_PROFILE env). Alias of load_filaments.",
+  },
+  load_filaments: {
+    type: "string",
+    description: "Bambu-compatible slicing: filament profile JSON paths in slot order, ';'-separated. One profile applies to every project slot; otherwise supply one per slot.",
+  },
+  load_filament_ids: {
+    type: "string",
+    description: "Bambu-compatible slicing: comma-separated filament IDs mapping load_filaments to objects, e.g. '1,2,3,1'.",
+  },
+  filament_colours: {
+    type: "string",
+    description: "Bambu-compatible slicing: one #RRGGBB per filament slot, ';'-separated. Defaults to the input 3MF's colours, then each profile's colour.",
+  },
+  bed_type: {
+    type: "string",
+    enum: [...VALID_BED_TYPES],
+    description: "Bambu-compatible slicing: build plate type (default: BED_TYPE or textured_plate).",
+  },
+  nozzle_type: {
+    type: "string",
+    enum: [...VALID_NOZZLE_TYPES],
+    description: "Bambu-compatible slicing: the hotend nozzle material installed on the printer (default: BAMBU_NOZZLE_TYPE, else the model preset's stock nozzle, usually stainless_steel; X1C/X1E presets use hardened_steel). Printing compares it with the printer's reported nozzle.",
+  },
+  template_3mf_path: {
+    type: "string",
+    description: "Bambu-compatible slicing: 3MF or profile whose embedded slicer settings are reused as the process profile (default: BAMBU_TEMPLATE_3MF_PATH). An explicit slicer_profile takes precedence.",
+  },
+  template_name: {
+    type: "string",
+    description: "Named template from the local registry (see list_templates); resolves to its file.",
+  },
+  template_dir: {
+    type: "string",
+    description: "Template directory override when resolving template_name (default: BAMBU_TEMPLATE_DIR or ~/Sync/bambu/templates).",
+  },
+  uptodate: { type: "boolean", description: "Bambu-compatible slicing: refresh 3MF preset configs to the installed slicer version (--uptodate)." },
+  repetitions: { type: "number", description: "Bambu-compatible slicing: print N identical copies (--repetitions)." },
+  orient: { type: "boolean", description: "Bambu-compatible slicing: auto-orient for printability (--orient)." },
+  arrange: { type: "boolean", description: "Bambu-compatible slicing: auto-arrange objects on the plate (--arrange). Set false to keep an existing layout." },
+  ensure_on_bed: { type: "boolean", description: "Bambu-compatible slicing: lower floating models onto the bed (--ensure-on-bed)." },
+  clone_objects: { type: "string", description: "Bambu-compatible slicing: comma-separated clone counts per object index, e.g. '1,3,1,10'." },
+  skip_objects: { type: "string", description: "Bambu-compatible slicing: comma-separated object indices to skip, e.g. '3,5,10'." },
+  enable_timelapse: { type: "boolean", description: "Bambu-compatible slicing: insert timelapse parking moves (--enable-timelapse)." },
+  allow_mix_temp: { type: "boolean", description: "Bambu-compatible slicing: allow filaments with different temperature requirements on one plate." },
+  scale: { type: "number", description: "Bambu-compatible slicing: uniform scale factor applied before slicing (1.0 = original size)." },
+  rotate: { type: "number", description: "Bambu-compatible slicing: Z-axis rotation in degrees before slicing." },
+  rotate_x: { type: "number", description: "Bambu-compatible slicing: X-axis rotation in degrees before slicing." },
+  rotate_y: { type: "number", description: "Bambu-compatible slicing: Y-axis rotation in degrees before slicing." },
+  min_save: { type: "boolean", description: "Bambu-compatible slicing: write a smaller output 3MF (--min-save)." },
+  skip_modified_gcodes: { type: "boolean", description: "Bambu-compatible slicing: ignore custom G-code embedded in an input 3MF (--skip-modified-gcodes)." },
+  slice_plate: { type: "number", description: "Bambu-compatible slicing: plate number to slice; 0 slices all plates (default)." },
+};
+
+function validateSliceBambuModel(model: string): string {
+  const normalized = model.trim().toLowerCase();
+  if (!(SLICE_BAMBU_MODELS as readonly string[]).includes(normalized)) {
+    throw new Error(
+      `Invalid bambu_model "${model}" for slicing. Valid models: ${SLICE_BAMBU_MODELS.join(", ")}`
+    );
+  }
+  return normalized;
+}
+
+function normalizeSliceNozzleDiameter(raw: unknown): string {
+  const text = String(raw ?? "").trim() || DEFAULT_NOZZLE_DIAMETER;
+  const value = Number(text);
+  if (!/^\d+(\.\d+)?$/.test(text) || !Number.isFinite(value) || value <= 0 || value > 2) {
+    throw new Error(`Invalid nozzle_diameter "${text}". Use a diameter in mm such as 0.2, 0.4, 0.6, or 0.8.`);
+  }
+  return String(value);
+}
+
+/** Parse "#RRGGBB;#RRGGBB" (leading '#' optional) into positional slot colours. */
+function parseFilamentColours(value: string): string[] {
+  const colours = value.split(";").map((c) => c.trim()).filter(Boolean)
+    .map((c) => (c.startsWith("#") ? c : `#${c}`).toUpperCase());
+  for (const c of colours) {
+    if (!/^#[0-9A-F]{6}([0-9A-F]{2})?$/.test(c)) {
+      throw new Error(`Invalid filament colour "${c}"; expected #RRGGBB.`);
+    }
+  }
+  if (colours.length === 0) throw new Error("Invalid filament_colours: list at least one colour.");
+  return colours;
+}
+
+function optionalFiniteNumber(args: Record<string, unknown> | undefined, key: string): number | undefined {
+  if (args?.[key] === undefined) return undefined;
+  const value = Number(args[key]);
+  if (!Number.isFinite(value)) throw new Error(`Invalid ${key}: expected a number.`);
+  return value;
+}
+
+function optionalBoolean(args: Record<string, unknown> | undefined, key: string): boolean | undefined {
+  const value = args?.[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw new Error(`Invalid ${key}: expected a boolean.`);
+  return value;
+}
+
+/** Map slice_stl/slice_with_template arguments to Bambu-compatible CLI options. */
+function buildBambuSliceOptions(args: Record<string, unknown> | undefined): BambuSliceOptions {
+  const options: BambuSliceOptions = {};
+  const text = (key: string) => (args?.[key] !== undefined && String(args[key]).trim() ? String(args[key]).trim() : undefined);
+  options.uptodate = optionalBoolean(args, "uptodate");
+  options.orient = optionalBoolean(args, "orient");
+  options.arrange = optionalBoolean(args, "arrange");
+  options.ensureOnBed = optionalBoolean(args, "ensure_on_bed");
+  options.enableTimelapse = optionalBoolean(args, "enable_timelapse");
+  options.allowMixTemp = optionalBoolean(args, "allow_mix_temp");
+  options.minSave = optionalBoolean(args, "min_save");
+  options.skipModifiedGcodes = optionalBoolean(args, "skip_modified_gcodes");
+  options.repetitions = optionalFiniteNumber(args, "repetitions");
+  options.scale = optionalFiniteNumber(args, "scale");
+  options.rotate = optionalFiniteNumber(args, "rotate");
+  options.rotateX = optionalFiniteNumber(args, "rotate_x");
+  options.rotateY = optionalFiniteNumber(args, "rotate_y");
+  options.slicePlate = optionalFiniteNumber(args, "slice_plate");
+  if (options.repetitions !== undefined && (!Number.isInteger(options.repetitions) || options.repetitions < 1)) {
+    throw new Error("Invalid repetitions: expected a positive integer.");
+  }
+  if (options.slicePlate !== undefined && (!Number.isInteger(options.slicePlate) || options.slicePlate < 0)) {
+    throw new Error("Invalid slice_plate: expected 0 (all plates) or a plate number.");
+  }
+  if (options.scale !== undefined && options.scale <= 0) throw new Error("Invalid scale: expected a positive factor.");
+  options.cloneObjects = text("clone_objects");
+  options.skipObjects = text("skip_objects");
+  options.loadFilamentIds = text("load_filament_ids");
+  const loadFilaments = text("load_filaments");
+  const filamentAlias = text("filament_profile");
+  if (loadFilaments && filamentAlias && loadFilaments !== filamentAlias) {
+    throw new Error("Provide either load_filaments or filament_profile, not conflicting values.");
+  }
+  options.loadFilaments = loadFilaments ?? filamentAlias;
+  const colours = text("filament_colours");
+  if (colours) options.filamentColours = parseFilamentColours(colours);
+  options.bedType = resolveBedType(args?.bed_type as string | undefined);
+  options.nozzleType = resolveNozzleType(args?.nozzle_type);
+  return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) as BambuSliceOptions;
+}
+
+function defaultSlicerPathFor(slicerType: SlicerType): string {
+  if (process.env.SLICER_PATH) return process.env.SLICER_PATH;
+  if (slicerType === DEFAULT_SLICER_TYPE) return DEFAULT_SLICER_PATH;
+  if (slicerType === "bambustudio") return defaultBambuStudioPath();
+  if (slicerType === "orcaslicer-bambulab") return defaultFuluOrcaPath();
+  return DEFAULT_SLICER_PATH;
+}
+
 function validateBambuModel(model: string): BambuModel {
   const normalized = model.trim().toLowerCase();
   if (!(VALID_BAMBU_MODELS as readonly string[]).includes(normalized)) {
@@ -186,6 +400,35 @@ function resolveBedType(bedType: string | undefined): string {
     );
   }
   return resolved;
+}
+
+const SUPPORTED_NOZZLE_DIAMETERS = [0.2, 0.4, 0.6, 0.8];
+
+/** Optional declared material; blank means "not declared". */
+function optionalMaterialArg(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("material must be a non-empty string such as PLA, PETG, ABS, ASA, TPU, PA or PC.");
+  }
+  return value.trim();
+}
+
+/** Temperatures are validated as finite numbers before any printer connection. */
+function optionalTemperatureArg(value: unknown, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a finite, non-negative number in °C.`);
+  }
+  return value;
+}
+
+function optionalNozzleDiameterArg(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const diameter = Number(value);
+  if ((typeof value !== "number" && typeof value !== "string") || !SUPPORTED_NOZZLE_DIAMETERS.includes(diameter)) {
+    throw new Error(`nozzle_diameter must be one of ${SUPPORTED_NOZZLE_DIAMETERS.join(", ")} mm.`);
+  }
+  return diameter;
 }
 
 type RuntimeConfig = {
@@ -274,11 +517,27 @@ type StructuredToolError = {
   suggestion: string;
   message: string;
   tool: string;
+  slicer?: Record<string, unknown>;
 };
+
+const SLICING_TOOLS = new Set(["slice_stl", "slice_with_template", "list_templates", "save_template", "get_slice_settings"]);
 
 // Ensure temp directory exists
 if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
+}
+
+
+/** MQTT "Not authorized", FTP 530, and HTTP 401/403 all mean the printer rejected its credentials. */
+function isCredentialRejection(message: string): boolean {
+  return /not authori[sz]ed|\b530\b|login incorrect|\b401\b|\b403\b|unauthori[sz]ed|forbidden|bad user name or password/i.test(message);
+}
+
+function credentialSuggestion(): string {
+  return (process.env.PRINTER_TYPE ?? "").toLowerCase() === "bambu"
+    ? "The printer rejected its LAN access code. Read the current Access Code on the printer (Settings > Network/WLAN; it changes " +
+        "when LAN mode is toggled and after some resets), update BAMBU_TOKEN, and check BAMBU_SERIAL. Retrying unchanged will not help."
+    : "The printer rejected its credentials. Check API_KEY (and PRINTER_HOST/PRINTER_PORT) for this printer system. Retrying unchanged will not help.";
 }
 
 class ThreeDPrinterMCPServer {
@@ -304,11 +563,35 @@ class ThreeDPrinterMCPServer {
       }
     );
 
-    this.printerFactory = new PrinterFactory();
+    this.printerFactory = new PrinterFactory((message) => this.confirmHardware(message));
     this.stlManipulator = new STLManipulator(TEMP_DIR);
 
     this.setupHandlers();
     this.setupErrorHandling();
+  }
+
+  /** Human MCP elicitation before a print start or positive heating command. */
+  private async confirmHardware(message: string): Promise<boolean> {
+    let response;
+    const timeout = confirmationTimeoutMs();
+    try {
+      response = await this.server.elicitInput({
+        mode: "form",
+        message,
+        requestedSchema: {
+          type: "object",
+          properties: {
+            confirmed: { type: "boolean", title: "I checked the printer and confirm this operation", default: false },
+          },
+          required: ["confirmed"],
+        },
+      }, { timeout });
+    } catch (error) {
+      // A person may take minutes to check the bed; a timeout is not a missing capability.
+      if ((error as { code?: unknown })?.code === ErrorCode.RequestTimeout) throw new Error(confirmationTimedOut(timeout));
+      throw new Error(CONFIRMATION_UNAVAILABLE);
+    }
+    return response.action === "accept" && response.content?.confirmed === true;
   }
 
   private async resolveBambuModel(argsModel: string | undefined): Promise<string> {
@@ -344,7 +627,7 @@ class ThreeDPrinterMCPServer {
           },
           required: ["bambu_model"],
         },
-      });
+      }, { timeout: confirmationTimeoutMs() });
 
       if (result.action === "accept" && result.content?.bambu_model) {
         return validateBambuModel(String(result.content.bambu_model));
@@ -355,6 +638,12 @@ class ThreeDPrinterMCPServer {
       );
     } catch (elicitError: any) {
       const msg = elicitError?.message || String(elicitError);
+      if (elicitError?.code === ErrorCode.RequestTimeout) {
+        throw new Error(
+          "No printer model was chosen in time; nothing was sent. Set BAMBU_MODEL or pass bambu_model, " +
+          `or answer the prompt within PRINT_CONFIRMATION_TIMEOUT_MS. Valid models: ${VALID_BAMBU_MODELS.join(", ")}`
+        );
+      }
       if (
         elicitError?.code === -32601 || elicitError?.code === -32600 ||
         msg.includes("does not support") || msg.includes("elicitation")
@@ -367,6 +656,79 @@ class ThreeDPrinterMCPServer {
       }
       throw elicitError;
     }
+  }
+
+  /** Slicing accepts every model with a Bambu-compatible CLI preset mapping. */
+  private async resolveSliceBambuModel(argsModel: string | undefined): Promise<string> {
+    const requested = (argsModel || DEFAULT_BAMBU_MODEL).trim().toLowerCase();
+    if (requested) {
+      return validateSliceBambuModel(requested);
+    }
+    return this.resolveBambuModel(undefined);
+  }
+
+  /** Shared slice_stl / slice_with_template implementation. */
+  private async runSliceTool(toolName: string, args: Record<string, unknown> | undefined): Promise<string> {
+    if (!args?.stl_path) {
+      throw new Error("Missing required parameter: stl_path");
+    }
+    const slicerType = normalizeSlicerType(String(args.slicer_type || DEFAULT_SLICER_TYPE));
+    const explicitModel =
+      typeof args.bambu_model === "string" && args.bambu_model.trim() ? args.bambu_model : undefined;
+    // Generic OrcaSlicer keeps its user-supplied machine profile unless the
+    // call explicitly targets a Bambu model.
+    const bambuCli = isBambuProjectSlicer(slicerType) || (slicerType === "orcaslicer" && explicitModel !== undefined);
+
+    let printerPreset: string | undefined;
+    let options: BambuSliceOptions | undefined;
+    if (bambuCli) {
+      const model = await this.resolveSliceBambuModel(explicitModel);
+      printerPreset = SLICE_BAMBU_MODEL_PRESETS[model](normalizeSliceNozzleDiameter(args.nozzle_diameter));
+      options = buildBambuSliceOptions(args);
+    }
+
+    // Process profile precedence: explicit slicer_profile, then a template, then SLICER_PROFILE.
+    const explicitProfile =
+      typeof args.slicer_profile === "string" && args.slicer_profile.trim() ? args.slicer_profile.trim() : undefined;
+    const templateDir = typeof args.template_dir === "string" ? args.template_dir : undefined;
+    const requestedTemplate =
+      resolveTemplatePath(
+        typeof args.template_name === "string" ? args.template_name : undefined,
+        templateDir,
+        ["json", "config", "3mf"]
+      ) ||
+      (typeof args.template_3mf_path === "string" && args.template_3mf_path.trim() ? args.template_3mf_path.trim() : undefined);
+    if (requestedTemplate && !bambuCli) {
+      throw new Error(
+        "template_name/template_3mf_path apply to Bambu-compatible slicing (bambustudio, orcaslicer-bambulab, or orcaslicer with bambu_model)."
+      );
+    }
+    let slicerProfile = explicitProfile;
+    const templatePath = requestedTemplate || (bambuCli && DEFAULT_TEMPLATE_3MF_PATH ? DEFAULT_TEMPLATE_3MF_PATH : undefined);
+    if (!slicerProfile && templatePath) {
+      if (!fs.existsSync(templatePath)) {
+        throw new Error(`Template not found: ${templatePath}`);
+      }
+      slicerProfile = await resolveTemplateSlicerProfilePath(templatePath, path.join(TEMP_DIR, "templates"));
+    }
+    slicerProfile ??= DEFAULT_SLICER_PROFILE || undefined;
+
+    const explicitFilament =
+      typeof args.filament_profile === "string" && args.filament_profile.trim() ? args.filament_profile.trim() : undefined;
+    const filamentProfile = options?.loadFilaments ?? explicitFilament ?? (DEFAULT_FILAMENT_PROFILE || undefined);
+    const slicerPath =
+      this.resolveExecutableSelectorArg(args.slicer_path, toolName, "slicer_path") ?? defaultSlicerPathFor(slicerType);
+
+    return this.stlManipulator.sliceSTL(
+      String(args.stl_path),
+      slicerType,
+      slicerPath,
+      slicerProfile,
+      undefined, // progressCallback
+      printerPreset,
+      filamentProfile,
+      options
+    );
   }
 
   setupErrorHandling() {
@@ -588,7 +950,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "upload_gcode",
-            description: "Upload G-code content or a local G-code file path to the printer",
+            description: "Upload G-code content or a local G-code file path to the printer. With print=true the exact uploaded bytes are inspected first (every S/R heater target, tool changes, hardware and material ceilings), printer state is checked, and a human confirmation is requested before the print starts.",
             inputSchema: {
               type: "object",
               properties: {
@@ -635,14 +997,18 @@ class ThreeDPrinterMCPServer {
                 },
                 print: {
                   type: "boolean",
-                  description: "Start printing after upload when the printer backend supports it."
+                  description: "Start printing after upload when the printer backend supports it. Printing requires a declared material from slicer metadata (; filament_type = PLA) or the material argument."
+                },
+                material: {
+                  type: "string",
+                  description: "Declared filament material (for example PLA, PETG, ABS, ASA, TPU, PA, PC) when the G-code has no slicer filament_type metadata. Must not contradict the file. Material ceilings limit nozzle targets."
                 }
               }
             }
           },
           {
             name: "start_print",
-            description: "Start printing a file that is already available on the printer",
+            description: "Start printing a G-code file already stored on the printer. The server downloads and inspects the exact file, then starts a uniquely named checked copy after printer-state checks and human confirmation. Printers whose API cannot download files (Repetier, Prusa, Creality) refuse; use upload_gcode with print=true instead.",
             inputSchema: {
               type: "object",
               properties: {
@@ -678,6 +1044,10 @@ class ThreeDPrinterMCPServer {
                 filename: {
                   type: "string",
                   description: "Name/path of the printer-side G-code file to start."
+                },
+                material: {
+                  type: "string",
+                  description: "Declared filament material when the G-code has no slicer filament_type metadata (non-Bambu printers). Must not contradict the file."
                 }
               },
               required: ["filename"]
@@ -718,7 +1088,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "set_printer_temperature",
-            description: "Set the temperature of a printer component",
+            description: "Set the temperature of a printer component. Temperature 0 switches a heater off and is never gated. Positive targets are validated before connecting, limited by independent hardware and material ceilings, require a ready printer and a human confirmation.",
             inputSchema: {
               type: "object",
               properties: {
@@ -752,7 +1122,20 @@ class ThreeDPrinterMCPServer {
                 },
                 temperature: {
                   type: "number",
-                  description: "Target temperature in Celsius."
+                  description: "Target temperature in Celsius: a finite number >= 0. 0 switches the heater off."
+                },
+                material: {
+                  type: "string",
+                  description: "Declared material at the nozzle (for example PLA, PETG, ABS). Required for positive nozzle heating, including non-RFID spools."
+                },
+                bambu_model: {
+                  type: "string",
+                  enum: [...VALID_BAMBU_MODELS],
+                  description: "Bambu printer model; required for positive Bambu heating unless BAMBU_MODEL is configured. Checked against the live printer."
+                },
+                nozzle_diameter: {
+                  type: "string",
+                  description: "Installed Bambu nozzle diameter in mm for nozzle heating (default: NOZZLE_DIAMETER or 0.4). Checked against the live printer."
                 }
               },
               required: ["component", "temperature"]
@@ -779,7 +1162,11 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "slice_stl",
-            description: "Slice an STL or 3MF file to generate G-code or sliced 3MF",
+            description:
+              "Slice an STL or 3MF file to generate G-code or a sliced 3MF. For Bambu-compatible CLI slicing " +
+              "(bambustudio, orcaslicer-bambulab, or orcaslicer with bambu_model), the exact bambu_model/nozzle machine " +
+              "preset from the selected slicer installation is required, profile inheritance is resolved before the CLI " +
+              "runs, and the result must contain plate G-code. Failures stop with the slicer's exit status and output.",
             inputSchema: {
               type: "object",
               properties: {
@@ -787,39 +1174,74 @@ class ThreeDPrinterMCPServer {
                   type: "string",
                   description: "Path to the STL or 3MF file to slice"
                 },
-                bambu_model: {
-                  type: "string",
-                  enum: ["p1s", "p1p", "x1c", "x1e", "a1", "a1mini", "h2d"],
-                  description: "Bambu Lab printer model - required when using Bambu project slicers to ensure correct G-code."
-                },
-                nozzle_diameter: {
-                  type: "string",
-                  description: "Nozzle diameter in mm (default: 0.4)."
-                },
-                slicer_type: {
-                  type: "string",
-                  enum: [...SLICER_TYPE_ENUM],
-                  description: "Type of slicer to use (prusaslicer, cura, slic3r, orcaslicer, orcaslicer-bambulab, bambustudio). Use orcaslicer-bambulab for the FULU fork."
-                },
-                slicer_path: {
-                  type: "string",
-                  description: "Path to the slicer executable (default: value from env). Per-call overrides require MCP_ALLOW_EXECUTABLE_ARG=1."
-                },
-                slicer_profile: {
-                  type: "string",
-                  description: "Profile to use for slicing (default: value from env). OrcaSlicer also accepts machine/process profiles separated with ';', optionally followed by '|filament.json'."
-                },
-                filament_profile: {
-                  type: "string",
-                  description: "OrcaSlicer filament profile path loaded with --load-filaments (default: FILAMENT_PROFILE/SLICER_FILAMENT_PROFILE env)."
-                }
+                ...SLICE_TOOL_PROPERTIES,
               },
               required: ["stl_path"]
             }
           },
           {
+            name: "slice_with_template",
+            description:
+              "Slice an STL or 3MF with a named template from the local template registry (BAMBU_TEMPLATE_DIR). " +
+              "The template supplies process settings; the machine preset still comes from bambu_model and nozzle_diameter.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                stl_path: { type: "string", description: "Path to the STL or 3MF file to slice" },
+                ...SLICE_TOOL_PROPERTIES,
+                template_name: { type: "string", description: "Named template from the local registry (required)." },
+                slicer_profile: {
+                  type: "string",
+                  description: "Explicit process profile that overrides the named template only when provided in this call."
+                },
+              },
+              required: ["stl_path", "template_name"]
+            }
+          },
+          {
+            name: "list_templates",
+            description: "List saved slicing templates (.3mf, .json, .config) in the local template registry directory.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                template_dir: {
+                  type: "string",
+                  description: "Template directory override. Defaults to BAMBU_TEMPLATE_DIR or ~/Sync/bambu/templates."
+                }
+              }
+            }
+          },
+          {
+            name: "save_template",
+            description: "Copy a .3mf, .json, or .config file into the local template registry under a template name.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                source_path: { type: "string", description: "Local .3mf, .json, or .config file to save as a template." },
+                template_name: { type: "string", description: "Template name. Defaults to the source filename without extension." },
+                template_dir: {
+                  type: "string",
+                  description: "Template directory override. Defaults to BAMBU_TEMPLATE_DIR or ~/Sync/bambu/templates."
+                }
+              },
+              required: ["source_path"]
+            }
+          },
+          {
+            name: "get_slice_settings",
+            description: "Inspect slicer settings in a 3MF template or JSON/config profile without slicing (layer height, infill, walls, supports, brim, bed, printer, filaments).",
+            inputSchema: {
+              type: "object",
+              properties: {
+                source_path: { type: "string", description: "Path to a 3MF, extracted project_settings.config, or slicer profile JSON." },
+                template_name: { type: "string", description: "Named template from the local registry; used when source_path is omitted." },
+                template_dir: { type: "string", description: "Template directory override when resolving template_name." }
+              }
+            }
+          },
+          {
             name: "confirm_temperatures",
-            description: "Confirm temperature settings in a G-code file",
+            description: "Report every heater target in a G-code file (S and R forms, tool-addressed, RepRapFirmware G10/M568 and Klipper SET_HEATER_TEMPERATURE). An expected temperature matches only when it equals the file's highest target. Read-only; printing tools enforce their own safety gate.",
             inputSchema: {
               type: "object",
               properties: {
@@ -829,11 +1251,11 @@ class ThreeDPrinterMCPServer {
                 },
                 extruder_temp: {
                   type: "number",
-                  description: "Expected extruder temperature"
+                  description: "Expected highest nozzle target"
                 },
                 bed_temp: {
                   type: "number",
-                  description: "Expected bed temperature"
+                  description: "Expected highest bed target"
                 }
               },
               required: ["gcode_path"]
@@ -841,7 +1263,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "process_and_print_stl",
-            description: "Process an STL file (extend base), slice it, confirm temperatures, and start printing",
+            description: "Process an STL file (extend base), slice it, and start printing through the same checked print gate as upload_gcode/print_3mf. Expected temperatures are enforced: a mismatch refuses before upload.",
             inputSchema: {
               type: "object",
               properties: {
@@ -855,11 +1277,15 @@ class ThreeDPrinterMCPServer {
                 },
                 extruder_temp: {
                   type: "number",
-                  description: "Expected extruder temperature"
+                  description: "Expected highest nozzle target in the sliced G-code (S and R forms, every tool). Printing stops before upload if it differs."
                 },
                 bed_temp: {
                   type: "number",
-                  description: "Expected bed temperature"
+                  description: "Expected highest bed target in the sliced G-code (S and R forms). Printing stops before upload if it differs."
+                },
+                material: {
+                  type: "string",
+                  description: "Declared filament material when the sliced G-code has no filament_type metadata. Must not contradict the file."
                 },
                 host: {
                   type: "string",
@@ -886,6 +1312,11 @@ class ThreeDPrinterMCPServer {
                   type: "string",
                   enum: ["textured_plate", "cool_plate", "engineering_plate", "hot_plate"],
                   description: "Bed/plate type installed on the printer (default: textured_plate)."
+                },
+                nozzle_type: {
+                  type: "string",
+                  enum: [...VALID_NOZZLE_TYPES],
+                  description: "Installed Bambu nozzle material used when slicing (default: BAMBU_NOZZLE_TYPE, else the preset's stock nozzle). The print gate compares it with the printer's report."
                 },
                 nozzle_diameter: {
                   type: "string",
@@ -1093,7 +1524,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "print_3mf",
-            description: "Print a 3MF file on a Bambu Lab printer, potentially overriding settings.",
+            description: "Print a 3MF file on a Bambu Lab printer. The exact selected plate is inspected (model, nozzle, bed type, materials, every heater target) and checked against a fresh MQTT report of the printer's identity, nozzle, state, errors and loaded filament, then a human confirmation is requested before upload and start.",
             inputSchema: {
               type: "object",
               properties: {
@@ -1110,6 +1541,11 @@ class ThreeDPrinterMCPServer {
                   type: "string",
                   enum: ["textured_plate", "cool_plate", "engineering_plate", "hot_plate"],
                   description: "Bed/plate type installed on the printer (default: textured_plate)."
+                },
+                nozzle_type: {
+                  type: "string",
+                  enum: [...VALID_NOZZLE_TYPES],
+                  description: "Installed nozzle material, used when the 3MF must be auto-sliced (default: BAMBU_NOZZLE_TYPE, else the preset's stock nozzle)."
                 },
                 nozzle_diameter: {
                   type: "string",
@@ -1234,7 +1670,7 @@ class ThreeDPrinterMCPServer {
           {
             name: "fulu_bambu_network_rpc",
             description:
-              "Advanced FULU bridge RPC for BambuNetwork diagnostics and development. Read-only methods are allowed by default; mutating methods require allow_mutating_method=true, and print methods require bambu_model.",
+              "Advanced FULU bridge RPC for BambuNetwork diagnostics and development. Read-only methods are allowed by default. Agent/session setup methods require allow_mutating_method=true. Raw print methods, printer messages, file transfers and unknown methods are refused because they would bypass the print safety gate; use print_3mf for checked printing.",
             inputSchema: {
               type: "object",
               properties: {
@@ -1260,12 +1696,12 @@ class ThreeDPrinterMCPServer {
                 },
                 allow_mutating_method: {
                   type: "boolean",
-                  description: "Required for methods outside the read-only bridge/net allowlist."
+                  description: "Required for the allowlisted agent/session setup methods. It never enables print, printer-message, or unknown methods."
                 },
                 bambu_model: {
                   type: "string",
                   enum: ["p1s", "p1p", "x1c", "x1e", "a1", "a1mini", "h2d"],
-                  description: "Required when calling FULU print RPC methods; preserves the Bambu model safety gate."
+                  description: "Informational only. Raw FULU print RPC methods are disabled; use print_3mf."
                 }
               },
               required: ["method"]
@@ -1319,11 +1755,13 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "blender_mcp_status",
-            description: "Inspect Blender MCP configuration or connect and discover the remote server's tools and schemas. Connecting does not edit the scene; use get_scene_info through blender_mcp_call to check the Blender addon.",
+            description: "Inspect Blender MCP configuration or connect and discover the remote server's tools. Lists tool names and summaries; pass tool_names for the full input schemas of the tools you will call. Connecting does not edit the scene; use get_scene_info through blender_mcp_call to check the Blender addon.",
             inputSchema: {
               type: "object",
               properties: {
                 connect: { type: "boolean", description: "Initialize the configured stdio MCP server and discover its tools (default false)." },
+                tool_names: { type: "array", items: { type: "string" }, maxItems: 64, description: "Return full input schemas for these discovered tools, such as [\"execute_blender_code\"]." },
+                include_schemas: { type: "boolean", description: "Return every discovered tool's full definition (large; default false)." },
                 timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total connection and discovery deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." }
               },
               additionalProperties: false
@@ -1340,6 +1778,23 @@ class ThreeDPrinterMCPServer {
                 timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total connection, discovery, and tool deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." }
               },
               required: ["tool_name"],
+              additionalProperties: false
+            }
+          },
+          {
+            name: "blender_mcp_export_stl",
+            description: "Export named objects from the live Blender scene to a new, verified STL for slicing. Writes world-space geometry with modifiers applied, without changing the scene, selection, or mode, and reports triangle count and bounding-box dimensions from the written file. Use this after editing or modelling through blender_mcp_call; Blender MCP's own export_scene writes GLB/FBX only. Requires standard Blender MCP and a shared local filesystem.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                object_names: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 64, description: "Blender object names to export together as one STL (mesh, curve, surface, metaball, or text objects)." },
+                output_path: { type: "string", description: "New local .stl path. Its parent must exist; existing files are never overwritten." },
+                apply_modifiers: { type: "boolean", description: "Export the evaluated geometry with modifiers applied (default true)." },
+                scale: { type: "number", exclusiveMinimum: 0, description: "Multiply coordinates before writing (default 1). Slicers read STL units as millimetres, so use 1000 for a scene modelled in metres." },
+                user_prompt: { type: "string", description: "The user's own words, passed unchanged to Blender MCP." },
+                timeout_ms: { type: "integer", minimum: 100, maximum: 300000, description: "Total Blender request deadline in milliseconds; defaults to BLENDER_MCP_TIMEOUT_MS or 120000." }
+              },
+              required: ["object_names", "output_path"],
               additionalProperties: false
             }
           },
@@ -1411,8 +1866,9 @@ class ThreeDPrinterMCPServer {
             if (args.print !== undefined && typeof args.print !== "boolean") {
               throw new Error("print must be a boolean.");
             }
+            const uploadOptions: PrintSafetyOptions = { material: optionalMaterialArg(args?.material) };
             if (type.toLowerCase() === "bambu" && args.print === true) {
-              await this.resolveBambuModel(args?.bambu_model as string | undefined);
+              uploadOptions.bambuModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
             }
             const uploadFilename = String(args?.filename || path.basename(String(args.gcode_path)));
             const uploadGcodeSource = String(args?.gcode_path || args.gcode);
@@ -1420,7 +1876,8 @@ class ThreeDPrinterMCPServer {
               host, port, type, apiKey, bambuSerial, bambuToken,
               uploadFilename,
               uploadGcodeSource,
-              Boolean(args.print || false)
+              Boolean(args.print || false),
+              uploadOptions
             );
             break;
             
@@ -1428,10 +1885,11 @@ class ThreeDPrinterMCPServer {
             if (!args?.filename) {
               throw new Error("Missing required parameter: filename");
             }
+            const startOptions: PrintSafetyOptions = { material: optionalMaterialArg(args?.material) };
             if (type.toLowerCase() === "bambu") {
-              await this.resolveBambuModel(args?.bambu_model as string | undefined);
+              startOptions.bambuModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
             }
-            result = await this.startPrint(host, port, type, apiKey, bambuSerial, bambuToken, String(args.filename));
+            result = await this.startPrint(host, port, type, apiKey, bambuSerial, bambuToken, String(args.filename), startOptions);
             break;
             
           case "cancel_print":
@@ -1442,10 +1900,19 @@ class ThreeDPrinterMCPServer {
             if (!args?.component || args?.temperature === undefined) {
               throw new Error("Missing required parameters: component and temperature");
             }
+            // Never coerce: "not-a-number" must not become NaN in a heater command.
+            const requestedTemperature = optionalTemperatureArg(args.temperature, "temperature")!;
+            const heatOptions: PrintSafetyOptions = { material: optionalMaterialArg(args.material) };
+            if (type.toLowerCase() === "bambu" && requestedTemperature > 0) {
+              heatOptions.bambuModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
+              heatOptions.nozzleDiameter =
+                optionalNozzleDiameterArg(args.nozzle_diameter) ?? Number(DEFAULT_NOZZLE_DIAMETER);
+            }
             result = await this.setPrinterTemperature(
               host, port, type, apiKey, bambuSerial, bambuToken,
-              String(args.component), 
-              Number(args.temperature)
+              String(args.component),
+              requestedTemperature,
+              heatOptions
             );
             break;
             
@@ -1460,33 +1927,47 @@ class ThreeDPrinterMCPServer {
             );
             break;
             
-          case "slice_stl": {
-            if (!args?.stl_path) {
-              throw new Error("Missing required parameter: stl_path");
+          case "slice_stl":
+            result = await this.runSliceTool("slice_stl", args as Record<string, unknown> | undefined);
+            break;
+
+          case "slice_with_template":
+            if (!args?.template_name || !String(args.template_name).trim()) {
+              throw new Error("Missing required parameter: template_name");
             }
-            // Resolve printer model for BambuStudio slicer
-            let slicePreset: string | undefined;
-            if (isBambuProjectSlicer(slicerType)) {
-              const sliceModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
-              const nozzleDiam = String(args?.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER);
-              slicePreset = BAMBU_MODEL_PRESETS[sliceModel]?.(nozzleDiam);
+            result = await this.runSliceTool("slice_with_template", args as Record<string, unknown> | undefined);
+            break;
+
+          case "list_templates":
+            result = listTemplateRegistry(typeof args?.template_dir === "string" ? args.template_dir : undefined);
+            break;
+
+          case "save_template":
+            if (!args?.source_path) {
+              throw new Error("Missing required parameter: source_path");
             }
-            result = await this.stlManipulator.sliceSTL(
-              String(args.stl_path),
-              slicerType,
-              this.resolveExecutableSelectorArg(
-                args?.slicer_path,
-                "slice_stl",
-                "slicer_path"
-              ) ?? DEFAULT_SLICER_PATH,
-              slicerProfile || undefined,
-              undefined, // progressCallback
-              slicePreset,
-              filamentProfile || undefined
+            result = saveTemplate(
+              String(args.source_path),
+              typeof args?.template_name === "string" ? args.template_name : undefined,
+              typeof args?.template_dir === "string" ? args.template_dir : undefined
             );
             break;
+
+          case "get_slice_settings": {
+            if (!args?.source_path && !args?.template_name) {
+              throw new Error("Missing required parameter: source_path or template_name");
+            }
+            const settingsSource = args?.source_path
+              ? String(args.source_path)
+              : resolveTemplatePath(
+                  String(args.template_name),
+                  typeof args?.template_dir === "string" ? args.template_dir : undefined,
+                  ["3mf", "json", "config"]
+                )!;
+            result = await inspectSliceSettings(settingsSource, TEMP_DIR);
+            break;
           }
-            
+
           case "confirm_temperatures":
             if (!args?.gcode_path) {
               throw new Error("Missing required parameter: gcode_path");
@@ -1505,26 +1986,36 @@ class ThreeDPrinterMCPServer {
               throw new Error("Missing required parameters: stl_path and extension_inches");
             }
             
+            // Validate every safety input before extending, slicing or connecting.
+            const expectedPeaks: ExpectedPeakTemperatures = {
+              nozzle: optionalTemperatureArg(args.extruder_temp, "extruder_temp"),
+              bed: optionalTemperatureArg(args.bed_temp, "bed_temp"),
+            };
+            validateExpectedPeaks(expectedPeaks);
+            const processMaterial = optionalMaterialArg(args?.material);
+            let processModel: string | undefined;
+            let processNozzle = String(DEFAULT_NOZZLE_DIAMETER);
+            if (type.toLowerCase() === 'bambu' || isBambuProjectSlicer(slicerType)) {
+              processModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
+              processNozzle = String(optionalNozzleDiameterArg(args?.nozzle_diameter) ?? DEFAULT_NOZZLE_DIAMETER);
+            }
+
             // Define progress callback for UI updates
             const processProgressCallback = (progress: number, message?: string) => {
               console.log(`Process progress: ${progress}% - ${message || ''}`);
             };
-            
+
             // 1. Extend the base of the STL file
             const extendedStlPath = await this.stlManipulator.extendBase(
               String(args.stl_path),
               Number(args.extension_inches),
               processProgressCallback
             );
-            
+
             // 2. Slice the extended STL file
             let processPreset: string | undefined;
-            if (type.toLowerCase() === 'bambu' || isBambuProjectSlicer(slicerType)) {
-              const processModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
-              const processNozzle = String(args?.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER);
-              if (isBambuProjectSlicer(slicerType)) {
-                processPreset = BAMBU_MODEL_PRESETS[processModel]?.(processNozzle);
-              }
+            if (processModel && isBambuProjectSlicer(slicerType)) {
+              processPreset = BAMBU_MODEL_PRESETS[processModel]?.(processNozzle);
             }
             const gcodePath = await this.stlManipulator.sliceSTL(
               extendedStlPath,
@@ -1537,7 +2028,14 @@ class ThreeDPrinterMCPServer {
               slicerProfile || undefined,
               processProgressCallback,
               processPreset,
-              filamentProfile || undefined
+              filamentProfile || undefined,
+              // Slice for the plate and nozzle the print gate will check against.
+              processPreset
+                ? {
+                    bedType: resolveBedType(args?.bed_type as string | undefined),
+                    ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}),
+                  }
+                : undefined
             );
 
             if (type.toLowerCase() === 'bambu' && gcodePath.toLowerCase().endsWith(".3mf")) {
@@ -1568,6 +2066,9 @@ class ThreeDPrinterMCPServer {
               result = await factoryImplementation.print3mf(host, bambuSerial, bambuToken, {
                 projectName: path.basename(gcodePath).replace(/\.3mf$/i, ''),
                 filePath: gcodePath,
+                bambuModel: processModel,
+                nozzleDiameters: [Number(processNozzle)],
+                expectedPeaks,
                 plateIndex: 0,
                 ...amsOptions,
                 bedType: printBedType,
@@ -1590,38 +2091,26 @@ class ThreeDPrinterMCPServer {
               );
             }
             
-            // 3. Confirm temperatures if specified
-            if (args.extruder_temp !== undefined || args.bed_temp !== undefined) {
-              const tempConfirmation = await this.stlManipulator.confirmTemperatures(
-                gcodePath,
-                {
-                  extruder: args.extruder_temp !== undefined ? Number(args.extruder_temp) : undefined,
-                  bed: args.bed_temp !== undefined ? Number(args.bed_temp) : undefined
-                },
-                processProgressCallback
-              );
-              
-              if (!tempConfirmation.match) {
-                console.warn("Temperature mismatch:", tempConfirmation);
-              }
-            }
-            
-            // 4. Upload the G-code file to the printer
-            const gcodeContent = await fs.promises.readFile(gcodePath, 'utf8');
+            // 3. Upload and print through the adapter's hard safety gate. It
+            // inspects the exact bytes sent (S and R targets, tool changes,
+            // hardware and material ceilings), requires the expected peaks to
+            // match, reads fresh printer state and asks for human confirmation.
+            // A mismatch refuses before upload; nothing is only logged.
             const filename = path.basename(gcodePath);
-            
-            await this.uploadGcode(
+            const printResult = await this.uploadGcode(
               host, port, type, apiKey, bambuSerial, bambuToken,
-              filename, 
-              gcodeContent, 
-              true // Start printing immediately
+              filename,
+              gcodePath,
+              true, // Start printing immediately
+              { bambuModel: processModel, material: processMaterial, expectedPeaks }
             );
-            
+
             result = {
               extended_stl_path: extendedStlPath,
               gcode_path: gcodePath,
               filename,
-              status: "Print job started"
+              status: "Checked print job started",
+              print: printResult,
             };
             break;
             
@@ -1826,21 +2315,26 @@ class ThreeDPrinterMCPServer {
 
             const printModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
             const printBedType = resolveBedType(args?.bed_type as string | undefined);
-            const printNozzle = String(args?.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER);
+            const explicitPrintNozzle = optionalNozzleDiameterArg(args?.nozzle_diameter);
+            const printNozzle = String(explicitPrintNozzle ?? DEFAULT_NOZZLE_DIAMETER);
             const printPreset = BAMBU_MODEL_PRESETS[printModel]?.(printNozzle);
 
             let threeMFPath = String(args.three_mf_path);
 
+            // Only the selected plate's exact G-code entry counts as sliced output;
+            // a stray .gcode entry elsewhere in the archive is not printable.
+            const selectedPlateEntry = "Metadata/plate_1.gcode";
             let shouldAutoSlice = false;
             try {
               const JSZip = (await import('jszip')).default;
               const zipData = fs.readFileSync(threeMFPath);
               const zip = await JSZip.loadAsync(zipData);
-              shouldAutoSlice = !Object.keys(zip.files).some(
-                f => f.match(/Metadata\/plate_\d+\.gcode/i) || f.endsWith('.gcode')
-              );
+              const plateEntry = zip.file(selectedPlateEntry);
+              shouldAutoSlice = !plateEntry || plateEntry.dir;
             } catch (sliceCheckErr: any) {
-              console.warn("Could not check 3MF for embedded gcode, proceeding with original:", sliceCheckErr.message);
+              throw new Error(
+                `Cannot read 3MF archive ${threeMFPath}; nothing was uploaded or started: ${sliceCheckErr?.message ?? String(sliceCheckErr)}`
+              );
             }
 
             // Only treat slicer_path as an executable selector when a slicer
@@ -1861,13 +2355,26 @@ class ThreeDPrinterMCPServer {
                   slicerProfile || undefined,
                   undefined, // progressCallback
                   printPreset,
-                  filamentProfile || undefined
+                  filamentProfile || undefined,
+                  // Slice for the plate and nozzle the print will be checked against.
+                  { bedType: printBedType, ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}) }
                 );
                 console.log("Auto-sliced to: " + threeMFPath);
               } catch (sliceErr: any) {
-                console.warn("Could not auto-slice 3MF, proceeding with original:", sliceErr.message);
+                // Never fall back to uploading the original unsliced project.
+                // Rethrow the original instance (for example a SlicerError) so
+                // structured slicer suggestions survive.
+                const prefix = "Auto-slicing failed; nothing was uploaded or started: ";
+                if (sliceErr instanceof Error) {
+                  if (!sliceErr.message.startsWith(prefix)) sliceErr.message = `${prefix}${sliceErr.message}`;
+                  throw sliceErr;
+                }
+                throw new Error(`${prefix}${String(sliceErr)}`);
               }
             }
+            // Compare the sliced file with an explicit or auto-slice nozzle request.
+            const requestedPrintNozzles =
+              explicitPrintNozzle !== undefined || shouldAutoSlice ? [Number(printNozzle)] : undefined;
 
             // Define variables needed outside the parse try block
             let implementation: BambuImplementation;
@@ -1896,6 +2403,8 @@ class ThreeDPrinterMCPServer {
 
                 printOptions = { // Assign to outer scope variable
                     ...amsOptions,
+                    bambuModel: printModel,
+                    nozzleDiameters: requestedPrintNozzles,
                     bedType: printBedType,
                     bedLeveling: args?.bed_leveling !== undefined ? Boolean(args.bed_leveling) : undefined,
                     flowCalibration: args?.flow_calibration !== undefined ? Boolean(args.flow_calibration) : undefined,
@@ -1918,7 +2427,7 @@ class ThreeDPrinterMCPServer {
                     plateIndex: 0, 
                     ...printOptions // Spread the final options
                 });
-                result = `Print command for ${threeMfFilename} sent successfully.`;
+                // Report what the printer did, not merely that a command was published.
             } catch (printError) {
                  console.error(`Error starting 3MF print for ${threeMfFilename}:`, printError);
                  throw new Error(`Failed to start print: ${(printError as Error).message}`);
@@ -1971,11 +2480,11 @@ class ThreeDPrinterMCPServer {
               throw new Error("Missing required parameter: method");
             }
 
+            // Raw print methods, printer messages and unknown methods are refused
+            // inside invokeFuluBridgeRpc before any bridge process starts.
             const method = String(args.method);
-            let rpcBambuModel: string | undefined;
-            if (isFuluPrintRpcMethod(method)) {
-              rpcBambuModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
-            }
+            const rpcBambuModel =
+              typeof args?.bambu_model === "string" && args.bambu_model.trim() ? args.bambu_model.trim() : undefined;
 
             const payload =
               typeof args.payload === "object" && args.payload !== null && !Array.isArray(args.payload)
@@ -2030,6 +2539,10 @@ class ThreeDPrinterMCPServer {
           case "blender_mcp_call":
             return await this.blender.call(args ?? {}, extra.signal);
 
+          case "blender_mcp_export_stl":
+            result = await this.blender.exportStl(args ?? {}, extra.signal);
+            break;
+
           case "blender_mcp_edit_model":
             result = await this.blender.edit(
               args ?? {},
@@ -2060,7 +2573,7 @@ class ThreeDPrinterMCPServer {
         console.error(`Error calling tool ${name}:`, error);
         
         const errorMessage = error instanceof Error ? error.message : String(error);
-        const structuredError = this.toStructuredToolError(name, errorMessage);
+        const structuredError = this.toStructuredToolError(name, errorMessage, error);
         
         return {
           content: [
@@ -2142,7 +2655,8 @@ class ThreeDPrinterMCPServer {
     bambuToken: string, 
     filename: string, 
     gcode: string, 
-    print: boolean
+    print: boolean,
+    options: PrintSafetyOptions = {}
   ) {
     const sourceIsFilePath = fs.existsSync(gcode) && fs.statSync(gcode).isFile();
     // The remote filename must never select a local write/delete target.
@@ -2160,10 +2674,10 @@ class ThreeDPrinterMCPServer {
       
       if (type.toLowerCase() === "bambu") {
         const bambuApiKey = `${bambuSerial}:${bambuToken}`;
-        return await implementation.uploadFile(host, port, bambuApiKey, tempFilePath, filename, print);
+        return await implementation.uploadFile(host, port, bambuApiKey, tempFilePath, filename, print, options);
       }
       
-      return await implementation.uploadFile(host, port, apiKey, tempFilePath, filename, print);
+      return await implementation.uploadFile(host, port, apiKey, tempFilePath, filename, print, options);
     } finally {
       if (scratchDir) fs.rmSync(scratchDir, { recursive: true, force: true });
     }
@@ -2176,16 +2690,17 @@ class ThreeDPrinterMCPServer {
     apiKey: string,
     bambuSerial: string,
     bambuToken: string, 
-    gcodeFilename: string
+    gcodeFilename: string,
+    options: PrintSafetyOptions = {}
   ) {
     const implementation = this.printerFactory.getImplementation(type);
     
     if (type.toLowerCase() === "bambu") {
       const bambuApiKey = `${bambuSerial}:${bambuToken}`;
-      return await implementation.startJob(host, port, bambuApiKey, gcodeFilename);
+      return await implementation.startJob(host, port, bambuApiKey, gcodeFilename, options);
     }
     
-    return await implementation.startJob(host, port, apiKey, gcodeFilename);
+    return await implementation.startJob(host, port, apiKey, gcodeFilename, options);
   }
 
   async cancelPrint(
@@ -2214,19 +2729,53 @@ class ThreeDPrinterMCPServer {
     bambuSerial: string,
     bambuToken: string,
     component: string, 
-    temperature: number
+    temperature: unknown,
+    options: PrintSafetyOptions = {}
   ) {
     const implementation = this.printerFactory.getImplementation(type);
     
     if (type.toLowerCase() === "bambu") {
       const bambuApiKey = `${bambuSerial}:${bambuToken}`;
-      return implementation.setTemperature(host, port, bambuApiKey, component, temperature);
+      return implementation.setTemperature(host, port, bambuApiKey, component, temperature, options);
     }
     
-    return implementation.setTemperature(host, port, apiKey, component, temperature);
+    return implementation.setTemperature(host, port, apiKey, component, temperature, options);
   }
 
-  private toStructuredToolError(tool: string, message: string): StructuredToolError {
+  private toStructuredToolError(tool: string, message: string, error?: unknown): StructuredToolError {
+    // Slicer failures are local profile/slicer problems, never printer connectivity.
+    if (error instanceof SlicerError) {
+      return {
+        status: "error",
+        retryable: false,
+        suggestion: error.suggestion,
+        message,
+        tool,
+        slicer: { phase: error.phase, ...error.details },
+      };
+    }
+    if (SLICING_TOOLS.has(tool)) {
+      return {
+        status: "error",
+        retryable: false,
+        suggestion: "Check the slicing arguments, template, and profile paths named in the error, then retry.",
+        message,
+        tool,
+      };
+    }
+    if (isCredentialRejection(message)) {
+      return { status: "error", retryable: false, suggestion: credentialSuggestion(), message, tool };
+    }
+    // Safety refusals stop before the printer is touched; retrying unchanged repeats the refusal.
+    if (/nothing was (?:sent|uploaded)|no command was sent|print safety|hardware limit|material policy|declared material|confirmation was declined|are refused|is refused|refused because|refused until|refused before|does not match the job|is ambiguous|is missing or ambiguous|rejected the print command/i.test(message)) {
+      return {
+        status: "error",
+        retryable: false,
+        suggestion: "A safety check stopped this before anything reached the printer. Read the reason, fix the file, arguments, or printer state, and ask again.",
+        message,
+        tool,
+      };
+    }
     const isInputError =
       message.toLowerCase().includes("missing required") ||
       message.toLowerCase().includes("invalid") ||

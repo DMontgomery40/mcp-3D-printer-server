@@ -299,3 +299,87 @@ test("Legacy Blender bridge reports process completion honestly and rejects expl
     });
   }
 });
+
+test("Blender status lists compact tool summaries and returns full schemas only on request", async (t) => {
+  const peer = await start(t);
+  const compact = data(await peer.call("blender_mcp_status", { connect: true }));
+  assert.deepEqual(compact.tools.map((tool) => tool.name), ["get_scene_info", "execute_blender_code"]);
+  assert.ok(compact.tools.every((tool) => tool.inputSchema === undefined));
+  assert.equal(compact.tools[1].description, "Execute arbitrary Python code in Blender.");
+  const focused = data(await peer.call("blender_mcp_status", { connect: true, tool_names: ["execute_blender_code", "not_a_tool"] }));
+  assert.deepEqual(focused.tools[1].inputSchema.required, ["code"]);
+  assert.equal(focused.tools[0].inputSchema, undefined);
+  assert.deepEqual(focused.schemas_included, ["execute_blender_code"]);
+  assert.deepEqual(focused.unknown_tool_names, ["not_a_tool"]);
+  const full = data(await peer.call("blender_mcp_status", { connect: true, include_schemas: true }));
+  assert.ok(full.tools.every((tool) => tool.inputSchema));
+});
+
+test("Blender scene export writes a verified new STL with measured dimensions and no selection changes", async (t) => {
+  const peer = await start(t);
+  const output = path.join(peer.directory, "phone case.stl");
+  const result = await peer.call("blender_mcp_export_stl", { object_names: ["Case", "Case.001"], output_path: output, user_prompt: "make it fit my phone" });
+  assert.equal(result.isError, undefined, errorText(result));
+  const exported = data(result);
+  assert.equal(exported.status, "success");
+  assert.equal(exported.output_verified, true);
+  assert.equal(exported.output_path, fs.realpathSync(output));
+  assert.equal(exported.triangles, 1);
+  assert.deepEqual(exported.bounding_box.dimensions, [40, 20, 10]);
+  assert.deepEqual(exported.objects.map((object) => object.name), ["Case", "Case.001"]);
+  assert.equal(exported.warnings, undefined);
+  const call = peer.events().find((event) => event.method === "tools/call").params;
+  assert.equal(call.name, "execute_blender_code");
+  assert.equal(call.arguments.user_prompt, "make it fit my phone");
+  // The generated script reads evaluated geometry; it must not change the user's selection or mode.
+  assert.doesNotMatch(call.arguments.code, /select_set|mode_set|bpy\.ops\./);
+  assert.deepEqual(fs.readdirSync(peer.directory).sort(), [path.basename(output), "peer.jsonl"].sort());
+});
+
+test("Blender scene export applies scale and warns when geometry looks like metres", async (t) => {
+  const tiny = await start(t, "export-tiny");
+  const warned = data(await tiny.call("blender_mcp_export_stl", { object_names: ["Stand"], output_path: path.join(tiny.directory, "stand.stl") }));
+  assert.match(warned.warnings.join(" "), /scale: 1000/);
+  const scaled = data(await tiny.call("blender_mcp_export_stl", { object_names: ["Stand"], output_path: path.join(tiny.directory, "stand-mm.stl"), scale: 1000 }));
+  assert.deepEqual(scaled.bounding_box.dimensions, [40, 20, 10]);
+  assert.equal(scaled.warnings, undefined);
+});
+
+test("Blender scene export rejects bad requests before connecting and never overwrites files", async (t) => {
+  const peer = await start(t);
+  const existing = path.join(peer.directory, "existing.stl");
+  fs.writeFileSync(existing, "keep me");
+  for (const args of [
+    { object_names: ["Case"], output_path: existing },
+    { object_names: [], output_path: path.join(peer.directory, "a.stl") },
+    { object_names: ["Case", "Case"], output_path: path.join(peer.directory, "b.stl") },
+    { object_names: ["Case"], output_path: path.join(peer.directory, "c.obj") },
+    { object_names: ["Case"], output_path: path.join(peer.directory, "missing-dir", "d.stl") },
+    { object_names: ["Case"], output_path: path.join(peer.directory, "e.stl"), scale: 0 },
+    { object_names: ["Case"], output_path: path.join(peer.directory, "f.stl"), bridge_command: "/bin/sh" },
+  ]) {
+    const result = await peer.call("blender_mcp_export_stl", args);
+    assert.equal(result.isError, true, JSON.stringify(args));
+  }
+  assert.equal(fs.readFileSync(existing, "utf8"), "keep me");
+  assert.deepEqual(peer.events(), []);
+  const unconfigured = await start(t, "normal", { BLENDER_MCP_COMMAND: "" });
+  const result = await unconfigured.call("blender_mcp_export_stl", { object_names: ["Case"], output_path: path.join(unconfigured.directory, "g.stl") });
+  assert.equal(result.isError, true);
+  assert.match(errorText(result), /mcp-for-blender/);
+});
+
+test("Blender scene export publishes nothing on addon errors, bad receipts, or invalid files", async (t) => {
+  for (const mode of ["export-missing-object", "tool-error", "wrong-receipt", "count-mismatch", "bad-output", "no-output", "output-race"]) {
+    await t.test(mode, async (t) => {
+      const peer = await start(t, mode);
+      const output = path.join(peer.directory, "case.stl");
+      const result = await peer.call("blender_mcp_export_stl", { object_names: ["Ghost"], output_path: output });
+      assert.equal(result.isError, true);
+      if (mode === "export-missing-object") assert.match(errorText(result), /No Blender object named "Ghost"/);
+      if (mode === "output-race") assert.equal(fs.readFileSync(output, "utf8"), "created after preflight");
+      else assert.equal(fs.existsSync(output), false);
+      assert.deepEqual(fs.readdirSync(peer.directory).filter((name) => name.startsWith(".mcp3d-")), []);
+    });
+  }
+});

@@ -54,3 +54,28 @@ yarn-error.log*
 # Test files and directories
 # test/ # Removed this line
 coverage/
+
+# Agent worktrees
+.claude/worktrees/
+
+# Documentation site output; pages are generated from README.md and docs/
+/site/content/
+/site/dist/
+/site/.vitepress/cache/
+/site/.vitepress/dist/
+/site/.vitepress/.temp/
+/site/.vitepress/generated/
+
+# Agent scratch notes and handoffs are local; keep shared rules and public docs.
+# Add an explicit exception for any new public Markdown file.
+*.md
+!/AGENTS.md
+!/CLAUDE.md
+!/.claude/agents.md
+!/README.md
+!/CHANGELOG.md
+!/CONTRIBUTORS.md
+!/docs/SETUP.md
+!/docs/SLICING.md
+!/docs/FULU.md
+!/docs/BLENDER.md

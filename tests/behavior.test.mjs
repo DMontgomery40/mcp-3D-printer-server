@@ -253,17 +253,36 @@ function assertPrinterControlSchemas(listToolsResult) {
 async function createFakeBambuProjectSlicer(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-orca-"));
   const executableDir = path.join(dir, "FakeOrca.app", "Contents", "MacOS");
-  const presetDir = path.join(dir, "FakeOrca.app", "Contents", "Resources", "profiles", "BBL", "machine");
+  const bblDir = path.join(dir, "FakeOrca.app", "Contents", "Resources", "profiles", "BBL");
   await fs.mkdir(executableDir, { recursive: true });
-  await fs.mkdir(presetDir, { recursive: true });
+  for (const kind of ["machine", "process", "filament"]) {
+    await fs.mkdir(path.join(bblDir, kind), { recursive: true });
+  }
   const executable = path.join(executableDir, "fake-fulu-orca.mjs");
-  const presetPath = path.join(presetDir, "Bambu Lab P1S 0.4 nozzle.json");
-  await fs.writeFile(presetPath, JSON.stringify({ name: "Bambu Lab P1S 0.4 nozzle" }));
+  // Minimal complete BBL tree: inherited machine preset, CLI config, and defaults.
+  const writeProfile = (kind, value) =>
+    fs.writeFile(path.join(bblDir, kind, `${value.name}.json`), JSON.stringify(value));
+  await fs.writeFile(path.join(bblDir, "cli_config.json"), JSON.stringify({
+    printer: { "Bambu Lab P1S": { downward_check: { "Bambu Lab P1S 0.4 nozzle": ["Bambu Lab P1P 0.4 nozzle"] } } },
+  }));
+  await writeProfile("machine", { name: "fake_machine_common", nozzle_diameter: ["0.4"], machine_start_gcode: "; generic" });
+  await writeProfile("machine", {
+    name: "Bambu Lab P1S 0.4 nozzle", inherits: "fake_machine_common", from: "system", printer_model: "Bambu Lab P1S",
+    machine_start_gcode: "; machine: P1S", default_print_profile: "0.20mm Fake @BBL", default_filament_profile: ["Fake PLA @BBL"],
+  });
+  await writeProfile("process", { name: "0.20mm Fake @BBL", from: "system", layer_height: "0.2" });
+  await writeProfile("filament", { name: "Fake PLA @BBL", from: "system", filament_type: ["PLA"] });
+  // The fake cannot import jszip; it copies a real sliced-project archive.
+  const zip = new JSZip();
+  zip.file("Metadata/plate_1.gcode", "; machine: P1S\nG28\n");
+  const slicedFixture = path.join(dir, "fixture_sliced.3mf");
+  await fs.writeFile(slicedFixture, await zip.generateAsync({ type: "nodebuffer" }));
 
   await fs.writeFile(
     executable,
     `#!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
 const args = process.argv.slice(2);
 function fail(message) {
   console.error(message);
@@ -271,13 +290,17 @@ function fail(message) {
 }
 if (!args.includes("--slice")) fail("missing --slice");
 const exportIndex = args.indexOf("--export-3mf");
-if (exportIndex < 0 || !args[exportIndex + 1]) fail("missing --export-3mf output");
+const outputDirIndex = args.indexOf("--outputdir");
+if (exportIndex < 0 || !args[exportIndex + 1] || outputDirIndex < 0) fail("missing --outputdir/--export-3mf output");
 const loadSettingsIndex = args.indexOf("--load-settings");
-if (loadSettingsIndex < 0 || !args[loadSettingsIndex + 1]?.includes("Bambu Lab P1S")) {
-  fail("missing Bambu P1S machine preset");
+const [machinePath, processPath] = (args[loadSettingsIndex + 1] || "").split(";");
+if (loadSettingsIndex < 0 || !machinePath || !processPath) fail("missing machine;process settings");
+if (!fs.existsSync(machinePath) || !fs.existsSync(processPath)) fail("settings path does not exist");
+const machine = JSON.parse(fs.readFileSync(machinePath, "utf8"));
+if (machine.printer_settings_id !== "Bambu Lab P1S 0.4 nozzle" || machine.machine_start_gcode !== "; machine: P1S") {
+  fail("machine preset was not resolved for P1S");
 }
-if (!fs.existsSync(args[loadSettingsIndex + 1])) fail("machine preset path does not exist");
-fs.writeFileSync(args[exportIndex + 1], "fake sliced 3mf");
+fs.copyFileSync(${JSON.stringify(slicedFixture)}, path.join(args[outputDirIndex + 1], args[exportIndex + 1]));
 `,
     { mode: 0o755 }
   );
@@ -637,7 +660,8 @@ test("OrcaSlicer slice_stl uses outputdir, filament profile, and plate output re
 
     assert.equal(result.isError, undefined, `orcaslicer should slice successfully with ${label}`);
     const outputPath = result.content?.[0]?.text || "";
-    assert.equal(path.dirname(outputPath), tempDir);
+    // Each operation writes into its own folder inside TEMP_DIR.
+    assert.equal(path.dirname(path.dirname(outputPath)), tempDir);
     assert.equal(path.basename(outputPath), "sample_cube.gcode");
     assert.equal(await fs.readFile(outputPath, "utf8"), "; fake orca gcode\n");
   }
@@ -806,44 +830,53 @@ test("FULU bridge RPC allows read-only methods and gates mutating print methods"
   assert.equal(pingPayload.readOnly, true);
   assert.equal(pingPayload.response.value, "pong");
 
-  const blockedMutation = await client.callTool({
-    name: "fulu_bambu_network_rpc",
-    arguments: {
-      bridge_command: bridgeCommand,
-      method: "net.send_message",
-      payload: { dev_id: "printer", msg: "{}" },
-    },
-  });
-  assert.equal(blockedMutation.isError, true);
-  assert.match(blockedMutation.content?.[0]?.text || "", /allow_mutating_method=true/);
+  // A raw printer message could carry an unchecked print or heater command.
+  for (const allow of [false, true]) {
+    const blockedMutation = await client.callTool({
+      name: "fulu_bambu_network_rpc",
+      arguments: {
+        bridge_command: bridgeCommand,
+        method: "net.send_message",
+        allow_mutating_method: allow,
+        payload: { dev_id: "printer", msg: '{"print":{"command":"gcode_line","param":"M104 S400"}}' },
+      },
+    });
+    assert.equal(blockedMutation.isError, true);
+    assert.match(blockedMutation.content?.[0]?.text || "", /allowlist|safety/i);
+  }
 
-  const missingModel = await client.callTool({
-    name: "fulu_bambu_network_rpc",
-    arguments: {
-      bridge_command: bridgeCommand,
-      method: "net.start_print",
-      allow_mutating_method: true,
-      payload: { params: { dev_id: "printer" } },
-    },
-  });
-  assert.equal(missingModel.isError, true);
-  assert.match(missingModel.content?.[0]?.text || "", /bambu_model|model/i);
+  // Raw print RPC methods are disabled even with a model and the mutation flag:
+  // they would start an uninspected job without printer-state checks.
+  for (const method of ["net.start_print", "net.start_local_print", "net.start_sdcard_print", "net.start_send_gcode_to_sdcard", "net.start_local_print_with_record"]) {
+    for (const extra of [{}, { bambu_model: "p1s" }]) {
+      const printRpc = await client.callTool({
+        name: "fulu_bambu_network_rpc",
+        arguments: {
+          bridge_command: bridgeCommand,
+          method,
+          allow_mutating_method: true,
+          ...extra,
+          payload: { params: { dev_id: "printer" } },
+        },
+      });
+      assert.equal(printRpc.isError, true, `${method} must be refused`);
+      assert.match(printRpc.content?.[0]?.text || "", /Print safety.*disabled.*print_3mf/is);
+    }
+  }
 
-  const allowedPrintRpc = await client.callTool({
+  // Allowlisted agent/session setup still requires the explicit mutation flag.
+  const sessionWithoutFlag = await client.callTool({
     name: "fulu_bambu_network_rpc",
-    arguments: {
-      bridge_command: bridgeCommand,
-      method: "net.start_print",
-      allow_mutating_method: true,
-      bambu_model: "p1s",
-      payload: { params: { dev_id: "printer" } },
-    },
+    arguments: { bridge_command: bridgeCommand, method: "net.set_country_code", payload: { country_code: "US" } },
   });
-  assert.equal(allowedPrintRpc.isError, undefined);
-  const allowedPrintPayload = parseJsonResult(allowedPrintRpc);
-  assert.equal(allowedPrintPayload.printMethod, true);
-  assert.equal(allowedPrintPayload.bambuModel, "p1s");
-  assert.equal(allowedPrintPayload.response.method, "net.start_print");
+  assert.equal(sessionWithoutFlag.isError, true);
+  assert.match(sessionWithoutFlag.content?.[0]?.text || "", /allow_mutating_method=true/);
+  const sessionWithFlag = await client.callTool({
+    name: "fulu_bambu_network_rpc",
+    arguments: { bridge_command: bridgeCommand, method: "net.set_country_code", allow_mutating_method: true, payload: { country_code: "US" } },
+  });
+  assert.equal(sessionWithFlag.isError, undefined);
+  assert.equal(parseJsonResult(sessionWithFlag).response.method, "net.set_country_code");
 });
 
 test("bridge_command argument is rejected by default and the env var still works", async (t) => {

@@ -7,7 +7,7 @@ const log = (value) => logPath && fs.appendFileSync(logPath, `${JSON.stringify(v
 const send = (id, result) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
 const fail = (id, code, message) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } })}\n`);
 const sceneTool = { name: "get_scene_info", inputSchema: { type: "object", properties: { user_prompt: { type: "string" } }, required: ["user_prompt"] } };
-const codeTool = { name: "execute_blender_code", inputSchema: { type: "object", properties: { code: { type: "string" }, user_prompt: { type: "string" } }, required: ["code"] } };
+const codeTool = { name: "execute_blender_code", description: "Execute arbitrary Python code in Blender.\n\n    Parameters: long details that status summaries omit.", inputSchema: { type: "object", properties: { code: { type: "string" }, user_prompt: { type: "string" } }, required: ["code"] } };
 const reader = readline.createInterface({ input: process.stdin });
 log({ event: "spawn", pid: process.pid, printerTokenPresent: Boolean(process.env.BAMBU_TOKEN) });
 reader.on("line", (line) => {
@@ -32,6 +32,23 @@ reader.on("line", (line) => {
   const args = request.params.arguments;
   if (request.params.name === "get_scene_info") return send(request.id, { content: [{ type: "text", text: '{"objects":[]}' }] });
   if (typeof args?.code !== "string") return fail(request.id, -32602, "code required");
+  const exportLine = args.code.split("\n").find((line) => line.startsWith("# MCP3D_EXPORT_PLAN "));
+  if (exportLine) {
+    const plan = JSON.parse(exportLine.slice("# MCP3D_EXPORT_PLAN ".length));
+    if (mode === "export-missing-object") {
+      return send(request.id, { content: [{ type: "text", text: 'Error executing code: Communication error with Blender: {"exception_type": "RuntimeError", "message": "No Blender object named \\"Ghost\\"", "traceback": "..."}' }] });
+    }
+    // One triangle spanning 40 x 20 x 10 units, or 0.04 x 0.02 x 0.01 for a scene modelled in metres.
+    const size = mode === "export-tiny" ? 0.001 : 1;
+    const stl = Buffer.alloc(134);
+    stl.writeUInt32LE(1, 80);
+    [[0, 0, 0], [40, 0, 0], [0, 20, 10]].forEach((vertex, index) => vertex.forEach((value, axis) => stl.writeFloatLE(value * size * plan.scale, 96 + index * 12 + axis * 4)));
+    if (mode !== "no-output") fs.writeFileSync(plan.stagedOutputPath, mode === "bad-output" ? "not an STL" : stl);
+    if (mode === "output-race") fs.writeFileSync(plan.outputPath, "created after preflight");
+    const receipt = { requestId: mode === "wrong-receipt" ? "wrong" : plan.requestId, outputPath: plan.stagedOutputPath, triangles: mode === "count-mismatch" ? 2 : 1,
+      objects: plan.objectNames.map((name) => ({ name, type: "MESH", triangles: 1 })), sceneUnits: { system: "METRIC", scaleLength: 1, lengthUnit: "MILLIMETERS" } };
+    return send(request.id, { content: [{ type: "text", text: `Code executed successfully: MCP3D_STL_EXPORT:${JSON.stringify(receipt)}\n` }] });
+  }
   const planLine = args.code.split("\n").find((line) => line.startsWith("# BAMBU_EDIT_PLAN "));
   if (planLine) {
     const plan = JSON.parse(planLine.slice("# BAMBU_EDIT_PLAN ".length));
