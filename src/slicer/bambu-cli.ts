@@ -108,7 +108,11 @@ export class BambuCliProfilePreparer {
     fs.mkdirSync(this.tempDir, { recursive: true });
     const safeBase = outputBase.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 64);
     const outPath = path.join(this.tempDir, `${safeBase}_${suffix}_${hash}.json`);
-    fs.writeFileSync(outPath, serialized);
+    // Concurrent slices can prepare the same content-addressed file; write a
+    // private temp file and rename it so no reader ever sees a partial file.
+    const staging = `${outPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(staging, serialized);
+    fs.renameSync(staging, outPath);
     return outPath;
   }
 

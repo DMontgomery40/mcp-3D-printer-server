@@ -457,7 +457,8 @@ fs.writeFileSync(args[args.indexOf(flag) + 1], "; generic gcode\\n");
   for (const slicerType of ["prusaslicer", "slic3r", "cura"]) {
     const result = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: slicerType, slicer_profile: profile });
     assert.equal(result.isError, undefined, `${slicerType}: ${text(result)}`);
-    assert.equal(text(result), path.join(tempDir, "sample_cube.gcode"));
+    assert.equal(path.basename(text(result)), "sample_cube.gcode");
+    assert.ok(text(result).startsWith(tempDir + path.sep), "output stays inside TEMP_DIR");
     assert.equal(await fs.readFile(text(result), "utf8"), "; generic gcode\n");
     const args = JSON.parse(await fs.readFile(capture, "utf8"));
     assert.equal(args.includes("--load-settings"), false, `${slicerType} must not receive Bambu CLI flags`);
@@ -470,7 +471,7 @@ fs.writeFileSync(args[args.indexOf(flag) + 1], "; generic gcode\\n");
   assert.match(text(failed), /exited with code 3/);
   assert.match(text(failed), /unknown option in profile\.ini/);
   assert.doesNotMatch(text(failed), /printer connectivity/i);
-  assert.equal(existsSync(path.join(tempDir, "sample_cube.gcode")), false, "a failed run cannot return the previous G-code");
+  assert.doesNotMatch(text(failed), /sample_cube\.gcode$/m, "a failed run cannot return a previous G-code");
 });
 
 test("optional: installed BambuStudio slices P1S 0.4 into a 3MF with P1S plate G-code", async (t) => {

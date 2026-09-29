@@ -78,7 +78,7 @@ test("dynamic, malformed, ambiguous and program-altering thermal syntax fails cl
     "SET_HEATER_TEMPERATURE HEATER=heater_generic_foo TARGET=50", "SET_HEATER_TEMPERATURE HEATER=extruder TARGET={t}",
     "PRINT_START TEMP=200", "PRINT_START BED_TEMP=[first_layer_bed_temperature]",
     "M303 E0 S210 C8", "M143 H1 S400", "M149 F", "M98 P\"heat.g\"", "M32 \"other.gcode\"", "M28 evil.gcode", "M570 H1 P5",
-    "M950 H3 C\"out3\"", "M301 P1 I2 D3",
+    "M950 H3 C\"out3\"", "M301 P1 I2 D3", "M144", "M144 S1", "M144 P0 S0",
   ]) {
     assert.throws(() => inspect(PLA + command + "\n"), /Print safety/, command);
   }

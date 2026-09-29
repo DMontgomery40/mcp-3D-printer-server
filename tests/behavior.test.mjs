@@ -660,7 +660,8 @@ test("OrcaSlicer slice_stl uses outputdir, filament profile, and plate output re
 
     assert.equal(result.isError, undefined, `orcaslicer should slice successfully with ${label}`);
     const outputPath = result.content?.[0]?.text || "";
-    assert.equal(path.dirname(outputPath), tempDir);
+    // Each operation writes into its own folder inside TEMP_DIR.
+    assert.equal(path.dirname(path.dirname(outputPath)), tempDir);
     assert.equal(path.basename(outputPath), "sample_cube.gcode");
     assert.equal(await fs.readFile(outputPath, "utf8"), "; fake orca gcode\n");
   }

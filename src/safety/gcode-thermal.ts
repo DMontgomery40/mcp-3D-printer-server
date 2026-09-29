@@ -116,6 +116,7 @@ const DISPLAY_COMMANDS = new Set(["M0", "M1", "M117", "M118", "M291", "M292"]);
 // heaters, switch temperature units, or run/write another uninspected program.
 const REFUSED_COMMANDS: Readonly<Record<string, string>> = {
   M143: "changes the firmware heater maximum",
+  M144: "switches the bed between stored standby/active temperatures the job cannot show",
   M301: "changes hotend heater control",
   M304: "changes bed heater control",
   M306: "changes the heater model",

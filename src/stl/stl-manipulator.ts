@@ -82,6 +82,17 @@ export class STLManipulator extends EventEmitter {
     return crypto.randomUUID();
   }
 
+  /**
+   * Each operation writes into its own folder. Outputs named only after the
+   * input (for example bracket_extended.stl) would otherwise let two
+   * concurrent requests replace each other's file before it is used or printed.
+   */
+  private operationOutputPath(operationId: string, fileName: string): string {
+    const directory = path.join(this.tempDir, `${operationId}-out`);
+    fs.mkdirSync(directory, { recursive: true });
+    return path.join(directory, fileName);
+  }
+
   private validateSlicerExecutable(slicerPath: string): void {
     if (!slicerPath.trim()) {
       throw new Error("Slicer executable path is required.");
@@ -330,7 +341,7 @@ export class STLManipulator extends EventEmitter {
       
       // Generate output file path
       const outputFileName = path.basename(stlFilePath, '.stl') + '_scaled.stl';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
       
       // Save the modified STL
       await this.saveSTL(geometry, outputFilePath, progressCallback);
@@ -404,7 +415,7 @@ export class STLManipulator extends EventEmitter {
       
       // Generate output file path
       const outputFileName = path.basename(stlFilePath, '.stl') + '_rotated.stl';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
       
       // Save the modified STL
       await this.saveSTL(geometry, outputFilePath, progressCallback);
@@ -464,7 +475,7 @@ export class STLManipulator extends EventEmitter {
       
       // Generate output file path
       const outputFileName = path.basename(stlFilePath, '.stl') + '_translated.stl';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
       
       // Save the modified STL
       await this.saveSTL(geometry, outputFilePath, progressCallback);
@@ -632,7 +643,7 @@ export class STLManipulator extends EventEmitter {
       
       // Write the SVG to file
       const outputFileName = path.basename(stlFilePath, '.stl') + '_visualization.svg';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
       
       await writeFileAsync(outputFilePath, svgContent);
       
@@ -816,7 +827,7 @@ export class STLManipulator extends EventEmitter {
       
       // Generate output file path
       const outputFileName = path.basename(stlFilePath, '.stl') + '_modified.stl';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
       
       // Save the modified STL
       await this.saveSTL(geometry, outputFilePath, progressCallback);
@@ -870,30 +881,30 @@ export class STLManipulator extends EventEmitter {
       
       if (progressCallback) progressCallback(60, "Creating extended base geometry...");
       
-      // Find the minimum Y value (assuming Y is up, which is common in 3D printing)
-      const minY = boundingBox.min.y;
+      // STL files and slicers are Z-up: the base goes under the model.
+      const minZ = boundingBox.min.z;
       
       // Convert inches to millimeters (STL files typically use mm)
       const extensionMm = extensionInches * 25.4;
       
-      // Create a transformation matrix to move the mesh up by the extension amount
-      const matrix = new THREE.Matrix4().makeTranslation(0, extensionMm, 0);
+      // Raise the model by the extension amount
+      const matrix = new THREE.Matrix4().makeTranslation(0, 0, extensionMm);
       geometry.applyMatrix4(matrix);
       
-      // Create a box geometry for the base extension
+      // A box spanning the model's X/Y footprint fills the new space below it
       const baseWidth = boundingBox.max.x - boundingBox.min.x;
-      const baseDepth = boundingBox.max.z - boundingBox.min.z;
+      const baseDepth = boundingBox.max.y - boundingBox.min.y;
       const baseGeometry = new THREE.BoxGeometry(
         baseWidth,
-        extensionMm,
-        baseDepth
+        baseDepth,
+        extensionMm
       );
       
       // Position the base geometry
       const baseMatrix = new THREE.Matrix4().makeTranslation(
         (boundingBox.min.x + boundingBox.max.x) / 2,
-        minY + extensionMm / 2,
-        (boundingBox.min.z + boundingBox.max.z) / 2
+        (boundingBox.min.y + boundingBox.max.y) / 2,
+        minZ + extensionMm / 2
       );
       baseGeometry.applyMatrix4(baseMatrix);
       
@@ -920,7 +931,7 @@ export class STLManipulator extends EventEmitter {
       
       // Generate output file path
       const outputFileName = path.basename(stlFilePath, '.stl') + '_extended.stl';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
       
       if (progressCallback) progressCallback(90, "Saving extended STL...");
       
@@ -1018,7 +1029,7 @@ export class STLManipulator extends EventEmitter {
       }
 
       const outputFileName = path.basename(stlFilePath, '.stl') + '.gcode';
-      let outputFilePath = path.join(this.tempDir, outputFileName);
+      let outputFilePath = this.operationOutputPath(operationId, outputFileName);
       let args: string[] = [];
       let bambuExport: { producedPath: string; finalPath: string } | undefined;
 
@@ -1066,7 +1077,7 @@ export class STLManipulator extends EventEmitter {
             producedPath: path.join(bambuOutputDir, exportName),
             // One folder per operation: concurrent slices of same-named inputs
             // must never replace each other's result before it is printed.
-            finalPath: path.join(this.tempDir, `${operationId}-sliced`, exportName),
+            finalPath: this.operationOutputPath(operationId, exportName),
           };
           outputFilePath = bambuExport.finalPath;
         } catch (error) {
@@ -1315,7 +1326,7 @@ export class STLManipulator extends EventEmitter {
       if (!this.activeOperations.get(operationId)) throw new Error("Operation cancelled");
 
       const outputFileName = path.basename(stlFilePath, '.stl') + '_merged.stl';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
 
       await this.saveSTL(mergedGeometry, outputFilePath, progressCallback); // 80-100% progress
 
@@ -1367,7 +1378,7 @@ export class STLManipulator extends EventEmitter {
       if (!this.activeOperations.get(operationId)) throw new Error("Operation cancelled");
 
       const outputFileName = path.basename(stlFilePath, '.stl') + '_centered.stl';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
 
       await this.saveSTL(geometry, outputFilePath, progressCallback); // 80-100% progress
 
@@ -1514,7 +1525,7 @@ export class STLManipulator extends EventEmitter {
       if (!this.activeOperations.get(operationId)) throw new Error("Operation cancelled");
 
       const outputFileName = path.basename(stlFilePath, '.stl') + '_flat.stl';
-      const outputFilePath = path.join(this.tempDir, outputFileName);
+      const outputFilePath = this.operationOutputPath(operationId, outputFileName);
 
       await this.saveSTL(geometry, outputFilePath, progressCallback); // 90-100% progress
 
