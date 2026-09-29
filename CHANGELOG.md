@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.10
 
 ### Safety
 
