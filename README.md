@@ -79,10 +79,8 @@ This server provides the printer, slicing, and mesh tools. Web search, photos, a
 
 ### Start from anything
 
-<!-- lead: verify phone example -->
-
 - **"Here's a phone case on MakerWorld. Make it fit my iPhone 17 Pro Max and print it."**\
-  Your agent looks up the phone's published dimensions, refits the case in Blender, slices it for your printer, and checks with you before it starts the print.
+  Your agent reads Apple's dimensional drawings, refits the case in Blender around the new camera and buttons, checks the fit, exports a verified STL, slices it for your printer, and asks before it starts the print. [See it worked through](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/BLENDER.md#worked-example-refit-a-phone-case-for-a-new-phone).
 - **"Can you print a replacement?"** *(with a photo of a snapped cabinet clip)*\
   It asks for a measurement or two where the fit matters, models the part, and prints it on the printer you choose.
 - **"Make this bracket 20% bigger and give it a thicker base."**\
@@ -597,17 +595,16 @@ Use `slice_stl`, `confirm_temperatures`, and `upload_gcode` separately when you 
 
 #### Blender MCP
 
-Connect a standard stdio Blender MCP server with `BLENDER_MCP_COMMAND` (for example, the full path to `uvx`) and `BLENDER_MCP_ARGS` (for example `["mcp-for-blender"]`). The [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) project was formerly published as `blender-mcp`, which still works as a compatibility wrapper. Install and enable its addon in Blender and start the addon's connection. Blender and this server must be able to read the same local files. Printer tools work without Blender configured. See [Blender MCP setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#blender-mcp-optional).
-
-<!-- lead: sync after safety + blender integration -->
+Connect a standard stdio Blender MCP server with `BLENDER_MCP_COMMAND` (for example, the full path to `uvx`) and `BLENDER_MCP_ARGS` (for example `["mcp-for-blender"]`). The [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) project was formerly published as `blender-mcp`, which still works as a compatibility wrapper. Install and enable its addon in Blender and start the addon's connection. Blender and this server must be able to read the same local files. Printer tools work without Blender configured. Keep Blender open while your agent works: the addon does not run in background mode. See the [Blender guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/BLENDER.md) for setup, units, and a worked example that refits a phone case for a new phone end to end.
 
 #### blender_mcp_status
 
-Inspect the Blender MCP configuration. With `connect: true`, it starts the configured server, initializes it, and lists its tools and input schemas. A successful connection does not prove the addon inside Blender is running; call `get_scene_info` through `blender_mcp_call` to check that.
+Inspect the Blender MCP configuration. With `connect: true`, it starts the configured server, initializes it, and lists its tools by name and summary. Pass `tool_names` to get the full input schemas of the tools you are about to call (`include_schemas: true` returns all of them, which is large). A successful connection does not prove the addon inside Blender is running; call `get_scene_info` through `blender_mcp_call` to check that.
 
 ```json
 {
-  "connect": true
+  "connect": true,
+  "tool_names": ["execute_blender_code"]
 }
 ```
 
@@ -621,6 +618,22 @@ Call a tool the Blender MCP server advertises, such as `get_scene_info` or `exec
   "arguments": { "user_prompt": "Inspect the scene before preparing a print." }
 }
 ```
+
+#### blender_mcp_export_stl
+
+Export named objects from the live Blender scene to a new STL for slicing. Use it after modelling or editing through `blender_mcp_call`; Blender MCP's own `export_scene` writes GLB or FBX, not STL. The export writes world-space geometry with modifiers applied, without changing the scene, selection, or mode.
+
+```json
+{
+  "object_names": ["PhoneCase"],
+  "output_path": "/path/to/phone-case.stl",
+  "user_prompt": "Make it fit my iPhone 17 Pro Max."
+}
+```
+
+- The result reports `output_verified: true`, the triangle count, and `bounding_box.dimensions` measured from the written file. Compare the dimensions with what you expect before slicing.
+- STL files carry no units and slicers read them as millimetres. An imported STL keeps its numbers, so the default `scale: 1` is right. If a part was modelled in metres, the result warns that it is under 1 unit across; export again with `scale: 1000`.
+- `output_path` must be new and its parent must exist; nothing is ever overwritten. On any Blender error, mismatched receipt, or invalid file, nothing is published.
 
 #### blender_mcp_edit_model
 

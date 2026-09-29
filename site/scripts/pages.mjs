@@ -59,6 +59,13 @@ export const PAGES = [
     sources: [{ file: 'docs/FULU.md', whole: true }],
   },
   {
+    group: 'Guides',
+    route: 'guide/blender',
+    title: 'Blender MCP',
+    description: 'Model and refit parts in Blender through your agent, export verified STLs, and a worked phone-case example.',
+    sources: [{ file: 'docs/BLENDER.md', whole: true }],
+  },
+  {
     group: 'Reference',
     route: 'reference/features',
     title: 'Features',
