@@ -186,6 +186,25 @@ test("slice_stl writes the installed nozzle type into the machine preset so prin
   assert.deepEqual((await machineOf()).nozzle_type, ["hardened_steel"]);
 });
 
+test("concurrent slices of same-named inputs never share an output path", async (t) => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install);
+  const inputs = [];
+  for (const folder of ["first", "second"]) {
+    const dir = path.join(install.root, folder);
+    await fs.mkdir(dir, { recursive: true });
+    const input = path.join(dir, "bracket.stl");
+    await fs.copyFile(SAMPLE_STL, input);
+    inputs.push(input);
+  }
+  const results = await Promise.all(inputs.map((stl_path) => call("slice_stl", { stl_path, bambu_model: "p1s" })));
+  for (const result of results) assert.equal(result.isError, undefined, text(result));
+  const [first, second] = results.map(text);
+  assert.notEqual(first, second, "each operation must return its own file");
+  assert.ok(first.endsWith("bracket_sliced.3mf") && second.endsWith("bracket_sliced.3mf"));
+  for (const output of [first, second]) await assertSliced(output);
+});
+
 test("slice_stl preparation failures stop before the slicer and give slicer-specific advice", async (t) => {
   const install = await createFakeInstall(t);
   const { call } = await startServer(t, install);
@@ -270,7 +289,8 @@ test("slice_stl surfaces exit code, signal, and slicer output, and never returns
   result = await slice();
   assert.equal(result.isError, true);
   assert.match(text(result), /did not write/);
-  assert.equal(existsSync(path.join(tempDir, "sample_cube_sliced.3mf")), false, "stale output must be removed");
+  // Each run writes into its own folder, so an older file can never be returned as this run's result.
+  assert.doesNotMatch(text(result), /sample_cube_sliced\.3mf$/m);
 
   await install.setMode("ok");
   result = await slice();

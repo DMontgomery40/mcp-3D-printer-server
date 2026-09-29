@@ -1313,6 +1313,11 @@ class ThreeDPrinterMCPServer {
                   enum: ["textured_plate", "cool_plate", "engineering_plate", "hot_plate"],
                   description: "Bed/plate type installed on the printer (default: textured_plate)."
                 },
+                nozzle_type: {
+                  type: "string",
+                  enum: [...VALID_NOZZLE_TYPES],
+                  description: "Installed Bambu nozzle material used when slicing (default: BAMBU_NOZZLE_TYPE, else the preset's stock nozzle). The print gate compares it with the printer's report."
+                },
                 nozzle_diameter: {
                   type: "string",
                   description: "Nozzle diameter in mm (default: 0.4)."
@@ -2023,7 +2028,14 @@ class ThreeDPrinterMCPServer {
               slicerProfile || undefined,
               processProgressCallback,
               processPreset,
-              filamentProfile || undefined
+              filamentProfile || undefined,
+              // Slice for the plate and nozzle the print gate will check against.
+              processPreset
+                ? {
+                    bedType: resolveBedType(args?.bed_type as string | undefined),
+                    ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}),
+                  }
+                : undefined
             );
 
             if (type.toLowerCase() === 'bambu' && gcodePath.toLowerCase().endsWith(".3mf")) {

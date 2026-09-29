@@ -1064,7 +1064,9 @@ export class STLManipulator extends EventEmitter {
           args = [...buildBambuCliArgs(bundle, bambuOutputDir, exportName, options), stlFilePath];
           bambuExport = {
             producedPath: path.join(bambuOutputDir, exportName),
-            finalPath: path.join(this.tempDir, exportName),
+            // One folder per operation: concurrent slices of same-named inputs
+            // must never replace each other's result before it is printed.
+            finalPath: path.join(this.tempDir, `${operationId}-sliced`, exportName),
           };
           outputFilePath = bambuExport.finalPath;
         } catch (error) {
@@ -1140,6 +1142,7 @@ export class STLManipulator extends EventEmitter {
             throw new Error(`Slicer exited successfully but did not write ${bambuExport.producedPath}.`);
           }
           await assertSlicedProjectOutput(bambuExport.producedPath);
+          fs.mkdirSync(path.dirname(bambuExport.finalPath), { recursive: true });
           fs.renameSync(bambuExport.producedPath, bambuExport.finalPath);
         } else if (slicerType === 'orcaslicer') {
           if (!orcaOutputDir) {

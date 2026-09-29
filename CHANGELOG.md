@@ -30,6 +30,9 @@
   and adapter state checks that refuse printing, paused, errored, offline or
   unreadable printers. Klipper macro parameters that name a heater are checked;
   macro bodies on the printer cannot be inspected.
+- Stop again when a cancel arrives while an OctoPrint or Repetier
+  upload-and-print is still uploading, so the cancellation wins.
+- Pass `nozzle_type` and `bed_type` through `process_and_print_stl` slicing.
 - Refuse RepRapFirmware `M568 A1/A2` tool activation unless the job itself set
   that tool's standby/active target first; activation-only commands would heat
   to an uninspected printer-side value.
@@ -96,6 +99,8 @@
 - Report slicer failures with the exit code or signal, timeout state, and
   stdout/stderr tails, plus slicer-specific suggestions instead of printer
   connectivity advice.
+- Give each Bambu-compatible slice its own output folder, so concurrent slices
+  of same-named inputs cannot replace each other's result before printing.
 - Require a nonempty `Metadata/plate_<n>.gcode` in Bambu-compatible output.
   A checksum-only archive, missing output, or stale file from an earlier run
   is an error.

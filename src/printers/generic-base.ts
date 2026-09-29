@@ -247,6 +247,14 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     };
     if (this.uploadStartsPrint) {
       const response = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, true);
+      // A stop sent while the upload was in flight reached the printer before
+      // this upload started the job, so stop again: the cancellation must win.
+      try {
+        assertActive();
+      } catch {
+        await this.rawCancelJob(host, port, apiKey).catch(() => undefined);
+        throw new Error(`A stop request arrived while ${remoteName} was uploading; the print it started was stopped again. Check the printer before retrying.`);
+      }
       if (!this.uploadStartedPrint(response)) {
         throw new Error(`${this.printerLabel} stored ${remoteName} but reports that it did not start printing it.`);
       }

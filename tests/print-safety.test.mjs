@@ -73,8 +73,8 @@ async function bambuBoundaries(t, { status = {}, slice, afterPublish } = {}) {
           ...(published ? ${JSON.stringify(afterPublish ?? {})} : {}) },
         observation: { source: "mqtt", requestedAt: now, receivedAt: now, identitySource: "report" } };
     };
-    STLManipulator.prototype.sliceSTL = async (input) => {
-      log({ action: "slice", input });
+    STLManipulator.prototype.sliceSTL = async (input, ...rest) => {
+      log({ action: "slice", input, bambuOptions: rest[6] ?? null });
       ${slice === "fail" ? 'throw new Error("Simulated slicer failure");'
         : slice === "slicer-error" ? 'throw new SlicerError("execution", "BambuStudio exited with code 206", { slicerType: "bambustudio", exitCode: 206 });'
         : `return ${JSON.stringify(slice ?? "")} || input;`}
@@ -438,4 +438,18 @@ test("a stop during the dispatch check is reported as cancelled, never as starte
   const result = await printing;
   assert.equal(result.isError, true);
   assert.match(errorText(result), /cancelled it before the printer confirmed the start/);
+});
+
+test("process_and_print_stl slices Bambu jobs for the requested nozzle and plate", async (t) => {
+  const sliced = await bambuProject(t, { gcode: "M104 S220\nM109 R220\nM140 S60\n" });
+  const { preload, events } = await bambuBoundaries(t, { slice: sliced });
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "process-nozzle-"));
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const client = await server(t, { ...bambuEnv, TEMP_DIR: temp, SLICER_TYPE: "bambustudio" }, { preload, elicitation: accept });
+  await client.callTool({ name: "process_and_print_stl", arguments: {
+    stl_path: path.join(root, "test/sample_cube.stl"), extension_inches: 0, nozzle_type: "hardened_steel", bed_type: "cool_plate",
+  } });
+  const slice = (await events()).find(({ action }) => action === "slice");
+  assert.ok(slice, "the job must be sliced");
+  assert.deepEqual(slice.bambuOptions, { bedType: "cool_plate", nozzleType: "hardened_steel" });
 });
