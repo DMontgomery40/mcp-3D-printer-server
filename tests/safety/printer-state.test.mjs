@@ -80,6 +80,8 @@ test('requires explicit clean print error and valid HMS severity, but permits in
   for(const print_error of [undefined,1,'03008004','not-a-number']) assert.throws(() => check(fresh({print_error})), /error/i);
   for(const hms of [undefined,'bad',[{attr:0,code:0x10001}],[{attr:0,code:0x20001}],[{attr:0,code:0x30001}],[{attr:0,code:0x50001}],[{attr:0}],[{severity:'info',code:0x10001}]]) assert.throws(() => check(fresh({hms})), /HMS/i);
   assert.doesNotThrow(() => check(fresh({hms:[{attr:0x03000100,code:0x40001}]})));
+  // The refusal names the code so a person can find and dismiss it on the printer.
+  assert.throws(() => check(fresh({hms:[{attr:0x05000500,code:0x00010007}]})), /HMS 0500-0500-0001-0007/);
 });
 const ams = {ams:[{id:'0',tray:[{id:'0',tray_type:'PLA',nozzle_temp_min:'190',nozzle_temp_max:'240'},{id:'1',tray_type:'PETG',nozzle_temp_min:'220',nozzle_temp_max:'270'}]}]};
 test('AMS requirements use positional mappings and selected slot material, including external 254', () => {

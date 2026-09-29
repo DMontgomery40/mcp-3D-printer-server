@@ -203,7 +203,10 @@ function validateErrors(raw: Record<string,any>, requireIdle: boolean) {
     // BambuStudio DevHMS.cpp: code >> 16; DevHMS.h: 1=fatal,2=serious,3=common,4=info.
     // Unknown severities fail closed; attr identifies the module and is not a severity bitmask.
     if (code === undefined || attr === undefined || !Number.isInteger(code) || !Number.isInteger(attr) || code < 0 || code > 0xffffffff || attr < 0 || attr > 0xffffffff || Math.floor(code / 65536) !== 4) {
-      throw new Error("Printer reports actionable or unknown HMS errors; inspect and resolve them before proceeding.");
+      const hex = (value: number) => value.toString(16).toUpperCase().padStart(8, "0");
+      const label = code !== undefined && attr !== undefined && Number.isInteger(code) && Number.isInteger(attr) && code >= 0 && attr >= 0
+        ? ` (HMS ${hex(attr).slice(0, 4)}-${hex(attr).slice(4)}-${hex(code).slice(0, 4)}-${hex(code).slice(4)})` : "";
+      throw new Error(`Printer reports actionable or unknown HMS errors${label}; inspect and resolve them on the printer before proceeding.`);
     }
   }
 }

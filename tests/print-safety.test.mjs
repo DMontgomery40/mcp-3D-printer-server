@@ -51,7 +51,20 @@ async function bambuBoundaries(t, { status = {}, slice, afterPublish } = {}) {
     BambuImplementation.prototype.ftpDownload = async () => { throw new Error("Remote artifact unavailable for inspection"); };
     BambuImplementation.prototype.getStatus = async () => { throw new Error("unexpected display status read in test"); };
     let published = false;
-    BambuImplementation.prototype.getPrinter = async () => ({ publish: async (payload) => { published = true; log({ action: "publish", payload }); } });
+    const listeners = new Set();
+    BambuImplementation.prototype.getPrinter = async () => ({
+      on: (event, listener) => { if (event === "rawMessage") listeners.add(listener); },
+      off: (event, listener) => listeners.delete(listener),
+      publish: async (payload) => {
+        published = true;
+        log({ action: "publish", payload });
+        const pushed = ${JSON.stringify(afterPublish ?? null)};
+        // Like the printer, push only the changed fields after a command.
+        if (pushed && Object.keys(pushed).length) setTimeout(() => {
+          for (const listener of listeners) listener("device/${serial}/report", Buffer.from(JSON.stringify({ print: { command: "push_status", ...pushed } })));
+        }, 50);
+      },
+    });
     BambuImplementation.prototype.getSafetyStatus = async () => {
       log({ action: "status" });
       const now = Date.now();

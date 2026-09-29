@@ -176,7 +176,7 @@ Every print start and positive heating command goes through the same gate on eve
 - **Files already on the printer.** `start_print` downloads the file, inspects it, and starts a uniquely named checked copy on Bambu Lab, OctoPrint, Klipper (Moonraker), and Duet. Repetier, Prusa, and Creality refuse remote starts because no verified download route exists; upload the local G-code with `print: true`.
 - **Expected temperatures.** `process_and_print_stl` refuses before uploading when `extruder_temp` or `bed_temp` differs from the sliced job's highest target.
 
-Evidence: the gate is covered by unit tests and MCP-level tests with mocked MQTT and FTPS boundaries and loopback HTTP printer APIs. No physical printer was heated or asked to print in those tests, and acceptance at a mocked boundary does not prove firmware behavior.
+Evidence: the gate is covered by unit tests and MCP-level tests with mocked MQTT and FTPS boundaries and loopback HTTP printer APIs. On one real P1S, the Bambu path read fresh status, refused a job sliced for the wrong nozzle type, asked for confirmation, and uploaded the checked file. The firmware then refused the unsigned start command because Developer Mode was off. Acceptance at a mocked boundary does not prove firmware behavior, and the other printer systems have not been exercised on real hardware in this release.
 
 ---
 

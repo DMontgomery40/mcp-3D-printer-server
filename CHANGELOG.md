@@ -69,9 +69,15 @@
   HTTP 401/403) as a changed access code or API key instead of advising a
   retry, and mark safety refusals as not retryable.
 - Evidence: unit tests and MCP-level tests with mocked MQTT/FTPS boundaries and
-  loopback HTTP printer APIs. No physical printer was contacted, heated or
-  asked to print; acceptance at a mocked boundary does not prove firmware
-  behavior.
+  loopback HTTP printer APIs cover every gate. One real P1S run (firmware
+  01.08.05 or later, LAN Only Mode off) exercised the Bambu path: fresh MQTT
+  status and AMS reads, the nozzle-type gate correctly refusing a job sliced
+  for a stainless nozzle on a hardened-steel printer, human confirmation, and
+  the checked FTPS upload. The firmware then refused the start command (HMS
+  0500-0500-0001-0007), so nothing printed; that finding produced the dispatch
+  check above, whose logic is unit-tested but not yet seen against the
+  firmware. No printer was heated. The other backends are verified against
+  mocked APIs only.
 
 ### Slicing
 

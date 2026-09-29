@@ -407,9 +407,10 @@ export class BambuImplementation extends PrinterImplementation {
       },
     };
 
+    const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus);
     await printer.publish(projectFileCmd);
     await sleep(COMMAND_SETTLE_MS);
-    const dispatch = await this.verifyDispatch(host, serial, token, dispatchStatus);
+    const dispatch = await watcher.settled();
 
     return {
       status: "success",
@@ -433,29 +434,51 @@ export class BambuImplementation extends PrinterImplementation {
   }
 
   /**
-   * A published print command is not proof the printer took it. Watch fresh
-   * reports: a new command-verification HMS means the firmware refused it; a
-   * transition to PREPARE/SLICING/RUNNING means it started.
+   * A published print command is not proof the printer took it. Listen to the
+   * reports the printer pushes anyway (no extra pushall polling on weak P1
+   * boards): a new command-verification HMS means the firmware refused the
+   * command; PREPARE/SLICING/RUNNING means it started. Attach before publishing.
    */
-  private async verifyDispatch(host: string, serial: string, token: string, before: any): Promise<"started" | "unconfirmed"> {
+  private watchDispatch(printer: any, host: string, serial: string, token: string, before: any): { settled: () => Promise<"started" | "unconfirmed"> } {
     const windowMs = dispatchCheckMs();
-    if (windowMs === 0) return "unconfirmed";
+    if (windowMs === 0 || typeof printer?.on !== "function") return { settled: async () => "unconfirmed" };
     const key = (entry: any) => `${Number(entry?.attr)}:${Number(entry?.code)}:${entry?.timestamp ?? ""}`;
     const known = new Set((Array.isArray(before?.raw?.hms) ? before.raw.hms : []).map(key));
-    const deadline = Date.now() + windowMs;
-    while (Date.now() < deadline) {
-      await sleep(Math.min(1_500, Math.max(0, deadline - Date.now())));
-      let status: any;
-      try { status = await this.getSafetyStatus(host, serial, token); } catch { continue; }
-      const raw = status?.raw ?? {};
-      const hms = Array.isArray(raw.hms) ? raw.hms : [];
+    const judge = (report: any): "started" | "rejected" | undefined => {
+      const hms = Array.isArray(report?.hms) ? report.hms : [];
       if (hms.some((entry: any) => Number(entry?.attr) === COMMAND_VERIFICATION_HMS.attr &&
-          Number(entry?.code) === COMMAND_VERIFICATION_HMS.code && !known.has(key(entry)))) {
-        throw new Error(COMMAND_REJECTED_MESSAGE);
-      }
-      if (["PREPARE", "SLICING", "RUNNING"].includes(String(raw.gcode_state ?? "").toUpperCase())) return "started";
-    }
-    return "unconfirmed";
+          Number(entry?.code) === COMMAND_VERIFICATION_HMS.code && !known.has(key(entry)))) return "rejected";
+      if (["PREPARE", "SLICING", "RUNNING"].includes(String(report?.gcode_state ?? "").toUpperCase())) return "started";
+      return undefined;
+    };
+    let resolveOutcome!: (value: "started" | "rejected" | undefined) => void;
+    const outcome = new Promise<"started" | "rejected" | undefined>((resolve) => { resolveOutcome = resolve; });
+    const onRaw = (topic: string, payload: Buffer) => {
+      if (topic !== `device/${serial}/report`) return;
+      let parsed: any;
+      try { parsed = JSON.parse(payload.toString()); } catch { return; }
+      const verdict = judge(parsed?.print);
+      if (verdict) resolveOutcome(verdict);
+    };
+    printer.on("rawMessage", onRaw);
+    const timer = setTimeout(() => resolveOutcome(undefined), windowMs);
+    return {
+      settled: async () => {
+        let verdict: "started" | "rejected" | undefined;
+        try {
+          verdict = await outcome;
+        } finally {
+          clearTimeout(timer);
+          printer.off?.("rawMessage", onRaw);
+        }
+        // Nothing pushed during the window: take one full report, not a polling loop.
+        if (verdict === undefined) {
+          try { verdict = judge((await this.getSafetyStatus(host, serial, token))?.raw); } catch { /* stays unconfirmed */ }
+        }
+        if (verdict === "rejected") throw new Error(COMMAND_REJECTED_MESSAGE);
+        return verdict ?? "unconfirmed";
+      },
+    };
   }
 
   /** Stop is never gated or queued behind pending checked operations. */
@@ -648,8 +671,9 @@ export class BambuImplementation extends PrinterImplementation {
     this.assertBedClearance(dispatchStatus, bedClearance);
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
+    const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus);
     await publishBambuCommand(printer, "print", "gcode_file", { param: remotePath });
-    const dispatch = await this.verifyDispatch(host, serial, token, dispatchStatus);
+    const dispatch = await watcher.settled();
     return {
       status: "success",
       uploaded: true,
