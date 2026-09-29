@@ -78,6 +78,23 @@ const FULU_PRINT_RPC_METHODS = new Set([
   "net.start_sdcard_print",
 ]);
 
+/**
+ * Agent/session/account bootstrap methods. They do not address a printer, so
+ * they remain available with allow_mutating_method=true. Every other method
+ * outside the read-only allowlist is refused: raw print starts, raw MQTT
+ * messages, file transfers and unknown methods would bypass the inspected
+ * print, heating and printer-state gate.
+ */
+const SESSION_MUTATING_METHODS = new Set([
+  "net.create_agent",
+  "net.start",
+  "net.init_log",
+  "net.set_config_dir",
+  "net.set_country_code",
+  "net.connect_server",
+  "net.change_user",
+]);
+
 export function isFuluPrintRpcMethod(method: string): boolean {
   return FULU_PRINT_RPC_METHODS.has(method.trim());
 }
@@ -501,15 +518,25 @@ export async function invokeFuluBridgeRpc(options: FuluBridgeRpcOptions): Promis
   const readOnly = isReadOnlyBridgeMethod(method);
   const printMethod = isFuluPrintRpcMethod(method);
 
-  if (!readOnly && !options.allowMutatingMethod) {
+  if (printMethod) {
     throw new Error(
-      `FULU bridge method "${method}" may mutate printer, account, or cloud state. ` +
-      "Pass allow_mutating_method=true only when you intend to perform that action."
+      `Print safety: raw FULU bridge print method "${method}" is disabled because it would start an uninspected job ` +
+      "without the thermal, model, nozzle, printer-state and human-confirmation checks. Use print_3mf for a checked LAN print."
     );
   }
 
-  if (printMethod && !options.bambuModel?.trim()) {
-    throw new Error("bambu_model is required for FULU BambuNetwork print RPC methods.");
+  if (!readOnly && !SESSION_MUTATING_METHODS.has(method)) {
+    throw new Error(
+      `Print safety: raw FULU bridge method "${method}" is not in the verified allowlist. Raw printer messages, ` +
+      "file transfers and unknown methods could bypass the print and heating safety gate. Use the dedicated printer tools instead."
+    );
+  }
+
+  if (!readOnly && !options.allowMutatingMethod) {
+    throw new Error(
+      `FULU bridge method "${method}" may mutate account, session, or cloud state. ` +
+      "Pass allow_mutating_method=true only when you intend to perform that action."
+    );
   }
 
   const command = options.bridgeCommand || process.env.FULU_BAMBU_BRIDGE_COMMAND || "";
@@ -590,11 +617,14 @@ export async function inspectFuluOrcaSetup(options: FuluOrcaSetupOptions): Promi
       safeByDefault: true,
       readOnlyMethods: Array.from(READ_ONLY_BRIDGE_METHODS),
       readOnlyNetPrefixes: READ_ONLY_NET_PREFIXES,
-      printMethodsRequireBambuModel: Array.from(FULU_PRINT_RPC_METHODS),
+      sessionMethodsRequireAllowMutating: Array.from(SESSION_MUTATING_METHODS),
+      disabledPrintMethods: Array.from(FULU_PRINT_RPC_METHODS),
+      otherMethods: "disabled: raw printer messages, file transfers and unknown methods bypass the safety gate",
     },
     notes: [
       "Slicing support uses FULU OrcaSlicer-bambulab CLI output as a sliced 3MF.",
       "Bambu print start still enforces BAMBU_MODEL before generating or sending project G-code.",
+      "Raw bridge print methods are disabled; print_3mf inspects the exact plate, checks the live printer and asks for human confirmation.",
       "The FULU BambuNetwork bridge is a separate runtime from the LAN MQTT/FTPS path; use bridge probing to verify that runtime before relying on cloud behavior.",
       "FULU macOS release bundles may ship the bridge dylib and host shims before the Linux plugin .so payload is present; missing linux-plugin entries mean the slicer can still be tested, but the BambuNetwork bridge is not fully ready.",
     ],

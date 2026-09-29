@@ -806,44 +806,53 @@ test("FULU bridge RPC allows read-only methods and gates mutating print methods"
   assert.equal(pingPayload.readOnly, true);
   assert.equal(pingPayload.response.value, "pong");
 
-  const blockedMutation = await client.callTool({
-    name: "fulu_bambu_network_rpc",
-    arguments: {
-      bridge_command: bridgeCommand,
-      method: "net.send_message",
-      payload: { dev_id: "printer", msg: "{}" },
-    },
-  });
-  assert.equal(blockedMutation.isError, true);
-  assert.match(blockedMutation.content?.[0]?.text || "", /allow_mutating_method=true/);
+  // A raw printer message could carry an unchecked print or heater command.
+  for (const allow of [false, true]) {
+    const blockedMutation = await client.callTool({
+      name: "fulu_bambu_network_rpc",
+      arguments: {
+        bridge_command: bridgeCommand,
+        method: "net.send_message",
+        allow_mutating_method: allow,
+        payload: { dev_id: "printer", msg: '{"print":{"command":"gcode_line","param":"M104 S400"}}' },
+      },
+    });
+    assert.equal(blockedMutation.isError, true);
+    assert.match(blockedMutation.content?.[0]?.text || "", /allowlist|safety/i);
+  }
 
-  const missingModel = await client.callTool({
-    name: "fulu_bambu_network_rpc",
-    arguments: {
-      bridge_command: bridgeCommand,
-      method: "net.start_print",
-      allow_mutating_method: true,
-      payload: { params: { dev_id: "printer" } },
-    },
-  });
-  assert.equal(missingModel.isError, true);
-  assert.match(missingModel.content?.[0]?.text || "", /bambu_model|model/i);
+  // Raw print RPC methods are disabled even with a model and the mutation flag:
+  // they would start an uninspected job without printer-state checks.
+  for (const method of ["net.start_print", "net.start_local_print", "net.start_sdcard_print", "net.start_send_gcode_to_sdcard", "net.start_local_print_with_record"]) {
+    for (const extra of [{}, { bambu_model: "p1s" }]) {
+      const printRpc = await client.callTool({
+        name: "fulu_bambu_network_rpc",
+        arguments: {
+          bridge_command: bridgeCommand,
+          method,
+          allow_mutating_method: true,
+          ...extra,
+          payload: { params: { dev_id: "printer" } },
+        },
+      });
+      assert.equal(printRpc.isError, true, `${method} must be refused`);
+      assert.match(printRpc.content?.[0]?.text || "", /Print safety.*disabled.*print_3mf/is);
+    }
+  }
 
-  const allowedPrintRpc = await client.callTool({
+  // Allowlisted agent/session setup still requires the explicit mutation flag.
+  const sessionWithoutFlag = await client.callTool({
     name: "fulu_bambu_network_rpc",
-    arguments: {
-      bridge_command: bridgeCommand,
-      method: "net.start_print",
-      allow_mutating_method: true,
-      bambu_model: "p1s",
-      payload: { params: { dev_id: "printer" } },
-    },
+    arguments: { bridge_command: bridgeCommand, method: "net.set_country_code", payload: { country_code: "US" } },
   });
-  assert.equal(allowedPrintRpc.isError, undefined);
-  const allowedPrintPayload = parseJsonResult(allowedPrintRpc);
-  assert.equal(allowedPrintPayload.printMethod, true);
-  assert.equal(allowedPrintPayload.bambuModel, "p1s");
-  assert.equal(allowedPrintPayload.response.method, "net.start_print");
+  assert.equal(sessionWithoutFlag.isError, true);
+  assert.match(sessionWithoutFlag.content?.[0]?.text || "", /allow_mutating_method=true/);
+  const sessionWithFlag = await client.callTool({
+    name: "fulu_bambu_network_rpc",
+    arguments: { bridge_command: bridgeCommand, method: "net.set_country_code", allow_mutating_method: true, payload: { country_code: "US" } },
+  });
+  assert.equal(sessionWithFlag.isError, undefined);
+  assert.equal(parseJsonResult(sessionWithFlag).response.method, "net.set_country_code");
 });
 
 test("bridge_command argument is rejected by default and the env var still works", async (t) => {
