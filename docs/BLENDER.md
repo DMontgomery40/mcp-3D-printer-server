@@ -104,11 +104,15 @@ with mcp-for-blender 2.1.1, driven by an MCP client over stdio. The request:
    real misfit.
 6. **Export and verify.** `blender_mcp_export_stl` wrote a new
    167.6 × 82.2 × 12.75 mm STL (194,652 triangles, no non-manifold edges).
-   From there, `slice_stl` and the print tools take over.
+7. **Slice.** `slice_stl` sliced it with the installed Bambu Studio for a P1S
+   with a 0.4 mm nozzle and Bambu TPU 95A HF (flexible, as phone cases
+   usually are): 230 °C nozzle, 35 °C textured plate, about 1 h 38 min and
+   21 g of filament. The next step is the print tools, which check the file
+   and the printer and ask before starting.
 
-Evidence levels: geometry, fit calculations, and file validation were checked
-in software. The printed case, snap fit, and TPU behaviour were not tested in
-this run, and the plateau's lower edge is not dimensioned on Apple's drawing,
+Evidence levels: geometry, fit calculations, file validation, and slicing were
+checked in software. The printed case, snap fit, and TPU behaviour were not
+tested in this run, and the plateau's lower edge is not dimensioned on Apple's drawing,
 so it was scaled from the drawing (±0.3 mm) and given extra clearance.
 
 ## Check a Blender install end to end
