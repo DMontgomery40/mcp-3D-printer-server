@@ -131,7 +131,7 @@ This server provides the printer, slicing, and mesh tools. Web search, photos, a
 
 ## What's new
 
-See the [changelog](./CHANGELOG.md) for versioned changes. Release 1.2.9 fixes Bambu FTPS uploads that failed with "Premature close" ([#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22)), adds standard Blender MCP discovery, forwarding, and verified STL edits, requires the Bambu printer model for raw print starts, and isolates each server's scratch files. Per-call executable selectors, such as a slicer path or bridge command, now require an explicit opt-in.
+See the [changelog](./CHANGELOG.md) for versioned changes. Release 1.2.9 fixes Bambu FTPS uploads that failed with "Premature close" ([#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22)), adds standard Blender MCP discovery, forwarding, and verified STL edits, requires the Bambu printer model for raw print starts, and isolates each server's scratch files. Separately, [#20](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/20) and [#21](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/21) made per-call executable selectors, such as a slicer path or bridge command, require an explicit opt-in.
 
 </details>
 
