@@ -1,667 +1,259 @@
-
-## Thank You To FULU And Louis Rossmann
-
-Thank you to the [FULU Foundation](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) and [Louis Rossmann](https://www.youtube.com/@rossmanngroup) for standing up for consumer ownership, open source developers, repair rights, and users who should not have working hardware made worse by locked-down software. This MCP server treats the FULU OrcaSlicer-bambulab fork as a first-class Bambu project slicer target.
-
 # MCP 3D Printer Server
 
+> **Thank you, [FULU Foundation](https://www.fulu.org/), [Louis Rossmann](https://www.youtube.com/@rossmanngroup), and the [OrcaSlicer-bambulab contributors](https://github.com/FULU-Foundation/OrcaSlicer-bambulab).** Thank you for standing up for consumer ownership, open-source developers, repair rights, and owners whose working hardware should not be made worse by locked-down software.
+>
+> This server treats the FULU OrcaSlicer-bambulab fork as a first-class slicer for Bambu Lab projects. See the [FULU guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md) for setup and current status.
+
 [![npm version](https://img.shields.io/npm/v/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
-[![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
-[![TypeScript](https://img.shields.io/badge/TypeScript-4.9%2B-blue)](https://www.typescriptlang.org/)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/DMontgomery40/mcp-3D-printer-server/graphs/commit-activity)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://makeapullrequest.com)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D%2018.0.0-green.svg)](https://nodejs.org/en/download/)
 [![Downloads](https://img.shields.io/npm/dm/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server)
-[![GitHub stars](https://img.shields.io/github/stars/dmontgomery40/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/DMontgomery40/mcp-3D-printer-server)
+[![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
+[![Tested with Node.js 24](https://img.shields.io/badge/tested%20with-Node.js%2024-green.svg)](https://nodejs.org/en/download/)
+[![GitHub stars](https://img.shields.io/github/stars/DMontgomery40/mcp-3D-printer-server.svg?style=social&label=Star)](https://github.com/DMontgomery40/mcp-3D-printer-server)
 
+An MCP server that connects Claude, Codex, and other MCP clients to 3D printers running OctoPrint, Klipper (Moonraker), Duet, Repetier-Server, Bambu Lab, PrusaLink or Prusa Connect, and Creality. Your agent can check status, upload and start jobs, cancel prints, edit STL meshes, run your slicer, and hand models to Blender through an optional Blender MCP bridge.
 
-<a href="https://glama.ai/mcp/servers/7f6v2enbgk">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/7f6v2enbgk/badge" alt="3D Printer Server MCP server" />
-</a>
+**[Browse the documentation site](https://dmontgomery40.github.io/mcp-3D-printer-server/)** for searchable setup guides, per-printer credentials, slicing, and the full tool reference. It is generated from this README and the docs folder.
+
+**Only print on Bambu Lab printers?** [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) is a Bambu-focused fork of this project with more Bambu features, including AMS inventory and matching, camera snapshots, and print preflight checks.
+
+Built with help from our [contributors](./CONTRIBUTORS.md). Thank you to everyone sharing fixes, careful bug reports, and real printer testing!
+
+---
+
+## Set up with your agent
+
+Tell your agent which **printer system** you use (OctoPrint, Klipper, Bambu Lab, Prusa, and so on) and its **address**, if you know them, then copy and paste this:
+
+```text
+Install mcp-3d-printer-server in the agent/harness I'm using now.
+
+Read https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md
+for the current setup instructions and supported printer backends.
+
+Detect my OS and harness, then use its native MCP configuration or installer.
+Preserve my existing servers and settings. Prefer the published npm package
+(npx -y mcp-3d-printer-server, stdio); use Node.js 24 if a runtime is needed.
+
+Ask which printer system I use and set PRINTER_TYPE to match. Never guess it.
+Then ask only for the values that backend needs:
+- octoprint: PRINTER_HOST, PRINTER_PORT if not 80, API_KEY
+- klipper (Moonraker): PRINTER_HOST, PRINTER_PORT (usually 7125)
+- duet: PRINTER_HOST, PRINTER_PORT if not 80
+- repetier: PRINTER_HOST, PRINTER_PORT (usually 3344), API_KEY
+- bambu: PRINTER_HOST, BAMBU_SERIAL, BAMBU_TOKEN (the LAN access code),
+  and BAMBU_MODEL
+- prusa: PRINTER_HOST (PrusaLink address or connect.prusa3d.com), API_KEY
+- creality: PRINTER_HOST, PRINTER_PORT if not 80, API_KEY (bearer token)
+For Bambu Lab, confirm the exact printer model with me; never guess it, and
+explain any LAN Only Mode or Developer Mode setting I need to enable.
+Keep keys, tokens, and access codes in local/private configuration; do not
+repeat them in chat.
+
+Bambu Lab has the most hardware testing. The other backends use each
+system's HTTP API and rely on community reports, so tell me plainly if a
+backend does not respond as the guide describes.
+
+Offer these optional extras, and set them up only if I choose them:
+- Blender MCP for model edits: uvx mcp-for-blender (formerly blender-mcp,
+  which now installs it as a compatibility wrapper). Its Blender addon must be
+  installed, enabled, and connected inside Blender.
+- A slicer for slice_stl: look for an installed PrusaSlicer, OrcaSlicer,
+  FULU OrcaSlicer-bambulab, Bambu Studio, or CuraEngine before suggesting
+  an install.
+Configure executables in the server environment. Do not enable
+MCP_ALLOW_EXECUTABLE_ARG.
+
+Verify that the MCP initializes, lists its tools, and reads printer status.
+Do not start a print or change printer settings, including temperatures, as
+a setup test. Tell me what worked and whether I need to restart or reload
+the harness.
+```
+
+[Setup reference](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md) · [Printer backends](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#choose-your-printer-backend) · [Slicing guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md) · [Blender MCP](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#blender-mcp-optional)
+
+## What to ask your agent
+
+Ask for the result you want, not the steps. Current models plan across tools: they search the web, read photos, look up exact dimensions, edit models, slice, and print. Expect a question or two when a choice matters, such as which printer or filament to use, or whether to start the print.
+
+This server provides the printer, slicing, and mesh tools. Web search, photos, and Blender edits come from your agent and its other connections, such as a [Blender MCP server](#blender-mcp). What your agent can read back depends on the printer system; see [printer backends](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#choose-your-printer-backend).
+
+### Start from anything
+
+<!-- lead: verify phone example -->
+
+- **"Here's a phone case on MakerWorld. Make it fit my iPhone 17 Pro Max and print it."**\
+  Your agent looks up the phone's published dimensions, refits the case in Blender, slices it for your printer, and checks with you before it starts the print.
+- **"Can you print a replacement?"** *(with a photo of a snapped cabinet clip)*\
+  It asks for a measurement or two where the fit matters, models the part, and prints it on the printer you choose.
+- **"Make this bracket 20% bigger and give it a thicker base."**\
+  It scales the STL, extends the base, and reports the new dimensions before it slices anything.
+
+### Check on any printer
+
+- **"How far along is the Bambu print?"**\
+  It requests a fresh status report and gives you progress, the current layer, and time remaining.
+- **"Is the Prusa done yet?"**\
+  It reads the printer's status through PrusaLink and reports its state and job progress.
+- **"What are the bed and nozzle temperatures on the OctoPrint printer?"**\
+  It reads OctoPrint's printer state, including current and target temperatures.
+- **"The first layer isn't sticking. Cancel it."**\
+  It sends the cancel command through that printer's backend, then checks the printer's status.
+
+### Slice and print
+
+- **"Print this in PETG."** *(with an STL)*\
+  It slices with the PETG filament profile you've set up, checks the temperatures in the G-code, and uploads the job once you confirm.
+- **"Print the bracket I sliced last night on the Bambu."**\
+  It checks that the `.3mf` contains sliced plate G-code, then uploads and starts it for your configured printer model.
+- **"Send benchy.gcode to the Klipper printer, but don't start it yet."**\
+  It uploads the file through Moonraker so you can start it later.
 
 <details>
-<summary><strong>✨ What's New / Significant Updates (as of last session)</strong></summary>
+<summary><strong>Start here</strong></summary>
 
-- **Dual Local Transports:** Added explicit `stdio` and `streamable-http` runtime modes with environment-based transport selection.
-- **FULU OrcaSlicer-bambulab Support:** Added `orcaslicer-bambulab` / `fulu_orca` slicer support for Bambu project 3MF export, and made it the default Bambu slicer target when no slicer is configured.
-- **Bambu Reliability Pass:** Fixed Bambu argument wiring bugs, added FTP-backed file operations, improved status refresh behavior, and implemented practical command paths for `startJob`, `setTemperature`, and `print_3mf`.
-- **Blender MCP:** Discover and call a standard Blender MCP server with `blender_mcp_status` and `blender_mcp_call`, or prepare and execute STL edits with verified output through `blender_mcp_edit_model`.
-- **Transport Behavior Tests:** Added real behavior tests for both transports (`initialize`, `tools/list`, success + failing `tools/call`, origin rejection).
-- **Docker Modernization:** Updated Docker build flow to work without BuildKit-specific features and verified streamable HTTP initialization in container smoke testing.
+## Start here
+
+| I want to… | Read next |
+|---|---|
+| Connect this MCP to my agent | [Copy the setup request](#set-up-with-your-agent) |
+| See what my agent can do with it | [What to ask your agent](#what-to-ask-your-agent) |
+| Find the credentials for my printer | [Printer backend setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#printer-backend-setup) |
+| Configure it by hand, with Docker, or over HTTP | [Installation and configuration reference](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md) |
+| Slice from my agent or troubleshoot slicing | [Slicing guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md) |
+| Use open-source slicing for a Bambu Lab printer | [FULU guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md) |
+| Edit an STL through Blender | [Blender MCP](#blender-mcp) |
+| See release changes or contributor credit | [Changelog](./CHANGELOG.md), [releases](https://github.com/DMontgomery40/mcp-3D-printer-server/releases), and [contributors](./CONTRIBUTORS.md) |
 
 </details>
 
 <details>
-<summary><strong>🗺️ Roadmap / TODO</strong></summary>
+<summary><strong>What's new</strong></summary>
 
-- **Achieve Feature Parity:** Bring functionality (status detail, file operations, direct printing where possible, preset handling) for OctoPrint, Klipper, Duet, Repetier, Prusa Connect, and Creality Cloud up to the level of robustness planned for the Bambu implementation.
-- **Implement Full Bambu MQTT Status:** Refactor `getStatus` for Bambu to subscribe to MQTT reports and maintain real-time state.
-- **Implement Robust AMS Mapping:** Replace placeholder logic; correctly parse and use AMS mapping from `.3mf` slicer config or user overrides for the MQTT print command.
-- **Implement `.3mf` Print Overrides:** Add logic to the `print_3mf` tool to handle user-provided overrides (e.g., calibration flags) and potentially common slicer settings if feasible via MQTT/G-code.
-- **Calculate MD5 Hash:** Add logic to calculate and include the MD5 hash of the `.3mf` file in the MQTT print command (optional but recommended by protocol).
-- **Refactor Bambu File Ops:** Investigate replacing `bambu-js` FTP operations (`getFiles`, `uploadFile`) with direct MQTT methods if possible/stable, or contribute FTPS support to `bambu-js`.
-- **Add Preset Discovery Logic:** Improve preset resource listing (currently lists based on potential filenames, could parse index files if they exist).
-- **Expand `.3mf` Support:** Add `.3mf` printing support for other printer types where applicable.
-- **Error Handling & Reporting:** Enhance MQTT error handling and reporting of print progress/completion.
-- **Testing:** Conduct thorough runtime testing of all new Bambu features.
+## What's new
+
+See the [changelog](./CHANGELOG.md) for versioned changes. Release 1.2.9 fixes Bambu FTPS uploads that failed with "Premature close" ([#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22)), adds standard Blender MCP discovery, forwarding, and verified STL edits, requires the Bambu printer model for raw print starts, and isolates each server's scratch files. Per-call executable selectors, such as a slicer path or bridge command, now require an explicit opt-in.
 
 </details>
 
 <details>
-<summary>Click to expand Table of Contents</summary>
+<summary><strong>Table of Contents</strong></summary>
 
 ## Table of Contents
 
+- [Set up with your agent](#set-up-with-your-agent)
+- [What to ask your agent](#what-to-ask-your-agent)
+- [Start here](#start-here)
+- [What's new](#whats-new)
 - [Description](#description)
+- [FULU and open-source printing](#fulu-and-open-source-printing)
 - [Features](#features)
-- [Installation](#installation)
-  - [Prerequisites](#prerequisites)
-  - [Install from npm](#install-from-npm)
-  - [Install from source](#install-from-source)
-  - [Running with Docker](#running-with-docker)
-    - [Using Slicers with Docker](#using-slicers-with-docker)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Supported Printer Management Systems](#supported-printer-management-systems)
-  - [OctoPrint](#octoprint)
-  - [Klipper (via Moonraker)](#klipper-via-moonraker)
-  - [Duet](#duet)
-  - [Repetier](#repetier)
-  - [Bambu Labs](#bambu-labs)
-    - [Finding Your Bambu Printer's Serial Number and Access Token](#finding-your-bambu-printers-serial-number-and-access-token)
-    - [Bambu Communication Notes (MQTT & FTP)](#bambu-communication-notes-mqtt--ftp)
-  - [Prusa Connect](#prusa-connect)
-    - [Setting up Prusa Connect](#setting-up-prusa-connect)
-  - [Creality Cloud](#creality-cloud)
-    - [Setting up Creality Cloud](#setting-up-creality-cloud)
 - [Available Tools](#available-tools)
   - [STL Manipulation Tools](#stl-manipulation-tools)
   - [Printer Control Tools](#printer-control-tools)
   - [Bambu-Specific Tools](#bambu-specific-tools)
+  - [Slicing Tools](#slicing-tools)
+  - [Advanced Tools](#advanced-tools)
 - [Available Resources](#available-resources)
-  - [Printer Resources](#printer-resources)
-  - [Bambu Preset Resources](#bambu-preset-resources)
-- [Example Commands for LLM](#example-commands-for-claude)
-- [Bambu Lab Printer Limitations](#bambu-lab-printer-limitations)
-- [Limitations and Considerations](#limitations-and-considerations)
-  - [Memory Usage](#memory-usage)
-  - [STL Manipulation Limitations](#stl-manipulation-limitations)
-  - [Visualization Limitations](#visualization-limitations)
-  - [Performance Considerations](#performance-considerations)
-  - [Testing Recommendations](#testing-recommendations)
-- [Appendix: MCP Safety Notes](#appendix-mcp-safety-notes)
-- [Badges](#badges)
+- [Printer Limitations](#printer-limitations)
+- [General Limitations and Considerations](#general-limitations-and-considerations)
+- [MCP Safety Notes](#mcp-safety-notes)
 - [License](#license)
+- [Acknowledgements](#acknowledgements)
 
 </details>
 
+<details>
+<summary><strong>Description</strong></summary>
+
 ## Description
 
-This is a server that allows MCP users to connect with the API endpoints of these 3D Printers: 
+`mcp-3d-printer-server` is a Model Context Protocol server for 3D printers. It gives an agent printer control (status, files, upload, start, cancel, and temperatures), STL mesh tools, slicer automation, Bambu Lab project printing, and an optional bridge to a Blender MCP server. One `PRINTER_TYPE` selects the default backend, and every printer tool accepts a per-call `type` and `host`, so one server can reach more than one printer.
 
-- OctoPrint
-- Klipper (Moonraker)
-- Duet
-- Repetier
-- Bambu Labs
-- Prusa Connect
-- Creality/Ender
+| Backend | `PRINTER_TYPE` | Testing evidence |
+|---|---|---|
+| Bambu Lab | `bambu` | Most tested, including maintainer hardware testing shared with the Bambu-only fork |
+| OctoPrint | `octoprint` | Community-reported |
+| Klipper (Moonraker) | `klipper` | Community-reported, including a Creality K1 Max through Moonraker |
+| PrusaLink and Prusa Connect | `prusa` | Community-reported |
+| Duet | `duet` | Implemented; no hardware reports yet |
+| Repetier-Server | `repetier` | Implemented; no hardware reports yet |
+| Creality | `creality` | Implemented; no hardware reports yet |
 
-This server is a Model Context Protocol (MCP) server for connecting Claude with 3D printer management systems. It allows MCP to interact with 3D printers through the APIs of various printer management systems such as OctoPrint, Klipper (via Moonraker), Duet, Repetier, and Bambu Labs printers.
+What each backend reads and sends differs. See [printer backend setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#printer-backend-setup) for the exact API calls, credentials, and linked reports.
 
-**Note on Resource Usage**: This MCP server includes advanced 3D model manipulation features that can be memory-intensive when working with large STL files. Please see the "Limitations and Considerations" section for important information about memory usage and performance.
+**Note on resource usage.** The STL tools load the entire mesh into memory. Large or complex files (over about 10 MB) can use a lot of memory. See [General Limitations and Considerations](#general-limitations-and-considerations).
+
+</details>
+
+<details>
+<summary><strong>FULU and open-source printing</strong></summary>
+
+## FULU and open-source printing
+
+[FULU OrcaSlicer-bambulab](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) is a first-class slicer target for Bambu Lab projects (`SLICER_TYPE=orcaslicer-bambulab`; aliases include `fulu-orca` and `orca-studio`), and the default slicer when `PRINTER_TYPE=bambu` and no slicer is configured. `slice_stl` and `print_3mf` auto-slicing use its project command line, and `check_fulu_orca_setup` inspects the install and runtime payload.
+
+The optional FULU **BambuNetwork bridge** is a separate runtime. `fulu_bambu_network_rpc` can probe it and send guarded RPC calls, but the server never switches a print from its local MQTT and FTPS path to BambuNetwork or the cloud on its own.
+
+**[Follow the FULU guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md)** for platform runtime setup, bridge probes, and the current macOS and Windows testing status.
+
+</details>
+
+<details>
+<summary><strong>Features</strong></summary>
 
 ## Features
 
-- Get printer status (temperatures, print progress, etc.)
-- List files on the printer
-- Upload G-code files to the printer
-- Start, cancel, and monitor print jobs
-- Set printer temperatures
-- Advanced STL file manipulation:
-  - Extend base for better adhesion
-  - Scale models uniformly or along specific axes
-  - Rotate models around any axis
-  - Translate (move) models
-  - Modify specific sections of STL files (top, bottom, center, or custom)
-- Comprehensive STL analysis with detailed model information
-- Generate multi-angle SVG visualizations of STL files
-- Real-time progress reporting for long operations
-- Error handling with detailed diagnostics
-- Slice STL files to generate G-code
-- Confirm temperature settings in G-code files
-- Complete end-to-end workflow from STL modification to printing
-- Print `.3mf` files directly on Bambu Lab printers (via MQTT command)
-- Slice Bambu projects with FULU OrcaSlicer-bambulab (`SLICER_TYPE=orcaslicer-bambulab`) and auto-slice unsliced 3MF files before Bambu printing when a project slicer is configured
-- Inspect and probe the FULU BambuNetwork runtime (`check_fulu_orca_setup`) and call safe-by-default FULU bridge RPC methods for diagnostics and development (`fulu_bambu_network_rpc`)
-- Read Bambu Studio preset files (printer, filament, process) as resources
-
-## Installation
-
-### Prerequisites
-
-- Node.js 18 or higher
-- npm or yarn
-
-### Install from npm
-
-```bash
-npm install -g mcp-3d-printer-server
-```
-
-### Install from source
-
-```bash
-git clone https://github.com/dmontgomery40/mcp-3d-printer-server.git
-cd mcp-3d-printer-server
-npm ci
-npm run build
-npm link  # Makes the command available globally
-```
-
-### Running with Docker
-
-You can also run the server using Docker and Docker Compose for a containerized environment.
-
-1.  Ensure you have Docker and Docker Compose installed.
-2.  Copy `.env.example` to `.env` and configure your settings.
-3.  Build and run the container:
-    ```bash
-    docker-compose up --build -d
-    ```
-
-#### Using Slicers with Docker
-
-Please note that the default Docker setup **cannot directly use a slicer installed on your host machine**. Mounting the slicer executable directly from the host into the container is unreliable due to operating system and library differences between your host and the container.
-
-The recommended approach is to **install your preferred slicer *inside* the Docker image**. This makes the container self-sufficient.
-
-To do this, you will need to modify the `Dockerfile`. Here's a conceptual example of how you might add PrusaSlicer, OrcaSlicer, or the FULU OrcaSlicer-bambulab build (specific commands may vary depending on the slicer, its dependencies, and current Alpine packages):
-
-```dockerfile
-# ... other Dockerfile commands ...
-
-# Example: Install PrusaSlicer, OrcaSlicer, or FULU OrcaSlicer-bambulab (adjust command as needed)
-# Check Alpine package repositories first (e.g., apk add prusaslicer or apk add orcaslicer)
-# If not available, download and install manually (e.g., AppImage):
-# RUN apk add --no-cache fuse # FUSE might be needed for AppImages
-# RUN wget https://example.com/path/to/OrcaSlicer_Linux_Vxxxx.AppImage -O /usr/local/bin/orcaslicer && \
-#     chmod +x /usr/local/bin/orcaslicer
-
-# Set the SLICER_PATH env var accordingly in docker-compose.yml or when running
-# Example for installed executable:
-ENV SLICER_PATH=/usr/local/bin/orcaslicer 
-
-# ... rest of Dockerfile ...
-```
-
-After modifying the `Dockerfile`, rebuild your image (`docker-compose build`). You'll also need to ensure the `SLICER_PATH` environment variable in your `.env` file or `docker-compose.yml` points to the correct path *inside the container* (e.g., `/usr/local/bin/orcaslicer`). For the FULU Bambu-enabled fork, set `SLICER_TYPE=orcaslicer-bambulab`.
-
-Apologies for not including a specific slicer out-of-the-box, but given the wide variety of slicers (PrusaSlicer, OrcaSlicer, Cura, etc.) and configurations available, pre-installing one would unnecessarily bloat the image for many users. If a particular slicer becomes a very common request, I can certainly look into adding official support for it in a future version.
-
-## Configuration
-
-Create a `.env` file in the directory where you'll run the server or set environment variables:
-
-```env
-# Required for authentication with your printer management system
-API_KEY=your_api_key_here
-
-# Default printer connection settings
-PRINTER_HOST=localhost
-PRINTER_PORT=80 # Port for non-Bambu HTTP APIs
-PRINTER_TYPE=octoprint  # Options: octoprint, klipper, duet, repetier, bambu, prusa, creality
-
-# Optional: Directory for temporary files
-TEMP_DIR=/path/to/temp/dir
-
-# Bambu Labs specific configuration
-BAMBU_SERIAL=your_printer_serial # REQUIRED for Bambu
-BAMBU_TOKEN=your_access_token    # REQUIRED for Bambu
-BAMBU_MODEL=p1s                  # REQUIRED for Bambu: p1s, p1p, x1c, x1e, a1, a1mini, h2d
-BED_TYPE=textured_plate          # Bed plate: textured_plate, cool_plate, engineering_plate, hot_plate
-NOZZLE_DIAMETER=0.4              # Nozzle diameter in mm (default: 0.4)
-
-# Slicer configuration (for slice_stl tool)
-# For Bambu projects, the default is orcaslicer-bambulab unless SLICER_TYPE is set.
-SLICER_TYPE=orcaslicer-bambulab  # Options: prusaslicer, cura, slic3r, orcaslicer, orcaslicer-bambulab, bambustudio
-SLICER_PATH=/path/to/slicer/executable
-SLICER_PROFILE=/path/to/slicer/profile
-
-# Optional aliases for FULU OrcaSlicer-bambulab when SLICER_PATH is not set
-FULU_ORCA_PATH=/path/to/FULU/OrcaSlicer
-ORCASLICER_BAMBULAB_PATH=/path/to/FULU/OrcaSlicer
-FULU_ORCA_PLUGIN_DIR=/path/to/FULU/OrcaSlicer.app/Contents/MacOS
-ORCASLICER_BAMBULAB_PLUGIN_DIR=/path/to/FULU/OrcaSlicer.app/Contents/MacOS
-
-# Optional FULU BambuNetwork bridge runtime
-# macOS default runtime dir:
-# /Users/you/Library/Application Support/OrcaSlicer/macos-bridge/runtime
-PJARCZAK_MAC_RUNTIME_DIR=
-FULU_BAMBU_BRIDGE_COMMAND=
-
-# Optional: Path to Bambu Studio user config dir (for loading presets)
-# Example macOS: /Users/your_user/Library/Application Support/BambuStudio/user/YOUR_USER_ID
-# Example Windows: C:\Users\your_user\AppData\Roaming\BambuStudio\user\YOUR_USER_ID
-# Example Linux: /home/your_user/.config/BambuStudio/user/YOUR_USER_ID
-BAMBU_STUDIO_CONFIG_PATH=
-
-# MCP transport configuration
-MCP_TRANSPORT=stdio             # Options: stdio, streamable-http
-MCP_HTTP_HOST=127.0.0.1
-MCP_HTTP_PORT=3000
-MCP_HTTP_PATH=/mcp
-MCP_HTTP_STATEFUL=true
-MCP_HTTP_JSON_RESPONSE=true
-MCP_HTTP_ALLOWED_ORIGINS=http://localhost
-
-# Optional bridge command for blender_mcp_edit_model execute=true mode
-BLENDER_MCP_BRIDGE_COMMAND=
-
-# Accept per-call executable selectors instead of reading commands and paths
-# from server environment configuration. Off by default: slicer_path,
-# bridge_command, and active-probe path overrides can select which local
-# executable launches. MCP_ALLOW_BRIDGE_COMMAND_ARG remains a legacy alias for
-# bridge commands and bridge-derived probe paths only.
-MCP_ALLOW_EXECUTABLE_ARG=false
-```
-
-## Usage
-
-Add this server to your MCP client's config (Claude Desktop, Claude Code, Cursor, Codex, or any MCP-compatible client). Most JSON-based clients use an `mcpServers` entry with the command and env vars:
-
-```json
-{
-  "mcpServers": {
-    "3dprint": {
-      "command": "npx",
-      "args": ["-y", "mcp-3d-printer-server"],
-      "env": {
-        "PRINTER_HOST": "your_printer_ip",
-        "PRINTER_TYPE": "bambu",
-        "BAMBU_SERIAL": "your_printer_serial",
-        "BAMBU_TOKEN": "your_access_token",
-        "BAMBU_MODEL": "p1s",
-        "SLICER_TYPE": "orcaslicer-bambulab",
-        "SLICER_PATH": "/path/to/FULU/OrcaSlicer",
-        "FULU_ORCA_PLUGIN_DIR": "/Applications/OrcaSlicer.app/Contents/MacOS"
-      }
-    }
-  }
-}
-```
-
-For non-Bambu printers, replace the Bambu-specific env vars with `API_KEY` and the appropriate `PRINTER_TYPE` (see [Supported Printer Management Systems](#supported-printer-management-systems)).
-
-### FULU OrcaSlicer-bambulab
-
-Use [`FULU-Foundation/OrcaSlicer-bambulab`](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) as the first-class Bambu project slicer by setting:
-
-```env
-PRINTER_TYPE=bambu
-SLICER_TYPE=orcaslicer-bambulab
-SLICER_PATH=/path/to/FULU/OrcaSlicer
-FULU_ORCA_PLUGIN_DIR=/path/to/FULU/runtime/payload
-BAMBU_MODEL=p1s
-```
-
-Accepted aliases include `fulu_orca`, `fulu-orca`, `orca-studio`, and `orca_bambulab`. For Bambu printers, this is the default slicer family when `SLICER_TYPE` is not set.
-
-What the integration does:
-
-- `slice_stl` uses the FULU/Orca project CLI shape (`--slice 0 --export-3mf`) to produce a sliced Bambu-compatible 3MF.
-- `print_3mf` can auto-slice an unsliced 3MF through FULU OrcaSlicer-bambulab, then upload and start the sliced project through this server's Bambu print path.
-- `check_fulu_orca_setup` verifies the FULU executable, platform runtime payload, setup commands, and optional BambuNetwork bridge handshake.
-- `fulu_bambu_network_rpc` can call the FULU bridge protocol for diagnostics and development. Read-only methods are allowed by default; mutating methods require `allow_mutating_method=true`; FULU print methods still require `bambu_model`.
-
-What stays deliberately explicit:
-
-- This MCP server's existing Bambu print path is local MQTT plus FTPS and still needs `BAMBU_SERIAL`, `BAMBU_TOKEN`, and `PRINTER_HOST`.
-- FULU's BambuNetwork bridge is a separate runtime. The MCP can inspect it, probe it, and issue guarded bridge RPC calls, but it will not silently switch a print from local LAN control to cloud/BambuNetwork control.
-- `BAMBU_MODEL` remains mandatory for Bambu print operations because wrong machine presets can produce dangerous G-code.
-
-#### Current Bench Test Status
-
-This integration has been tested against the current FULU macOS release artifacts and a local Benchy smoke test. The MCP-side bug found during that bench was real: Bambu-family project slicers must use Orca/Bambu preset JSON with `--load-settings`, not the invalid `--load-machine` flag. That is fixed here.
-
-The old Bambu Studio fallback still works. Set:
-
-```env
-SLICER_TYPE=bambustudio
-SLICER_PATH=/Applications/BambuStudio.app/Contents/MacOS/BambuStudio
-```
-
-With that fallback, the same Benchy 3MF sliced successfully through Bambu Studio's CLI into a Bambu-compatible project 3MF. This is the known-good path while FULU platform packaging settles.
-
-macOS is not proven green yet. On this Mac, the FULU arm64 and x86_64 macOS release bundles hit the same CLI slice problem during Benchy testing: one path crashed with `SIGSEGV` inside OrcaSlicer CLI processing, and repeated attempts left uninterruptible macOS `UE` processes that ignored `SIGKILL`. The MCP now avoids pretending that is solved. `check_fulu_orca_setup` can inspect the bundle and bridge payload, but macOS users should treat FULU CLI slicing as active feedback territory until FULU ships a stable macOS CLI/runtime combination.
-
-We need Windows testers. The WSL 2 setup path, payload checks, and bridge command shape are represented in this MCP, but the full Windows path still needs real reports from people who can validate `install_runtime.ps1`, `verify_runtime.ps1`, bridge probing, CLI slicing, and a known-safe print workflow on their own machine.
-
-We will keep iterating with user and contributor feedback. Please report the OS, CPU architecture, FULU release asset name, `check_fulu_orca_setup` result, slicer command stderr, and whether the Bambu Studio fallback works on the same model.
-
-#### FULU Runtime Setup By Platform
-
-The FULU README currently says macOS is work in progress, but the source tree already ships macOS Lima runtime scripts and Windows WSL runtime scripts. This MCP knows those file layouts and returns the exact commands through `check_fulu_orca_setup`.
-
-Windows:
-
-```bat
-dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
-dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
-```
-
-Restart Windows, then run the FULU package scripts from the directory that contains `install_runtime.ps1`:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install_runtime.ps1 -PackageDir . -PluginDir .
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\verify_runtime.ps1 -PackageDir . -PluginDir .
-```
-
-Linux:
-
-Install the FULU OrcaSlicer-bambulab build normally, set `SLICER_TYPE=orcaslicer-bambulab`, and point `SLICER_PATH` at the executable. If you want bridge-level diagnostics, set `FULU_BAMBU_BRIDGE_COMMAND` to the packaged `pjarczak_bambu_linux_host`.
-
-macOS:
-
-Set the app payload directory, then run the scripts that FULU copies into the app bundle:
-
-```bash
-export FULU_ORCA_PLUGIN_DIR="/Applications/OrcaSlicer.app/Contents/MacOS"
-bash "$FULU_ORCA_PLUGIN_DIR/install_runtime_macos.sh" -PackageDir "$FULU_ORCA_PLUGIN_DIR" -PluginDir "$FULU_ORCA_PLUGIN_DIR"
-bash "$FULU_ORCA_PLUGIN_DIR/verify_runtime_macos.sh" -PackageDir "$FULU_ORCA_PLUGIN_DIR" -PluginDir "$FULU_ORCA_PLUGIN_DIR"
-```
-
-The default installed runtime is:
-
-```text
-~/Library/Application Support/OrcaSlicer/macos-bridge/runtime
-```
-
-The bridge command shape is:
-
-```bash
-"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper" "$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host"
-```
-
-If your app is named `Orca Studio.app` or lives somewhere else, pass its real `Contents/MacOS` path as `plugin_dir` or `FULU_ORCA_PLUGIN_DIR`.
-
-#### Check The Setup Through MCP
-
-Ask your MCP client to call `check_fulu_orca_setup`, or call it from an agent with arguments like:
-
-```json
-{
-  "platform": "darwin",
-  "slicer_path": "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
-  "plugin_dir": "/Applications/OrcaSlicer.app/Contents/MacOS",
-  "run_bridge_probe": true,
-  "bridge_command": "\"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper\" \"$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host\""
-}
-```
-
-The result reports missing payload files, install/verify commands, the MCP env values to use, and bridge handshake/capability/runtime info when probing is enabled.
-
-> **Per-call executable selectors require `MCP_ALLOW_EXECUTABLE_ARG=1`.**
-> By default the bridge command and its derived paths are read from server environment
-> configuration. Passing `bridge_command`, or passing `slicer_path`, `plugin_dir`, or
-> `runtime_dir` with `run_bridge_probe=true`, returns an error naming the opt-in flag.
-> Non-executing setup inspection can still use the path arguments without the flag. These values
-> select which local executable this server launches, so accepting them for a probe lets whatever
-> is steering the model — a downloaded model's description, a README in an archive, 3MF metadata —
-> choose that program. The same gate applies to `slicer_path` on slicing tools. Set the
-> flag only for trusted iterative diagnostics; leave it off for normal use.
-
-#### FULU Bridge RPC
-
-`fulu_bambu_network_rpc` speaks the FULU bridge frame protocol from the MCP side. The protocol is little-endian binary frames with JSON bodies, using methods such as `bridge.handshake`, `bridge.capabilities`, `bridge.runtime_info`, and `net.get_user_print_info`.
-
-Safe diagnostic example:
-
-```json
-{
-  "method": "bridge.runtime_info",
-  "bridge_command": "\"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper\" \"$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host\""
-}
-```
-
-Mutating methods are intentionally gated:
-
-```json
-{
-  "method": "net.start_print",
-  "allow_mutating_method": true,
-  "bambu_model": "p1s",
-  "payload": {
-    "client_job_id": 1,
-    "params": {
-      "dev_id": "YOUR_PRINTER_ID"
-    }
-  }
-}
-```
-
-That second example is intentionally incomplete because real BambuNetwork print calls need the full FULU/Bambu print parameter payload. The important part is that the MCP exposes the bridge without pretending a cloud print can be safely inferred from a local filename.
-
-Where this config lives depends on your client and OS:
-
-| Client / scope | macOS / Linux location | Windows location |
-|----------------|------------------------|------------------|
-| Claude Desktop (macOS / Windows) | `~/Library/Application Support/Claude/claude_desktop_config.json` | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Claude Desktop (Linux) | Not officially supported for local MCP yet; Claude Desktop docs still list Linux support as coming soon. | N/A |
-| Claude Code (project-shared MCP) | `.mcp.json` in the project root | `.mcp.json` in the project root |
-| Claude Code (user/local MCP) | `~/.claude.json` | `%USERPROFILE%\.claude.json` |
-| Claude Code settings (not MCP server definitions) | `~/.claude/settings.json` | `%USERPROFILE%\.claude\settings.json` |
-| Cursor (project) | `.cursor/mcp.json` in the project root | `.cursor\mcp.json` in the project root |
-| Cursor (global) | `~/.cursor/mcp.json` | `%USERPROFILE%\.cursor\mcp.json` |
-| Codex (user; CLI, IDE extension, app) | `~/.codex/config.toml` | `%USERPROFILE%\.codex\config.toml` |
-| Codex (project, trusted projects only) | `.codex/config.toml` in the project root | `.codex\config.toml` in the project root |
-
-Codex uses TOML instead of the JSON shape above. You can manage MCP servers with `codex mcp`, or edit `config.toml` directly with a `[mcp_servers.<name>]` entry.
-
-Restart your client after editing the config. For Codex, run `/mcp` or `codex mcp list` to confirm the server loaded.
-
-### Recommended: use with codemode-mcp
-
-For any MCP server with a large tool surface, wrapping it behind [codemode-mcp](https://github.com/jx-codes/codemode-mcp) dramatically reduces token usage. Instead of exposing every tool definition to the model, codemode lets the agent write code against a two-tool interface (`search()` and `execute()`), loading only the tools it needs on demand.
-
-Anthropic and Cloudflare independently demonstrated this pattern reduces MCP token costs by up to 98%:
-
-- [Code execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic)
-- [Code Mode: give agents an entire API in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/) (Cloudflare)
-
-This applies to all MCP servers, not just this one.
-
-### Blender MCP
-
-Set `BLENDER_MCP_COMMAND` to the executable for your standard stdio Blender
-MCP server (for example the full path to `uvx`) and `BLENDER_MCP_ARGS` to a
-JSON argument array such as `["blender-mcp"]`. Install and enable the matching
-addon in Blender, then start its connection. Both processes must be able to
-access the same local files. Printer tools work without Blender configured.
-
-1. Call `blender_mcp_status` with `{"connect":true}` to initialize the server
-   and inspect its advertised tools and input schemas.
-2. Call `blender_mcp_call` with a discovered `tool_name` and `arguments`.
-   For example, use `get_scene_info` with `{"user_prompt":"Inspect my scene"}`
-   when advertised. Preserve the user's request in `user_prompt` when the
-   remote schema asks for it. MCP images, errors, and metadata are preserved.
-3. Use `blender_mcp_edit_model` for an STL import/edit/export operation:
-
-```json
-{
-  "stl_path": "/path/to/model.stl",
-  "output_path": "/path/to/model-edited.stl",
-  "operations": ["decimate:0.5"],
-  "user_prompt": "Reduce the triangle count for printing",
-  "execute": false
-}
-```
-
-The default preview validates inputs and returns the generated Python without
-launching Blender. Omitting `output_path` selects a unique `model-edited-<id>.stl`
-beside the input; reuse the returned path when executing a previewed plan. Set `execute` to `true` to apply the edit. Supported operations
-are `decimate:<ratio>` (greater than zero through one), `remesh:<positive voxel
-size in STL units>`, and `boolean_union:<STL path>`. The helper requires Object
-Mode, preserves existing scene objects and selection, and publishes a new STL
-only after checking a matching export receipt and a finite triangle mesh.
-Binary STLs are validated in small chunks and may be up to 256 MiB. ASCII STLs
-are limited to 4 MiB; export larger meshes as binary STL.
-Existing input and output files are never overwritten. Inspect the result
-before slicing: valid STL geometry does not guarantee printability.
-
-`BLENDER_MCP_TIMEOUT_MS` defaults to 120000 (range 100–300000). Requests have
-bounded connection/discovery/call deadlines, close their child connection,
-and never automatically replay interrupted edits. After an interruption,
-inspect Blender before retrying because an edit may already have started.
-The edit deadline also covers input and output validation; cancellation stops
-validation between file reads, including scans of Boolean operands.
-MCP connection success alone does not prove the Blender addon is connected.
-
-Legacy `BLENDER_MCP_BRIDGE_COMMAND` shell commands remain supported. They
-receive JSON on stdin containing `modelPath`, `operations`, and `source`, plus
-`stlPath` and the same JSON in `MCP_BLENDER_PAYLOAD` for fork compatibility.
-Their result reports `output_verified: false`. Per-call executable overrides
-still require `MCP_ALLOW_EXECUTABLE_ARG=1` (or the legacy bridge-only opt-in).
-The standard MCP executable and its arguments are always server configuration.
-
-## Supported Printer Management Systems
-
-### OctoPrint
-
-OctoPrint is a popular web interface for 3D printers. It provides a REST API for controlling the printer.
-
-- Default port: 80 (http) or 443 (https)
-- Authentication: API key required
-
-### Klipper (via Moonraker)
-
-Klipper is a firmware for 3D printers that works with the Moonraker API server.
-
-- Default port: 7125
-- Authentication: Depends on your Moonraker configuration
-
-### Duet
-
-Duet is a control board for 3D printers with its own web interface (DuetWebControl).
-
-- Default port: 80 (http) or 443 (https)
-- Authentication: Depends on your Duet configuration
-
-### Repetier
-
-Repetier-Server is a host software for 3D printers.
-
-- Default port: 3344
-- Authentication: API key required
-
-### Bambu Labs
-
-Bambu Lab printers use MQTT for status and control and FTP for file operations.
-
-- Authentication: Serial number and access token required (set `BAMBU_SERIAL` and `BAMBU_TOKEN`)
-- Printer model: **Required** (set `BAMBU_MODEL`). Valid values: `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`. The guard applies to `start_print` and `upload_gcode` with `print=true` as well as the slicing/3MF paths. Pre-sliced files must already match the physical printer; the model setting does not inspect or convert their G-code.
-- Requirements: Printer must be on the same network with Developer Mode and LAN Only Mode enabled
-- Compatible with: X1C, X1E, P1S, P1P, A1, A1 Mini, H2D
-
-#### Finding Your Bambu Printer's Serial Number and Access Token
-
-To connect to your Bambu Lab printer, you need two things:
-
-1. **Printer Serial Number**: 
-   - Look on the back or bottom of your printer for a sticker with a serial number (typically starts with "01P" or "01A" followed by numbers/letters)
-   - Alternatively, open Bambu Studio, connect to your printer, go to Device > Device Management, and view your printer's information
-
-2. **Access Token**: 
-   - The access token is a security code needed to connect directly to your printer
-   - For P1 Series printers: Go to the touchscreen, select Settings > Network > LAN Mode, and you'll see the access code
-   - For X1 Series printers: Go to the touchscreen, select Settings > Network > LAN Mode, and enable LAN Mode to see the access code
-   - For A1 Mini: Use the Bambu Handy app to connect to your printer, then go to Settings > Network > LAN Mode
-
-**Note**: If your printer is not on the same local network or you can't find the access token, you may need to update your printer's firmware to the latest version to enable LAN Mode.
-
-#### Bambu Communication Notes (MQTT & FTP)
-
-- **MQTT:** This server uses the local MQTT protocol (port 8883, TLS) based on community findings (e.g., [OpenBambuAPI](https://github.com/Doridian/OpenBambuAPI)) to send commands like starting prints and cancelling jobs.
-- **FTP:** File listing and uploading currently rely on the FTP server running on the printer (via the `bambu-js` library helper). **Note:** This FTP connection might be **unsecured (plain FTP)** based on current library limitations. Use with awareness of your network security.
-
-### Prusa Connect
-
-Prusa Connect is Prusa's own cloud-based solution for managing their printers.
-
-- Default port: 80 (http) or 443 (https)
-- Authentication: API key required
-- Compatible with: Prusa MK4, Prusa Mini, Prusa XL, and other Prusa printers with Prusa Connect
-
-For Prusa Connect cloud, use `connect.prusa3d.com` with `PRINTER_PORT=443`, or include the scheme directly with `PRINTER_HOST=https://connect.prusa3d.com`. The server normalizes both forms to HTTPS. Local PrusaLink hosts continue to use HTTP unless you provide an `https://` host or port `443`.
-
-#### Setting up Prusa Connect
-
-1. Make sure your Prusa printer is updated to the latest firmware
-2. Connect your printer to your Wi-Fi network
-3. Create a Prusa Connect account and register your printer
-4. Generate an API key from the Prusa Connect web interface under Settings > API Access
-
-### Creality Cloud
-
-Creality Cloud is Creality's management system for their printers.
-
-- Default port: 80 (http) or 443 (https)
-- Authentication: Bearer token required
-- Compatible with: Ender series, CR series, and other Creality printers with network capabilities
-
-#### Setting up Creality Cloud
-
-1. Install the Creality Cloud app on your mobile device
-2. Create an account and add your printer
-3. Enable local network access for your printer
-4. Generate a token from the Creality Cloud app under Settings > Developer Options
+- Seven printer backends, selected with `PRINTER_TYPE`: OctoPrint, Klipper (Moonraker), Duet, Repetier-Server, Bambu Lab, PrusaLink or Prusa Connect, and Creality
+- Per-call `type`, `host`, `port`, and `api_key` arguments for working with more than one printer
+- Printer status, file listing, G-code upload from inline content or a local path, starting a stored file, cancelling a job, and setting bed or nozzle temperatures
+- STL tools: inspect dimensions, scale, rotate, translate, extend the base, merge vertices, center, lay flat, transform one section of a model, and render multi-angle SVG previews
+- Slicing through PrusaSlicer, Slic3r, OrcaSlicer, CuraEngine, FULU OrcaSlicer-bambulab, or Bambu Studio command lines, with G-code temperature checks and a one-call process-and-print pipeline
+- Bambu Lab project printing: upload a sliced `.3mf` over FTPS and start it over MQTT with the plate's G-code path, MD5, AMS mapping, and calibration flags; auto-slice unsliced projects with FULU OrcaSlicer-bambulab or Bambu Studio
+- Required Bambu printer model for print operations, asked for through MCP elicitation when missing
+- FULU OrcaSlicer-bambulab setup inspection and guarded BambuNetwork bridge RPC
+- Optional Blender MCP bridge: discover a standard Blender MCP server's tools, forward calls, and run verified STL edits
+- Slicer, bridge, and Blender executables come from server configuration unless you explicitly opt in to per-call selectors
+- MCP resources for printer status, files, and file details
+- Transports: stdio (default) and streamable HTTP, plus a Docker image
+
+</details>
+
+<details>
+<summary><strong>Available Tools</strong></summary>
 
 ## Available Tools
 
 <details>
-<summary>Click to expand STL Manipulation Tools</summary>
+<summary><strong>STL Manipulation Tools</strong></summary>
 
 ### STL Manipulation Tools
 
-> **Memory Usage Warning**: The following STL manipulation tools load entire 3D models into memory. For large or complex STL files (>10MB), these operations can consume significant memory. When using these tools within the MCP environment, be mindful of memory constraints.
+All STL tools load the full mesh into memory. Tools that change a model write a new file to the server's temporary directory, named after the input with a suffix such as `_scaled`, and return its path; the input file is not modified.
 
 #### get_stl_info
 
-Get detailed information about an STL file, including dimensions, vertex count, and bounding box.
+Inspect an STL file without modifying it. Returns the bounding box, dimensions, center, vertex count, and face count.
 
 ```json
 {
-  "stl_path": "/path/to/file.stl"
-}
-```
-
-#### extend_stl_base
-
-Extend the base of an STL file by a specified amount.
-
-```json
-{
-  "stl_path": "/path/to/file.stl",
-  "extension_inches": 2
+  "stl_path": "/path/to/model.stl"
 }
 ```
 
 #### scale_stl
 
-Scale an STL model uniformly or along specific axes.
+Scale a model uniformly with `scale_factor`, or per axis with `scale_x`, `scale_y`, and `scale_z`. When any axis value is given, unspecified axes stay at 1.0.
 
 ```json
 {
-  "stl_path": "/path/to/file.stl",
-  "scale_factor": 1.5
+  "stl_path": "/path/to/model.stl",
+  "scale_factor": 1.2
 }
 ```
 
-Or for non-uniform scaling:
-
 ```json
 {
-  "stl_path": "/path/to/file.stl",
+  "stl_path": "/path/to/model.stl",
   "scale_x": 1.2,
   "scale_y": 1.0,
   "scale_z": 1.5
@@ -670,12 +262,12 @@ Or for non-uniform scaling:
 
 #### rotate_stl
 
-Rotate an STL model around specific axes (in degrees).
+Rotate a model around the X, Y, and Z axes, in degrees. Omitted axes default to 0.
 
 ```json
 {
-  "stl_path": "/path/to/file.stl",
-  "rotate_x": 45,
+  "stl_path": "/path/to/model.stl",
+  "rotate_x": 0,
   "rotate_y": 0,
   "rotate_z": 90
 }
@@ -683,31 +275,42 @@ Rotate an STL model around specific axes (in degrees).
 
 #### translate_stl
 
-Move an STL model along specific axes (in millimeters).
+Move a model along the X, Y, and Z axes, in millimeters. Omitted axes default to 0.
 
 ```json
 {
-  "stl_path": "/path/to/file.stl",
+  "stl_path": "/path/to/model.stl",
   "translate_x": 10,
   "translate_y": 5,
   "translate_z": 0
 }
 ```
 
-#### merge_vertices
+#### extend_stl_base
 
-Merge vertices that are closer than a specified tolerance. Helps close small gaps and can slightly simplify the mesh.
+Add solid geometry underneath the model to raise and widen its base. `extension_inches` is in **inches** and is converted to millimeters (25.4 mm per inch).
 
 ```json
 {
   "stl_path": "/path/to/model.stl",
-  "tolerance": 0.01 // Optional, default = 0.01mm
+  "extension_inches": 0.25
+}
+```
+
+#### merge_vertices
+
+Merge vertices closer together than `tolerance` (millimeters, default 0.01). This can close small gaps and slightly simplify the mesh.
+
+```json
+{
+  "stl_path": "/path/to/model.stl",
+  "tolerance": 0.01
 }
 ```
 
 #### center_model
 
-Translate the model so the center of its bounding box is at the world origin (0,0,0).
+Move the model so the center of its bounding box is at the origin (0, 0, 0).
 
 ```json
 {
@@ -717,7 +320,7 @@ Translate the model so the center of its bounding box is at the world origin (0,
 
 #### lay_flat
 
-Attempt to identify the largest flat surface of the model (that isn't already facing directly up or down) and rotate the model so this face is oriented downwards on the XY plane (Z=0). Useful for orienting models for printing.
+Find the model's largest flat face and rotate the model so that face rests on the XY plane (Z = 0). Works best on models with a clearly dominant flat face.
 
 ```json
 {
@@ -727,28 +330,28 @@ Attempt to identify the largest flat surface of the model (that isn't already fa
 
 #### modify_stl_section
 
-Apply a specific transformation to a selected section of an STL file. This allows for detailed modifications of specific parts of a model.
+Apply a scale, rotation, or translation to one section of a model: the `top`, `bottom`, or `center` third of its bounding box, or a `custom` box. `value_x`, `value_y`, and `value_z` are scale factors, degrees, or millimeters depending on `transformation_type`.
 
 ```json
 {
-  "stl_path": "/path/to/file.stl",
+  "stl_path": "/path/to/model.stl",
   "section": "top",
   "transformation_type": "scale",
   "value_x": 1.5,
-  "value_y": 1.5, 
+  "value_y": 1.5,
   "value_z": 1.5
 }
 ```
 
-For custom section bounds:
+A `custom` section requires all six bounds:
 
 ```json
 {
-  "stl_path": "/path/to/file.stl",
+  "stl_path": "/path/to/model.stl",
   "section": "custom",
   "transformation_type": "rotate",
   "value_x": 0,
-  "value_y": 0, 
+  "value_y": 0,
   "value_z": 45,
   "custom_min_x": -10,
   "custom_min_y": 0,
@@ -761,369 +364,388 @@ For custom section bounds:
 
 #### generate_stl_visualization
 
-Generate an SVG visualization of an STL file from multiple angles (front, side, top, and isometric views).
+Render an SVG with front, side, top, and isometric views of a model. `width` and `height` set each view's size in pixels (default 300).
 
 ```json
 {
-  "stl_path": "/path/to/file.stl",
+  "stl_path": "/path/to/model.stl",
   "width": 400,
   "height": 400
 }
 ```
 
-#### slice_stl
+The SVG is a simplified schematic, not a photorealistic render.
 
-Slice an STL file to generate G-code.
+</details>
+
+<details>
+<summary><strong>Printer Control Tools</strong></summary>
+
+### Printer Control Tools
+
+Every printer tool accepts `host`, `port`, `type`, and `api_key`, and Bambu printers also use `bambu_serial` and `bambu_token`. Omitted values fall back to `PRINTER_HOST`, `PRINTER_PORT`, `PRINTER_TYPE`, `API_KEY`, `BAMBU_SERIAL`, and `BAMBU_TOKEN`. Keep keys in the server configuration rather than passing them in calls.
+
+What each call does depends on the backend; see [printer backend setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#printer-backend-setup) for the exact API routes.
+
+#### get_printer_status
+
+Read the printer's current status. The response is the backend's own status data: Bambu returns temperatures, job state, progress, layers, time remaining, and AMS data; OctoPrint returns printer state and temperatures; Klipper returns the Moonraker host state only.
 
 ```json
 {
-  "stl_path": "/path/to/file.stl",
-  "slicer_type": "orcaslicer",
-  "slicer_path": "/path/to/orcaslicer",
-  "slicer_profile": "/path/to/machine.json;/path/to/process.json",
-  "filament_profile": "/path/to/flat-nylon-filament.json"
+  "type": "klipper",
+  "host": "192.168.1.50",
+  "port": "7125"
 }
 ```
 
-For OrcaSlicer, the server uses `--slice 0 --outputdir` and returns the renamed `plate_1.gcode` output. Load filament separately with `filament_profile` (`--load-filaments`) or encode it in `slicer_profile` after a pipe, for example `/path/to/process.json|/path/to/filament.json`.
+#### list_printer_files
 
-#### confirm_temperatures
-
-Confirm temperature settings in a G-code file.
+List the files stored on the printer or its host software. On Bambu printers it lists the `cache/`, `timelapse/`, and `logs/` directories.
 
 ```json
 {
-  "gcode_path": "/path/to/file.gcode",
-  "extruder_temp": 200,
-  "bed_temp": 60
+  "type": "octoprint",
+  "host": "192.168.1.100"
+}
+```
+
+#### upload_gcode
+
+Upload G-code to the printer, and optionally start it. Pass `gcode_path` for a local file, or `gcode` with the content (or a local path). `filename` defaults to the basename of `gcode_path`. With `print: true` the backend starts the job after the upload; on Bambu printers that also requires the printer model (`bambu_model` or `BAMBU_MODEL`).
+
+<!-- lead: sync after safety + blender integration -->
+
+```json
+{
+  "type": "klipper",
+  "host": "192.168.1.50",
+  "port": "7125",
+  "gcode_path": "/path/to/benchy.gcode",
+  "print": false
+}
+```
+
+On Bambu printers, files go to `cache/` over FTPS. Automatic printing after upload supports `.gcode` only; print `.3mf` projects with `print_3mf`.
+
+#### start_print
+
+Start a file that is already on the printer. On Bambu printers it requires the printer model and supports `.gcode` files only; bare filenames are looked up in `cache/`.
+
+<!-- lead: sync after safety + blender integration -->
+
+```json
+{
+  "type": "octoprint",
+  "host": "192.168.1.100",
+  "filename": "benchy.gcode"
+}
+```
+
+#### cancel_print
+
+Cancel the current print job. There is no pause or resume tool; cancelling is not resumable.
+
+```json
+{
+  "type": "prusa",
+  "host": "192.168.1.120"
+}
+```
+
+#### set_printer_temperature
+
+Set a target temperature for a printer component. Use `bed` or `extruder`; Bambu also accepts `nozzle`, `tool`, and `tool0`, and limits targets to 0 through 300 °C.
+
+<!-- lead: sync after safety + blender integration -->
+
+```json
+{
+  "type": "klipper",
+  "host": "192.168.1.50",
+  "port": "7125",
+  "component": "bed",
+  "temperature": 60
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Bambu-Specific Tools</strong></summary>
+
+### Bambu-Specific Tools
+
+These tools work with `PRINTER_TYPE=bambu` (or `type: "bambu"`). Set up LAN Only Mode, the serial number, the access code, and the model as described in [Bambu Lab setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#bambu-lab).
+
+#### print_3mf
+
+Upload a sliced `.3mf` project to a Bambu printer over FTPS and start it with an MQTT `project_file` command that carries the plate's G-code path, its MD5, the AMS mapping, and the calibration flags. **`bambu_model` is required** (or `BAMBU_MODEL`); without it the server asks through MCP elicitation when the client supports it, or returns an error. The wrong model can crash the bed into the nozzle.
+
+<!-- lead: sync after safety + blender integration -->
+
+```json
+{
+  "three_mf_path": "/path/to/bracket.gcode.3mf",
+  "bambu_model": "p1s",
+  "bed_type": "textured_plate",
+  "use_ams": true,
+  "ams_mapping": { "Generic PLA": 0 },
+  "bed_leveling": true,
+  "flow_calibration": true,
+  "vibration_calibration": true,
+  "layer_inspect": true,
+  "timelapse": false
+}
+```
+
+- If the project has no plate G-code, the server tries to [auto-slice it](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#print_3mf-auto-slicing) with FULU OrcaSlicer-bambulab or Bambu Studio. If slicing fails, it stops with an error before uploading.
+- `ams_mapping` is an object whose values are AMS slot numbers. When it is omitted, the mapping embedded in the 3MF is used; with no mapping at all, the print runs without AMS. `use_ams: false` turns AMS off.
+- `bed_type` is one of `textured_plate`, `cool_plate`, `engineering_plate`, or `hot_plate` (default `textured_plate`, or `BED_TYPE`).
+- Calibration flags default to on (timelapse to off) when omitted.
+- `layer_height`, `nozzle_temperature`, `bed_temperature`, and `support_enabled` are accepted but not applied: those settings are baked into the sliced file. Change them in the slicer.
+- A success response means the command was sent, not that the print started cleanly. Check the printer's status afterward.
+
+#### check_fulu_orca_setup
+
+Inspect a FULU OrcaSlicer-bambulab install: the executable, the platform runtime payload, the install and verify commands, and optionally a BambuNetwork bridge handshake. Paths default to the server environment; see [checking the setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md#check-the-setup-through-mcp).
+
+```json
+{
+  "platform": "darwin",
+  "run_bridge_probe": true
+}
+```
+
+`bridge_command`, and `slicer_path`, `plugin_dir`, or `runtime_dir` with `run_bridge_probe: true`, require `MCP_ALLOW_EXECUTABLE_ARG=1`.
+
+#### fulu_bambu_network_rpc
+
+Call one FULU BambuNetwork bridge method. Read-only methods such as `bridge.handshake`, `bridge.runtime_info`, and `net.get_user_print_info` are allowed by default; anything that can change account, printer, cloud, or print state requires `allow_mutating_method: true`, and print methods also require `bambu_model`. See [bridge RPC](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md#bridge-rpc).
+
+```json
+{
+  "method": "bridge.handshake"
+}
+```
+
+The bridge command comes from `FULU_BAMBU_BRIDGE_COMMAND`; a per-call `bridge_command` requires `MCP_ALLOW_EXECUTABLE_ARG=1`.
+
+</details>
+
+<details>
+<summary><strong>Slicing Tools</strong></summary>
+
+### Slicing Tools
+
+See the [slicing guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md) for slicer types, profiles, and troubleshooting. Slicing a file yourself in the slicer's GUI and uploading the result is the most predictable path.
+
+#### slice_stl
+
+Slice an STL (or a 3MF, for Bambu project slicers) with the configured slicer and return the output path: G-code for PrusaSlicer, Slic3r, OrcaSlicer, and CuraEngine, or a sliced `.3mf` for FULU OrcaSlicer-bambulab and Bambu Studio. Bambu project slicers require `bambu_model` (or `BAMBU_MODEL`) to load the right machine preset.
+
+<!-- lead: sync after safety + blender integration -->
+
+```json
+{
+  "stl_path": "/path/to/model.stl",
+  "slicer_type": "orcaslicer",
+  "slicer_profile": "/path/to/machine.json;/path/to/process.json",
+  "filament_profile": "/path/to/petg.json"
+}
+```
+
+`slicer_type`, `slicer_profile`, and `filament_profile` fall back to `SLICER_TYPE`, `SLICER_PROFILE`, and `FILAMENT_PROFILE`. `nozzle_diameter` (default 0.4) selects the Bambu machine preset. The slicer executable comes from `SLICER_PATH`; a per-call `slicer_path` requires `MCP_ALLOW_EXECUTABLE_ARG=1`.
+
+#### confirm_temperatures
+
+Read the extruder and bed temperatures from a G-code file and compare them with the values you expect. It reports matches and mismatches and does not change the file.
+
+```json
+{
+  "gcode_path": "/path/to/model.gcode",
+  "extruder_temp": 240,
+  "bed_temp": 80
 }
 ```
 
 #### process_and_print_stl
 
-Process an STL file (extend base), slice it, confirm temperatures, and start printing.
+Extend an STL's base, slice it, optionally compare temperatures, then upload it and **start printing immediately**. A temperature mismatch is logged as a warning and does not stop the upload. For a Bambu printer with a Bambu project slicer, the sliced `.3mf` goes through the same upload and print command as `print_3mf`, and the printer model is required.
+
+<!-- lead: sync after safety + blender integration -->
 
 ```json
 {
-  "stl_path": "/path/to/file.stl",
-  "extension_inches": 2,
-  "extruder_temp": 200,
+  "stl_path": "/path/to/model.stl",
+  "extension_inches": 0.1,
+  "extruder_temp": 210,
   "bed_temp": 60,
-  "host": "192.168.1.100",
   "type": "octoprint",
-  "api_key": "YOUR_API_KEY"
+  "host": "192.168.1.100"
 }
 ```
 
-**Note:** Automatic orientation for optimal printing (minimizing supports, etc.) is a complex task typically handled by slicer GUIs (like OrcaSlicer or PrusaSlicer) and is not implemented in this server.
+Use `slice_stl`, `confirm_temperatures`, and `upload_gcode` separately when you want to review the result before the printer starts.
 
 </details>
 
 <details>
-<summary>Click to expand Printer Control Tools</summary>
+<summary><strong>Advanced Tools</strong></summary>
 
-### Printer Control Tools
+### Advanced Tools
 
-#### get_printer_status
+#### Blender MCP
 
-Get the current status of the 3D printer.
+Connect a standard stdio Blender MCP server with `BLENDER_MCP_COMMAND` (for example, the full path to `uvx`) and `BLENDER_MCP_ARGS` (for example `["mcp-for-blender"]`). The [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) project was formerly published as `blender-mcp`, which still works as a compatibility wrapper. Install and enable its addon in Blender and start the addon's connection. Blender and this server must be able to read the same local files. Printer tools work without Blender configured. See [Blender MCP setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#blender-mcp-optional).
 
-```json
-{
-  "host": "192.168.1.100",
-  "type": "octoprint",
-  "api_key": "YOUR_API_KEY"
-}
-```
+<!-- lead: sync after safety + blender integration -->
 
-For Bambu printers, this currently only confirms MQTT connection.
+#### blender_mcp_status
 
-#### list_printer_files
-
-List files available on the printer.
+Inspect the Blender MCP configuration. With `connect: true`, it starts the configured server, initializes it, and lists its tools and input schemas. A successful connection does not prove the addon inside Blender is running; call `get_scene_info` through `blender_mcp_call` to check that.
 
 ```json
 {
-  "host": "192.168.1.100",
-  "type": "octoprint",
-  "api_key": "YOUR_API_KEY"
+  "connect": true
 }
 ```
 
-For Bambu printers, lists files in the `gcodes` directory via FTP.
+#### blender_mcp_call
 
-#### upload_gcode
-
-Upload G-code content or a local G-code file path to the printer.
+Call a tool the Blender MCP server advertises, such as `get_scene_info` or `execute_blender_code`, with arguments matching its discovered schema. The full MCP result, including images and errors, is returned. Calls can change the active Blender scene and are never retried automatically. Preserve the user's own words in `user_prompt` when the remote tool asks for it.
 
 ```json
 {
-  "host": "192.168.1.100",
-  "type": "octoprint",
-  "api_key": "YOUR_API_KEY",
-  "filename": "my_print.gcode",
-  "gcode": "G28\nG1 X100 Y100 Z10 F3000\n...",
-  "print": true
+  "tool_name": "get_scene_info",
+  "arguments": { "user_prompt": "Inspect the scene before preparing a print." }
 }
 ```
 
-For larger files, pass a local path instead. If `filename` is omitted, the printer filename defaults to the basename of `gcode_path`.
+#### blender_mcp_edit_model
+
+Import an STL into Blender, apply ordered edits, and export a new STL. Supported operations are `decimate:<ratio>` (greater than 0, up to 1), `remesh:<voxel size>` (positive, in STL units), and `boolean_union:<STL path>`. Use `blender_mcp_call` for anything else.
 
 ```json
 {
-  "host": "192.168.1.100",
-  "type": "klipper",
-  "api_key": "YOUR_API_KEY",
-  "gcode_path": "/path/to/my_print.gcode",
-  "print": true
+  "stl_path": "/path/to/model.stl",
+  "output_path": "/path/to/model-edited.stl",
+  "operations": ["decimate:0.5"],
+  "user_prompt": "Reduce the triangle count for printing.",
+  "execute": false
 }
 ```
 
-For Bambu printers, uploads to the `gcodes` directory via FTP. Cannot start print automatically.
+- The default (`execute: false`) validates the request and returns the plan and generated Python without launching Blender. Set `execute: true` to apply it, reusing the preview's `output_path`.
+- Omitting `output_path` selects a unique `model-edited-<id>.stl` beside the input. Existing input and output files are never overwritten.
+- The edit requires Object Mode, preserves existing scene objects and selection, and publishes the new STL only after checking a matching export receipt and a valid, finite triangle mesh. Binary STLs up to 256 MiB are validated in small chunks; ASCII STLs are limited to 4 MiB.
+- Requests have connection, discovery, and call deadlines (`BLENDER_MCP_TIMEOUT_MS`, default 120000) that also cover file validation. Interrupted edits are never replayed; inspect Blender before retrying, because an edit may already have started.
+- A valid STL is not proof of printability. Inspect the result before slicing.
 
-#### start_print
-
-Start printing a file that is already on the printer.
-
-```json
-{
-  "host": "192.168.1.100",
-  "type": "octoprint",
-  "api_key": "YOUR_API_KEY",
-  "filename": "my_print.gcode"
-}
-```
-
-**Not recommended for Bambu printers.** Use `print_3mf` for Bambu `.3mf` files.
-
-#### cancel_print
-
-Cancel the current print job.
-
-```json
-{
-  "host": "192.168.1.100",
-  "type": "octoprint",
-  "api_key": "YOUR_API_KEY"
-}
-```
-
-For Bambu printers, sends the `stop_print` command via MQTT.
-
-#### set_printer_temperature
-
-Set the temperature of a printer component.
-
-```json
-{
-  "host": "192.168.1.100",
-  "type": "octoprint",
-  "api_key": "YOUR_API_KEY",
-  "component": "extruder",
-  "temperature": 200
-}
-```
-
-For Bambu printers, this dispatches firmware G-code temperature commands (`M104` for nozzle, `M140` for bed) over MQTT.
+Legacy `BLENDER_MCP_BRIDGE_COMMAND` shell commands remain supported when no standard command is configured. They receive JSON on stdin (`modelPath`, `operations`, `source`, and `stlPath`) and the same JSON in `MCP_BLENDER_PAYLOAD`, and their results report `output_verified: false`. A per-call `bridge_command` requires `MCP_ALLOW_EXECUTABLE_ARG=1`.
 
 </details>
 
-<details open>
-<summary>Click to expand Bambu-Specific Tools</summary>
-
-### Bambu-Specific Tools
-
-#### check_fulu_orca_setup
-
-Inspects the FULU OrcaSlicer-bambulab executable, platform runtime payload, setup commands, and optional BambuNetwork bridge probe.
-
-The `bridge_command` shown below requires `MCP_ALLOW_EXECUTABLE_ARG=1`; otherwise it is read from `FULU_BAMBU_BRIDGE_COMMAND`. See [Check The Setup Through MCP](#check-the-setup-through-mcp).
-
-```json
-{
-  "platform": "darwin",
-  "slicer_path": "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
-  "plugin_dir": "/Applications/OrcaSlicer.app/Contents/MacOS",
-  "run_bridge_probe": true,
-  "bridge_command": "\"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper\" \"$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host\""
-}
-```
-
-#### fulu_bambu_network_rpc
-
-Calls one FULU BambuNetwork bridge JSON RPC method. Read-only methods such as `bridge.handshake`, `bridge.runtime_info`, and `net.get_user_print_info` are allowed by default. Methods that can mutate account, printer, cloud, or print state require `allow_mutating_method=true`; FULU print methods also require `bambu_model`.
-
-```json
-{
-  "method": "bridge.handshake",
-  "bridge_command": "\"/Applications/OrcaSlicer.app/Contents/MacOS/pjarczak-bambu-linux-host-wrapper\" \"$HOME/Library/Application Support/OrcaSlicer/macos-bridge/runtime/pjarczak_bambu_linux_host\""
-}
-```
-
-#### print_3mf
-
-Uploads a sliced `.3mf` file to a Bambu printer via FTP and initiates the print job via an MQTT command. If the 3MF has no embedded plate G-code and a project slicer is configured, the server can auto-slice it first with FULU OrcaSlicer-bambulab or Bambu Studio. Allows overriding some print parameters like AMS mapping.
-
-**`bambu_model` is required** -- it ensures the slicer generates G-code for the correct printer. Using the wrong model can cause the bed to crash into the nozzle and damage the printer. If not provided in the tool call and `BAMBU_MODEL` is not set in the environment, the server will ask interactively via MCP elicitation (if supported by your client) or return a clear error.
-
-```json
-{
-  "three_mf_path": "/path/to/your_model.3mf",
-  "bambu_model": "p1s",
-  "bed_type": "textured_plate",
-  "host": "your_bambu_ip",
-  "bambu_serial": "YOUR_SERIAL",
-  "bambu_token": "YOUR_TOKEN",
-  "slicer_type": "orcaslicer-bambulab",
-  "slicer_path": "/path/to/FULU/OrcaSlicer",
-  "use_ams": true,
-  "ams_mapping": [0, 1, 2, 3],
-  "bed_leveling": true,
-  "flow_calibration": false,
-  "vibration_calibration": false,
-  "timelapse": false
-}
-```
-
-**Note:** Overriding slicer settings like layer height or temperature via this tool is not supported by the printer's MQTT command. Apply those changes before generating the `.3mf` file.
-
 </details>
+
+<details>
+<summary><strong>Available Resources</strong></summary>
 
 ## Available Resources
 
+Resources follow the MCP resource protocol. They use the configured `PRINTER_TYPE` and credentials; the host segment selects the printer address.
+
+- `printer://{host}/status`: the printer's current status, as returned by `get_printer_status`
+- `printer://{host}/files`: the file list, as returned by `list_printer_files`
+- `printer://{host}/file/{filename}`: details for one file. On Bambu printers this only reports whether the file exists.
+
+For example, `printer://192.168.1.100/status` reads the status of the printer at that address.
+
+</details>
+
 <details>
-<summary>Click to expand Printer Resources</summary>
+<summary><strong>Printer Limitations</strong></summary>
 
-### Printer Resources
+## Printer Limitations
 
-- `printer://{host}/status` - Current status of the 3D printer (limited for Bambu currently)
-- `printer://{host}/files` - List of files available on the 3D printer (FTP for Bambu)
-- `printer://{host}/file/{filename}` - Content of a specific G-code file (checks existence only for Bambu)
+1. **Status depth varies by backend.** Bambu status includes progress, layers, and time remaining. OctoPrint status comes from `/api/printer` (state and temperatures, not job progress). Klipper status comes from Moonraker's `/printer/info`, which reports the host state but not job progress or temperatures. Duet, Repetier, and Creality responses have not been verified on hardware.
+2. **Cancel, but no pause.** There is no pause or resume tool. `cancel_print` stops the job.
+3. **Plain HTTP for most backends.** OctoPrint, Klipper, Duet, Repetier, and Creality adapters connect over `http://`. The Prusa adapter uses HTTPS for Prusa Connect, an `https://` host, or port 443.
+4. **Klipper and Duet send no credentials.** Moonraker must trust the MCP host, and a password-protected Duet cannot be reached yet.
+5. **Command sent is not print finished.** A success response means the printer or its host accepted the request. Check status, and the printer itself, before you walk away.
+6. **Bambu prints need a sliced project and the right model.** `print_3mf` needs a `.3mf` with `Metadata/plate_<n>.gcode`, uploads it to `cache/`, and starts plate 1. Print settings such as layer height and temperatures cannot be changed at print time. `start_print` handles plain `.gcode` files only.
+7. **Bambu AMS mapping is simple.** `ams_mapping` values are sorted and padded to five entries; real behavior still depends on firmware, loaded filament, and the project's metadata. For AMS inventory and color matching, see [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).
+8. **Bambu temperatures go through G-code.** Temperature targets are sent as `M104` or `M140` over MQTT, so the printer's firmware and current state decide whether they apply.
+9. **Bambu networking assumes a trusted LAN.** MQTT and FTPS use the printer's self-signed certificate. Uploads use TLS 1.2 with session reuse; confirmation on the X1C firmware reported in [#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22) is still outstanding.
 
-</details>
-
-<details open>
-<summary>Click to expand Bambu Preset Resources</summary>
-
-### Bambu Preset Resources
-
-If the `BAMBU_STUDIO_CONFIG_PATH` environment variable is set to your Bambu Studio user settings directory, you can read your saved presets.
-
-- `preset://bambu/machine/{preset_name}` - Reads a machine preset file (e.g., `Bambu Lab P1S 0.4 nozzle.json`)
-- `preset://bambu/filament/{preset_name}` - Reads a filament preset file (e.g., `Generic PLA.json`)
-- `preset://bambu/process/{preset_name}` - Reads a process preset file (e.g., `0.20mm Standard @BBL P1S.json`)
-
-**Example Usage:**
-"Read the content of my Bambu process preset named '0.16mm Optimal @BBL P1S'"
-(Claude would call ReadResource with `preset://bambu/process/0.16mm%20Optimal%20%40BBL%20P1S`)
+<!-- lead: sync after safety + blender integration -->
 
 </details>
 
-## Example Commands for Claude
+<details>
+<summary><strong>General Limitations and Considerations</strong></summary>
 
-Here are some example commands you can give to Claude after connecting the MCP server:
+## General Limitations and Considerations
 
-### Printer Control
-- "What's the current status of my 3D printer?"
-- "Show me the list of files on my printer."
-- "Upload this G-code to my printer: [G-code content]"
-- "Start printing the file named 'benchy.gcode'."
-- "Cancel the current print job."
-- "Set the extruder temperature to 200°C."
-- "Set the bed temperature to 60°C."
+### Memory usage
 
-### STL Manipulation and Printing
-- "Take this STL file and extend the base by 2 inches, then send to slicer and queue up in my printer."
-- "Extend the base of model.stl by 1.5 inches."
-- "Scale this STL file by 150% uniformly."
-- "Scale model.stl to be twice as wide but keep the same height."
-- "Rotate this model 90 degrees around the Z axis."
-- "Move this STL model up by 5mm to create a gap underneath."
-- "Can you modify just the top part of this model to make it 20% larger?"
-- "Analyze this STL file and tell me its dimensions and details."
-- "Generate a visualization of this STL file so I can see what it looks like."
-- "Create SVG visualizations of my model from different angles."
-- "Make the base of this model wider without changing its height."
-- "Slice the modified STL file using PrusaSlicer."
-- "Confirm that the temperatures in the G-code are 200°C for the extruder and 60°C for the bed."
-- "Process this STL file, make the base 2 inches longer, slice it, and start printing, but confirm the temperatures first."
-- "Print `~/Downloads/my_model.3mf` on the Bambu printer."
-- "Upload `~/Desktop/calibration_cube.3mf` to the Bambu printer using AMS slots 0 and 2, and turn off bed leveling."
-- "Cancel the print job on my Bambu P1S."
-- "What are the settings in my Bambu filament preset 'Generic PETG'?"
-- "Show me my Bambu process presets."
+- STL tools load the whole mesh into memory as Three.js geometry. Files over about 10 MB can use several hundred MB of RAM.
+- Running several operations in a row on large files can build up memory between garbage collection cycles.
+- There is no built-in memory cap. On constrained systems, avoid processing several large files at once.
 
-## Bambu Lab Printer Limitations
+### STL manipulation limitations
 
-Due to the nature of the Bambu Lab printer API, there are some limitations:
+- `lay_flat` looks for the largest flat face; results on organic or rounded models can be unpredictable.
+- `extend_stl_base` adds new geometry beneath the model. Complex or non-planar undersides can produce gaps or intersections at the join, so inspect the result.
+- `merge_vertices` with a large tolerance can change the model's shape. The 0.01 mm default is safe for most models.
+- `modify_stl_section` works best on simple geometry. Non-manifold meshes (holes, overlapping faces, internal geometry) can produce unexpected results for any transformation; repair them first in your slicer or a mesh tool.
 
-1. **Printable 3MF requirement:** `print_3mf` ultimately needs a sliced 3MF that includes at least one `Metadata/plate_<n>.gcode` entry so the server can compute MD5 and start the job correctly. Unsliced 3MF files can be auto-sliced first when `SLICER_TYPE=orcaslicer-bambulab` or `SLICER_TYPE=bambustudio` is configured.
+### Visualization limitations
 
-2. **AMS behavior caveat:** AMS mapping is passed through the MQTT project-file command, but real behavior still depends on printer firmware, loaded filament, and the sliced project's metadata.
+- `generate_stl_visualization` produces a simplified schematic, not a true 3D render, and very detailed models may lose detail.
 
-3. **Temperature control path:** Temperature updates are implemented through G-code command dispatch (`M104`/`M140`) over MQTT, so effective behavior still depends on printer firmware acceptance and current printer state.
+### Performance considerations
 
-4. **File transfer channel:** Uploads use Bambu's FTPS path (port 990) directly through `basic-ftp` with implicit TLS 1.2 on both channels, allowing the data connection to reuse the control session. TLS options also explicitly preserve the printer host identity on the data connection, fixing [Node session binding](https://github.com/nodejs/node/issues/64402) on current Node 22/24. TLS 1.2 avoids additional TLS 1.3 session-ticket timing differences. The compatibility path is tested against a local FTPS server; confirmation on the reporting X1C firmware is still needed. Some read/list operations still use `bambu-js` helpers.
+- Slicing can take from seconds to several minutes, depending on the model and your CPU. Slicer runs time out after `SLICER_TIMEOUT_MS` (10 minutes by default).
+- Large uploads depend on your network and the printer's storage speed.
+- Bambu MQTT connections are reused. If a printer restarts or the network drops, the next call reconnects.
 
-5. **Direct start path scope:** `startJob` currently targets `.gcode` files on printer storage; `.3mf` jobs should be initiated through `print_3mf` so metadata and plate selection are handled.
+</details>
 
-6. **Status consistency:** Status reads force a `pushall` refresh when possible, but complete real-time, event-stream status semantics across all Bambu models still need deeper hardening.
+<details>
+<summary><strong>MCP Safety Notes</strong></summary>
 
-7. **FULU BambuNetwork bridge scope:** The FULU bridge exposes BambuNetwork functionality through its own runtime and RPC protocol. This MCP can inspect/probe that runtime and issue guarded bridge RPC calls, but local `print_3mf` still uses the server's explicit local MQTT/FTPS path unless a future change maps a complete FULU cloud-print payload safely.
+## MCP Safety Notes
 
-## Limitations and Considerations
+Prompt injection is an open problem for tool-using agents. A downloaded model's description, a README inside an archive, 3MF metadata, or a web page can all contain instructions aimed at your agent. Practical mitigations:
 
-### Memory Usage
-- **Large STL Files**: Processing large or complex STL files can consume significant memory. The entire STL geometry is loaded into memory during operations.
-- **Multiple Operations**: Running multiple STL operations in sequence (especially on large files) may cause memory to accumulate if garbage collection doesn't keep up.
-- **MCP Environment**: Since this runs as an MCP server, be aware that Claude's MCP environment has memory constraints. Complex operations on very large STL files may cause out-of-memory issues.
+- Treat tool output and downloaded files as untrusted input.
+- Keep printer keys and access codes in server configuration, with the least privilege your printer software allows.
+- Keep per-call executable selectors off. Slicer, bridge, and Blender commands come from server configuration unless `MCP_ALLOW_EXECUTABLE_ARG=1` is set.
+- Confirm prints yourself. Many MCP clients can ask before each tool call; keep that on for tools that start prints or change temperatures.
+- Run the streamable HTTP transport on a trusted network. It binds to `127.0.0.1` by default and has no built-in authentication.
+- Set `BAMBU_MODEL` correctly and never substitute a similar model.
 
-### STL Manipulation Limitations
-- **Section Modification**: The section-specific modification feature works best on simpler geometries. Complex or non-manifold meshes may produce unexpected results.
-- **Base Extension**: The base extension algorithm works by adding a new geometry underneath the model. For models with complex undersides, results may not be perfect.
-- **Error Handling**: While we've added robust error handling, some edge cases in complex STL files might still cause issues.
+</details>
 
-### Visualization Limitations
-- **SVG Representation**: The SVG visualization is a simplified schematic representation, not a true 3D render.
-- **Complex Models**: For very complex models, the visualization may not accurately represent all details.
-
-### Performance Considerations
-- **Slicing Operations**: External slicer processes can be CPU-intensive and may take considerable time for complex models.
-- **Progress Reporting**: For large files, progress updates may appear to stall at certain processing stages.
-
-### Testing Recommendations
-- Start with smaller STL files (< 10MB) to test functionality
-- Monitor memory usage when processing large files
-- Test modifications on simple geometries before attempting complex ones
-- Consider running on a system with at least 4GB of available RAM for larger operations
-
-## Appendix: MCP Safety Notes
-
-See [Recommended: use with codemode-mcp](#recommended-use-with-codemode-mcp) for reducing token overhead with large tool surfaces.
-
-### Prompt Injection: Risks and Mitigations
-
-Prompt injection is an open problem for tool-using agents. Practical mitigations:
-
-- Least-privilege credentials and short-lived tokens.
-- Strict schema validation and explicit allowlists for actions/hosts.
-- Human confirmation gates for destructive operations.
-- Execution sandboxing with resource/time limits.
-- Treat tool output as untrusted input by default.
-
-## Badges
-
-| Badge | Description |
-|-------|-------------|
-| [![npm version](https://img.shields.io/npm/v/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server) | The current version of the package on npm |
-| [![License: GPL-2.0](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html) | This project is licensed under GPL-2.0 |
-| [![TypeScript](https://img.shields.io/badge/TypeScript-4.9%2B-blue)](https://www.typescriptlang.org/) | This project is written in TypeScript 4.9+ |
-| [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/DMontgomery40/mcp-3D-printer-server/graphs/commit-activity) | This project is actively maintained |
-| [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://makeapullrequest.com) | We welcome contributions via Pull Requests |
-| [![Node.js Version](https://img.shields.io/badge/node-%3E%3D%2018.0.0-green.svg)](https://nodejs.org/en/download/) | Requires Node.js 18.0.0 or higher |
-| [![Downloads](https://img.shields.io/npm/dm/mcp-3d-printer-server.svg)](https://www.npmjs.com/package/mcp-3d-printer-server) | Number of downloads per month from npm |
-| [![GitHub stars](https://img.shields.io/github/stars/dmontgomery40/mcp-3d-printer-server.svg?style=social&label=Star)](https://github.com/DMontgomery40/mcp-3D-printer-server) | Number of GitHub stars this project has received |
+<details>
+<summary><strong>License</strong></summary>
 
 ## License
 
-GPL-2.0
+GPL-2.0. See [LICENSE](./LICENSE) for the full text.
+
+</details>
+
+<details>
+<summary><strong>Acknowledgements</strong></summary>
+
+## Acknowledgements
+
+Thank you to the **[FULU Foundation](https://www.fulu.org/), [Louis Rossmann](https://www.youtube.com/@rossmanngroup), and the [OrcaSlicer-bambulab community](https://github.com/FULU-Foundation/OrcaSlicer-bambulab)** for advancing user choice, repair rights, and interoperable tools.
+
+Bambu Lab support builds on community protocol research, including [OpenBambuAPI](https://github.com/Doridian/OpenBambuAPI). The Bambu-only fork, [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp), shares its Blender MCP integration and FTPS fixes with this project.
+
+This project is listed in the [Glama MCP server directory](https://glama.ai/mcp/servers/7f6v2enbgk). See [CONTRIBUTORS.md](./CONTRIBUTORS.md) for the people whose code, reports, and printer testing shaped it.
+
+</details>
