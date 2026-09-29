@@ -1032,8 +1032,11 @@ export class STLManipulator extends EventEmitter {
         try {
           if (orcaProfiles.settingsProfiles.length > 1) {
             throw new Error(
-              `slicer_profile (or SLICER_PROFILE) lists ${orcaProfiles.settingsProfiles.length} settings files. Bambu-compatible CLI slicing ` +
-              'takes one process profile; the machine preset comes from bambu_model and nozzle_diameter.'
+              `slicer_profile (or SLICER_PROFILE) lists ${orcaProfiles.settingsProfiles.length} settings files, but Bambu-compatible CLI slicing ` +
+              'takes one process profile. Set slicer_profile/SLICER_PROFILE to a process profile only (or leave it empty for the ' +
+              "preset's default process); the machine preset comes from bambu_model/BAMBU_MODEL and nozzle_diameter/NOZZLE_DIAMETER. " +
+              'Pass filaments with filament_profile/load_filaments. For a non-Bambu printer, use slicer_type orcaslicer without bambu_model ' +
+              'to keep the machine;process|filament format.'
             );
           }
           const options: BambuSliceOptions = { ...bambuOptions };

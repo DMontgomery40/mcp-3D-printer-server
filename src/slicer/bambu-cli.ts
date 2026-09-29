@@ -225,7 +225,10 @@ export class BambuCliProfilePreparer {
 
     if (slicerProfile) {
       if (!fs.existsSync(slicerProfile)) {
-        throw new Error(`Slicer process profile not found: ${slicerProfile} (from slicer_profile, a template, or SLICER_PROFILE).`);
+        throw new Error(
+          `Slicer process profile not found: ${slicerProfile} (from slicer_profile, a template, or SLICER_PROFILE). ` +
+          "Fix the path, or leave slicer_profile and SLICER_PROFILE empty to use the machine preset's default process."
+        );
       }
       let parsedProfile: any = null;
       try {

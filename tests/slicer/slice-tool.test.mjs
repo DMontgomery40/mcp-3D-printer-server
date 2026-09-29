@@ -183,7 +183,7 @@ test("slice_stl preparation failures stop before the slicer and give slicer-spec
   await expectPreparationFailure({ bambu_model: "x9000" }, /Invalid bambu_model/);
   // A machine selection alone cannot replace the machine preset.
   const machineAndProcess = path.join(install.root, "machine.json") + ";" + path.join(install.root, "process.json");
-  await expectPreparationFailure({ bambu_model: "p1s", slicer_profile: machineAndProcess }, /takes one process profile/);
+  await expectPreparationFailure({ bambu_model: "p1s", slicer_profile: machineAndProcess }, /takes one process profile\. Set slicer_profile\/SLICER_PROFILE to a process profile only/);
   // A missing process profile fails closed instead of falling back to defaults.
   await expectPreparationFailure({ bambu_model: "p1s", slicer_profile: path.join(install.root, "missing.json") }, /process profile not found/);
   // A missing filament keeps its slot rather than silently shifting.
@@ -385,6 +385,43 @@ test("machine settings inside a template or process profile never replace the se
     }
   }
   assert.deepEqual(JSON.parse(await fs.readFile(standaloneProcess, "utf8")).machine_start_gcode, "; FOREIGN STANDALONE", "the caller's file is not modified");
+});
+
+test("PrusaSlicer, Slic3r, and Cura keep their G-code paths and report failures", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "generic-slicer-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "fake-slicer");
+  const capture = path.join(root, "args.json");
+  const modeFile = path.join(root, "mode.txt");
+  await fs.writeFile(executable, `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args));
+if (fs.existsSync(${JSON.stringify(modeFile)})) { console.log("Error: unknown option in profile.ini"); process.exit(3); }
+const flag = args.includes("--output") ? "--output" : "-o";
+fs.writeFileSync(args[args.indexOf(flag) + 1], "; generic gcode\\n");
+`, { mode: 0o755 });
+  const profile = path.join(root, "profile.ini");
+  await fs.writeFile(profile, "layer_height = 0.2\n");
+  const { call, tempDir } = await startServer(t, { root, executable }, { SLICER_TYPE: "prusaslicer" });
+
+  for (const slicerType of ["prusaslicer", "slic3r", "cura"]) {
+    const result = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: slicerType, slicer_profile: profile });
+    assert.equal(result.isError, undefined, `${slicerType}: ${text(result)}`);
+    assert.equal(text(result), path.join(tempDir, "sample_cube.gcode"));
+    assert.equal(await fs.readFile(text(result), "utf8"), "; generic gcode\n");
+    const args = JSON.parse(await fs.readFile(capture, "utf8"));
+    assert.equal(args.includes("--load-settings"), false, `${slicerType} must not receive Bambu CLI flags`);
+    assert.ok(args.includes(profile), `${slicerType} receives its profile unchanged`);
+  }
+
+  await fs.writeFile(modeFile, "fail");
+  const failed = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", slicer_profile: profile });
+  assert.equal(failed.isError, true);
+  assert.match(text(failed), /exited with code 3/);
+  assert.match(text(failed), /unknown option in profile\.ini/);
+  assert.doesNotMatch(text(failed), /printer connectivity/i);
+  assert.equal(existsSync(path.join(tempDir, "sample_cube.gcode")), false, "a failed run cannot return the previous G-code");
 });
 
 test("optional: installed BambuStudio slices P1S 0.4 into a 3MF with P1S plate G-code", async (t) => {
