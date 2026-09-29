@@ -8,7 +8,7 @@ The README provides the copy-and-paste setup request. Use this reference for exa
 
 ### Prerequisites
 
-- Node.js 24 (the version used by CI and the Docker image)
+- Node.js 24, recommended (the package supports Node.js 18 or later, CI tests 18 through 24, and the Docker image uses 24)
 - npm
 - **A slicer** *(only needed to slice)*: PrusaSlicer, OrcaSlicer, [FULU OrcaSlicer-bambulab](https://github.com/FULU-Foundation/OrcaSlicer-bambulab), Bambu Studio, Slic3r, or CuraEngine. A file that is already sliced can be uploaded and printed without a slicer on the MCP host. See the [slicing guide](./SLICING.md).
 - **Blender with a Blender MCP server** *(optional)*: only for the `blender_mcp_*` tools. See [Blender MCP](#blender-mcp-optional).
@@ -55,8 +55,8 @@ npm link
 |---|---|---|---|---|
 | `bambu` | Bambu Lab | MQTT over TLS on port 8883, FTPS on port 990 | `BAMBU_SERIAL`, `BAMBU_TOKEN` (LAN access code), `BAMBU_MODEL` | **Most tested.** Maintainer hardware testing, shared with the Bambu-only fork. The FTPS fix for [#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22) is tested against a local FTPS server; confirmation on the reporter's X1C is outstanding. |
 | `octoprint` | OctoPrint | HTTP REST API, port 80 on OctoPi | `API_KEY`, sent as `X-Api-Key` | **Community-reported.** Used against a real OctoPrint instance in [#4](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/4). |
-| `klipper` | Klipper through Moonraker | HTTP API, usually port 7125 | None sent; Moonraker must trust the MCP host | **Community-reported.** Used with a Creality K1 Max through Moonraker in [#16](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/16). |
-| `prusa` | PrusaLink or Prusa Connect | HTTP for local PrusaLink, HTTPS for `connect.prusa3d.com` or port 443 | `API_KEY`, sent as `X-Api-Key` and as a bearer token | **Community-reported.** PrusaLink 0.8.1 status fixed after [#11](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/11); Prusa Connect setup discussed in [#9](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/9). |
+| `klipper` | Klipper (Moonraker) | HTTP API, usually port 7125 | None sent; Moonraker must trust the MCP host | **Community-reported.** Used with a Creality K1 Max through Moonraker in [#16](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/16). |
+| `prusa` | PrusaLink / Prusa Connect | HTTP for local PrusaLink, HTTPS for `connect.prusa3d.com` or port 443 | `API_KEY`, sent as `X-Api-Key` and as a bearer token | **Community-reported.** PrusaLink 0.8.1 status fixed after [#11](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/11); Prusa Connect setup discussed in [#9](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/9). |
 | `duet` | Duet | HTTP, port 80 | None sent | **Unverified.** No hardware reports yet. |
 | `repetier` | Repetier-Server | HTTP, usually port 3344 | `API_KEY`, sent as the `apikey` query parameter | **Unverified.** No hardware reports yet. |
 | `creality` | Creality | HTTP, port 80 | `API_KEY`, sent as a bearer token | **Unverified.** No hardware reports yet. |

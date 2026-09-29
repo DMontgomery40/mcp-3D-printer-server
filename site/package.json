@@ -1,0 +1,19 @@
+{
+  "name": "mcp-3d-printer-server-site",
+  "private": true,
+  "description": "GitHub Pages documentation site generated from the repository README and docs.",
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-docs.mjs",
+    "dev": "node scripts/sync-docs.mjs && vitepress dev",
+    "build": "node scripts/sync-docs.mjs && vitepress build",
+    "preview": "vitepress preview",
+    "social-card": "node scripts/social-card.mjs"
+  },
+  "devDependencies": {
+    "@fontsource-variable/archivo": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "github-slugger": "2.0.0",
+    "vitepress": "1.6.4"
+  }
+}
