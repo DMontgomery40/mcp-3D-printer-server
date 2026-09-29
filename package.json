@@ -11,10 +11,11 @@
         "start:http": "MCP_TRANSPORT=streamable-http node dist/index.js",
         "dev": "nodemon src/index.ts --exec \"npm run build && npm start\"",
         "build": "tsc",
-        "test": "npm run build && node dist/test/stl-manipulator-test.js && node --test tests/*.test.mjs tests/slicer/*.test.mjs",
+        "test": "npm run build && node dist/test/stl-manipulator-test.js && node --test tests/*.test.mjs tests/slicer/*.test.mjs tests/safety/*.test.mjs",
         "inspect": "npm run build && npx @modelcontextprotocol/inspector dist/index.js",
         "prepack": "npm run build",
-        "test:package": "node scripts/test-package.mjs"
+        "test:package": "node scripts/test-package.mjs",
+        "test:blender-live": "npm run build && node scripts/blender-live-check.mjs"
     },
     "bin": {
         "mcp-3d-printer-server": "./dist/index.js",
@@ -31,6 +32,7 @@
         "dist/index.d.ts",
         "dist/index.js",
         "dist/printers",
+        "dist/safety",
         "dist/sse-server.d.ts",
         "dist/sse-server.js",
         "dist/slicer",
@@ -43,6 +45,7 @@
         "src/http-server.ts",
         "src/index.ts",
         "src/printers",
+        "src/safety",
         "src/sse-server.ts",
         "src/slicer",
         "src/stl",

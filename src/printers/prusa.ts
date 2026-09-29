@@ -1,5 +1,5 @@
 import { isAxiosError, type AxiosRequestConfig, type AxiosResponse } from "axios";
-import { PrinterImplementation } from "../types.js";
+import { GenericPrinterImplementation, type GenericPrinterState, type HeaterComponent } from "./generic-base.js";
 import fs from "fs";
 import FormData from "form-data";
 
@@ -8,7 +8,11 @@ type RequestCandidate = {
   data?: unknown;
 };
 
-export class PrusaImplementation extends PrinterImplementation {
+const PRUSALINK_READY_STATES = new Set(["IDLE", "READY", "FINISHED", "STOPPED"]);
+const OCTOPRINT_BLOCKING_FLAGS = ["printing", "paused", "pausing", "cancelling", "resuming", "finishing", "error", "closedOrError"];
+
+export class PrusaImplementation extends GenericPrinterImplementation {
+  protected readonly printerLabel = "Prusa";
   private buildAuthHeaders(apiKey: string): Record<string, string> {
     return {
       Accept: "application/json",
@@ -147,7 +151,40 @@ export class PrusaImplementation extends PrinterImplementation {
     return response.data;
   }
 
-  async uploadFile(
+  /**
+   * PrusaLink /api/v1/status printer.state, falling back to the legacy
+   * OctoPrint-compatible /api/printer flags. FINISHED and STOPPED are idle but
+   * may leave a part on the bed, so they require a human confirmation.
+   */
+  protected async readPrinterState(host: string, port: string, apiKey: string): Promise<GenericPrinterState> {
+    let response: AxiosResponse;
+    try {
+      response = await this.getWithFallback(host, port, apiKey, ["/api/v1/status", "/api/printer"]);
+    } catch (error) {
+      throw new Error(`Cannot read Prusa printer state; nothing was sent: ${(error as Error).message}`);
+    }
+    const data: any = response.data;
+    const v1State = data?.printer?.state;
+    if (typeof v1State === "string" && v1State) {
+      const state = v1State.toUpperCase();
+      const ready = PRUSALINK_READY_STATES.has(state);
+      return {
+        state,
+        ready,
+        reason: ready ? undefined : `printer.state is ${state}`,
+        finishedJob: ready && (state === "FINISHED" || state === "STOPPED") ? JSON.stringify([state, data?.job?.id ?? null]) : undefined,
+      };
+    }
+    const flags = data?.state?.flags;
+    if (flags && typeof flags === "object") {
+      const blocking = OCTOPRINT_BLOCKING_FLAGS.filter((flag) => flags[flag] === true);
+      if (flags.operational !== true) blocking.unshift("not operational");
+      return { state: String(data?.state?.text ?? "unknown"), ready: blocking.length === 0, reason: blocking.join(", ") || undefined };
+    }
+    throw new Error("Prusa did not report printer.state or state flags; cannot verify the printer is idle.");
+  }
+
+  protected async rawUploadFile(
     host: string,
     port: string,
     apiKey: string,
@@ -174,68 +211,74 @@ export class PrusaImplementation extends PrinterImplementation {
       }
     );
 
-    if (print) {
-      await this.startJob(host, port, apiKey, filename);
+    // Printing is started by the shared gate only after a fresh state recheck.
+    return response.data;
+  }
+
+  protected async rawStartJob(host: string, port: string, apiKey: string, filename: string) {
+    const response = await this.postWithFallback(host, port, apiKey, [
+      {
+        route: "/api/v1/job",
+        data: {
+          command: "start",
+          file: filename,
+        },
+      },
+      {
+        route: "/api/v1/job",
+        data: {
+          command: "start",
+          path: filename,
+        },
+      },
+      {
+        route: "/api/job",
+        data: {
+          command: "start",
+          file: filename,
+        },
+      },
+      {
+        route: "/api/job",
+        data: {
+          command: "start",
+          path: filename,
+        },
+      },
+    ]);
+
+    return response.data;
+  }
+
+  protected async rawCancelJob(host: string, port: string, apiKey: string) {
+    const response = await this.postWithFallback(host, port, apiKey, [
+      {
+        route: "/api/v1/job",
+        data: {
+          command: "cancel",
+        },
+      },
+      {
+        route: "/api/job",
+        data: {
+          command: "cancel",
+        },
+      },
+    ]);
+
+    return response.data;
+  }
+
+  protected heaterComponent(component: string): HeaterComponent | undefined {
+    const normalized = component.trim().toLowerCase();
+    if (normalized === "bed") return { heater: "bed", raw: "bed" };
+    if (normalized.startsWith("extruder") || normalized === "nozzle" || normalized === "tool0" || normalized === "tool") {
+      return { heater: "nozzle", raw: "nozzle" };
     }
-
-    return response.data;
+    return undefined;
   }
 
-  async startJob(host: string, port: string, apiKey: string, filename: string) {
-    const response = await this.postWithFallback(host, port, apiKey, [
-      {
-        route: "/api/v1/job",
-        data: {
-          command: "start",
-          file: filename,
-        },
-      },
-      {
-        route: "/api/v1/job",
-        data: {
-          command: "start",
-          path: filename,
-        },
-      },
-      {
-        route: "/api/job",
-        data: {
-          command: "start",
-          file: filename,
-        },
-      },
-      {
-        route: "/api/job",
-        data: {
-          command: "start",
-          path: filename,
-        },
-      },
-    ]);
-
-    return response.data;
-  }
-
-  async cancelJob(host: string, port: string, apiKey: string) {
-    const response = await this.postWithFallback(host, port, apiKey, [
-      {
-        route: "/api/v1/job",
-        data: {
-          command: "cancel",
-        },
-      },
-      {
-        route: "/api/job",
-        data: {
-          command: "cancel",
-        },
-      },
-    ]);
-
-    return response.data;
-  }
-
-  async setTemperature(
+  protected async rawSetTemperature(
     host: string,
     port: string,
     apiKey: string,
