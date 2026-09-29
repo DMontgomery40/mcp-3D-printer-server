@@ -19,7 +19,7 @@ Model ──► slicer GUI ──► sliced .gcode / .gcode.3mf ──► upload
 STL / 3MF ──► slice_stl ──► slicer CLI ──► .gcode (or sliced .3mf for Bambu) ──► upload_gcode / print_3mf
 ```
 
-Printing a file that is already sliced needs no slicer on the MCP host.
+Printing a file that is already sliced needs no slicer on the MCP host. Either way, every print start goes through the [print safety gate](./SETUP.md#print-and-heating-safety), including a human confirmation.
 
 ## Slicer types and aliases
 
@@ -29,7 +29,7 @@ Set `SLICER_TYPE` in the server environment, or pass `slicer_type` to a tool.
 |---|---|---|---|
 | `prusaslicer` | PrusaSlicer | G-code | `prusa` |
 | `slic3r` | Slic3r | G-code | |
-| `orcaslicer` | OrcaSlicer | G-code | `orca`, `orca-slicer` |
+| `orcaslicer` | OrcaSlicer | G-code, or a sliced Bambu `.3mf` when the call passes `bambu_model` | `orca`, `orca-slicer` |
 | `cura` | CuraEngine | G-code | `curaengine` |
 | `orcaslicer-bambulab` | [FULU OrcaSlicer-bambulab](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) | Sliced Bambu `.3mf` | `fulu-orca`, `fulu_orca`, `orca-studio`, `orca_studio`, `orcastudio`, `orca-bambulab`, `orca_bambulab`, `orcaslicer_bambulab` |
 | `bambustudio` | Bambu Studio | Sliced Bambu `.3mf` | `bambu-studio`, `bambu_studio` |
@@ -50,74 +50,79 @@ A per-call `slicer_path` is refused unless `MCP_ALLOW_EXECUTABLE_ARG=1`; see [ex
 
 ## Profiles
 
-`SLICER_PROFILE` (or the `slicer_profile` argument) and `FILAMENT_PROFILE` (or `filament_profile`) mean slightly different things for each slicer:
+`SLICER_PROFILE` (or the `slicer_profile` argument) and `FILAMENT_PROFILE` (or `filament_profile`) mean different things for each slicer:
 
-| Slicer | Command the server runs | `SLICER_PROFILE` | Filament profile |
-|---|---|---|---|
-| PrusaSlicer, Slic3r | `--slice --output <file>.gcode --load <profile> <model>` | One config file exported from the slicer (File > Export > Export Config), containing printer, print, and filament settings | Not used; include filament settings in the exported config |
-| OrcaSlicer | `--slice 0 --outputdir <dir>`, then each settings file as `--load-settings` and each filament as `--load-filaments` | Machine and process JSON files separated by `;`, optionally followed by a filament file (see below) | Loaded with `--load-filaments` |
-| CuraEngine | `slice -l <model> -o <file>.gcode [-j <profile>]` | A Cura definition JSON | Not used |
-| FULU OrcaSlicer-bambulab, Bambu Studio | `--slice 0 --export-3mf <file>_sliced.3mf --load-settings <preset> [--load-filaments <filament>] <model>` | Replaces the automatic machine preset; see below | Loaded with `--load-filaments` |
+| Slicer | `SLICER_PROFILE` | Filament profile |
+|---|---|---|
+| PrusaSlicer, Slic3r | One config file exported from the slicer (File > Export > Export Config), containing printer, print, and filament settings | Not used; include filament settings in the exported config |
+| Generic OrcaSlicer (no `bambu_model`) | Machine and process JSON files separated by `;`, optionally followed by a filament file (see below) | Loaded with `--load-filaments` |
+| CuraEngine | A Cura definition JSON | Not used |
+| Bambu Studio, FULU OrcaSlicer-bambulab, or OrcaSlicer with `bambu_model` | **One process profile only.** The machine preset always comes from the printer model and nozzle; a `machine;process` list is rejected with instructions | `;`-separated, in slot order, loaded with `--load-filaments` |
 
-For OrcaSlicer, a filament file can ride along in the profile setting after a pipe character:
+For generic OrcaSlicer, a filament file can ride along in the profile setting after a pipe character:
 
 ```env
 SLICER_PROFILE=/path/to/machine.json;/path/to/process.json|/path/to/filament.json
 ```
 
-OrcaSlicer writes `plate_1.gcode`; the server renames it after the input model and returns that path.
+Generic OrcaSlicer writes `plate_1.gcode`; the server renames it after the input model and returns that path. Do not use this form for Bambu Lab slicing: pass `bambu_model` (or use Bambu Studio or FULU OrcaSlicer-bambulab) and give only a process profile.
 
-### Bambu machine presets
+## Bambu-compatible slicing
 
-For FULU OrcaSlicer-bambulab and Bambu Studio, the server needs the printer model (`BAMBU_MODEL` or `bambu_model`, asked for through elicitation when missing) and loads that model's bundled machine preset:
+Bambu Studio, FULU OrcaSlicer-bambulab, and OrcaSlicer with `bambu_model` produce a sliced Bambu `.3mf`. Before the slicer runs, the server prepares the profiles itself:
 
-| `BAMBU_MODEL` | Machine preset (with `NOZZLE_DIAMETER`, default 0.4) |
-|---|---|
-| `p1s` | `Bambu Lab P1S 0.4 nozzle` |
-| `p1p` | `Bambu Lab P1P 0.4 nozzle` |
-| `x1c` | `Bambu Lab X1 Carbon 0.4 nozzle` |
-| `x1e` | `Bambu Lab X1E 0.4 nozzle` |
-| `a1` | `Bambu Lab A1 0.4 nozzle` |
-| `a1mini` | `Bambu Lab A1 mini 0.4 nozzle` |
-| `h2d` | `Bambu Lab H2D 0.4 nozzle` |
+1. **Machine preset.** It takes the model from `bambu_model` (or `BAMBU_MODEL`, asked for through elicitation when missing) and the nozzle from `nozzle_diameter` (or `NOZZLE_DIAMETER`, default 0.4), and finds the exact `<model> <diameter> nozzle` machine preset, such as `Bambu Lab P1S 0.4 nozzle`, in the selected installation's `BBL` profile tree. The tree is found from `SLICER_PATH`, or set with `BAMBU_PROFILES_ROOT` for AppImages and non-standard installs. A preset is never borrowed from another installation.
+2. **Resolution.** `inherits` and `include` chains are flattened, and the model's `cli_config.json` entry is validated. Custom process and filament parents are looked up in `BAMBU_SLICER_PROFILE_DIRS` (default: the slicers' user `system/BBL` directories), never machine presets.
+3. **Process and filaments.** `slicer_profile`, a template, or `BAMBU_TEMPLATE_3MF_PATH` supplies process settings. Machine settings carried by process, filament, or template files are dropped, so they cannot replace the selected preset's start G-code.
+4. **Checks.** Missing presets, wrong nozzle sizes, missing parents or includes, cycles, malformed profiles, missing process or filament files, and machine/process lists in `slicer_profile` all stop before the slicer runs.
+5. **Output.** The result must contain a nonempty `Metadata/plate_<n>.gcode`. A checksum-only archive, missing output, or a stale file from an earlier run is an error. Slicer failures report the exit code or signal, whether it timed out, the tails of stdout and stderr, and slicing-specific suggestions.
 
-The preset JSON is looked up in the slicer bundle's `Resources/profiles/BBL/machine` directory (or the equivalent `resources` directory on Linux). If it is missing, slicing stops with an error.
+Slicing accepts `p1s`, `p1p`, `p2s`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`, `h2s`, and `h2c` when the installed slicer has that preset. Printing accepts `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, and `h2d`.
 
-When you set `SLICER_PROFILE` for these slicers, it is loaded **instead of** the automatic machine preset. Make sure it is a settings file for your exact printer model and nozzle.
+`slice_stl` and `slice_with_template` also take `bed_type`, `load_filaments`, `load_filament_ids`, `filament_colours`, template selection, and the Bambu CLI placement and transform options (`orient`, `arrange`, `ensure_on_bed`, `repetitions`, `clone_objects`, `skip_objects`, `slice_plate`, `scale`, `rotate`, `rotate_x`, `rotate_y`, `uptodate`, `min_save`, `skip_modified_gcodes`, `enable_timelapse`, `allow_mix_temp`). See the [slicing tools reference](../README.md#slice_stl).
 
-<!-- lead: sync after safety + blender integration -->
+**Evidence.** Bambu Studio 02.01.01.52 sliced a P1S 0.4 nozzle job through this path, including a 9.7 MB refitted phone-case STL in Bambu TPU 95A HF (230 °C nozzle, 35 °C plate, about 1 h 38 min and 21 g); see the [Blender guide's worked example](./BLENDER.md#worked-example-refit-a-phone-case-for-a-new-phone). Before this change, Bambu Studio rejected the raw inherited P1S preset with exit 239 ("process not compatible with printer"). Other slicer versions and models have not been tested here.
+
+## Slicing templates
+
+A template is a saved `.3mf`, `.json`, or `.config` file whose slicer settings are reused as the process profile. Templates live in a local registry, `BAMBU_TEMPLATE_DIR` (default `~/Sync/bambu/templates`); every tool also accepts a `template_dir` override.
+
+- `save_template` copies a file into the registry under a name (default: the source filename).
+- `list_templates` lists the saved templates.
+- `get_slice_settings` shows a template's or file's layer height, infill, walls, supports, brim, bed, printer, and filaments without slicing.
+- `slice_with_template` slices with a named template. The machine preset still comes from `bambu_model` and `nozzle_diameter`, and an explicit `slicer_profile` in the call overrides the template.
+
+`slice_stl` accepts `template_3mf_path` or `template_name` too, and uses `BAMBU_TEMPLATE_3MF_PATH` as a default template when set.
 
 ## Printing what you sliced
 
-- **G-code (any backend):** `upload_gcode` with `gcode_path` and `print: true` uploads and starts it. Without `print`, the file is only uploaded; start it later with `start_print`. On Bambu printers, uploading with `print: true` or calling `start_print` requires the printer model.
-- **Sliced Bambu `.3mf`:** `print_3mf` uploads the project over FTPS and starts it over MQTT. It works only with `PRINTER_TYPE=bambu`.
-- **Check first:** `confirm_temperatures` reads the extruder and bed temperatures from a G-code file and compares them with the values you expect. It reports; it does not change the file.
+- **G-code (any backend):** `upload_gcode` with `gcode_path` and `print: true` inspects the exact file, checks the printer, asks a human to confirm, and starts it. Without `print`, the file is only uploaded. Printing needs a declared material: `; filament_type` in the G-code or the `material` argument.
+- **Sliced Bambu `.3mf`:** `print_3mf` inspects the selected plate, compares it with a fresh printer report, asks a human to confirm, then uploads the project over FTPS and starts it over MQTT. It works only with `PRINTER_TYPE=bambu`, and `bed_type` must match the plate's bed metadata.
+- **Check first:** `confirm_temperatures` reports every heater target in a G-code file (`S` and `R` forms, tool-addressed, RepRapFirmware `G10`/`M568`, and Klipper `SET_HEATER_TEMPERATURE`). An expected temperature matches only when it equals the file's highest target, returned as `peak`. It does not change the file.
 
 ### `print_3mf` auto-slicing
 
-If a `.3mf` passed to `print_3mf` has no plate G-code, the server tries to slice it first with the configured Bambu project slicer and your printer model's machine preset. If slicing fails, the error is logged and the original project still has no plate G-code, so `print_3mf` stops with an error before uploading anything. Export a sliced plate from the GUI (Path A) for the most predictable result.
+If a `.3mf` passed to `print_3mf` has no plate G-code, the server tries to slice it first with the configured Bambu-compatible slicer and your printer model's machine preset. If slicing fails, or the selected plate still has no G-code, `print_3mf` stops with an error and never uploads the original project. Export a sliced plate from the GUI (Path A) for the most predictable result.
 
-Layer height, temperatures, and other slicer settings are baked into the sliced file. Change them in the slicer and slice again; the printer's print command cannot override them.
+Layer height, temperatures, and other slicer settings are baked into the sliced file. Change them in the slicer and slice again; `print_3mf` accepts `layer_height`, `nozzle_temperature`, `bed_temperature`, and `support_enabled` but does not apply them.
 
 ### `process_and_print_stl`
 
-This one-call pipeline extends the model's base (`extension_inches`, converted at 25.4 mm per inch), slices it, and then:
+This one-call pipeline extends the model's base (`extension_inches`, converted at 25.4 mm per inch), slices it, and prints it through the same checked gate as `upload_gcode` and `print_3mf`, including the human confirmation. If you pass `extruder_temp` or `bed_temp`, each must equal the sliced job's highest target (`S` and `R` forms, every tool); otherwise nothing is uploaded. Pass `material` when the sliced G-code has no `filament_type` metadata. For a Bambu printer with a Bambu-compatible slicer, the sliced `.3mf` goes through the `print_3mf` checks.
 
-- For a G-code result, optionally compares `extruder_temp` and `bed_temp` with the G-code, then uploads the file and **starts printing immediately**. A temperature mismatch is logged as a warning; it does not stop the upload.
-- For a sliced Bambu `.3mf` on a Bambu printer, sends it through the same upload and print command as `print_3mf`.
-
-Use the separate `slice_stl`, `confirm_temperatures`, and `upload_gcode` steps when you want to inspect the result before the printer starts.
-
-<!-- lead: sync after safety + blender integration -->
+Use the separate `slice_stl`, `confirm_temperatures`, and `upload_gcode` steps when you want to inspect the sliced file before the print is offered for confirmation.
 
 ## Slicing in Docker
 
-The Docker image does not include a slicer, and a slicer installed on the host generally cannot run inside the container because of library and OS differences. To slice in a container, build a derived image that installs a Linux build of your slicer, and set `SLICER_PATH` to its path inside the container. See [Running with Docker](./SETUP.md#running-with-docker).
+The Docker image does not include a slicer, and a slicer installed on the host generally cannot run inside the container because of library and OS differences. To slice in a container, build a derived image that installs a Linux build of your slicer, set `SLICER_PATH` to its path inside the container, and set `BAMBU_PROFILES_ROOT` if its profile tree is not found automatically. See [Running with Docker](./SETUP.md#running-with-docker).
 
 ## Troubleshooting
 
 - **The slicer opens its GUI or hangs:** some slicers fall back to the GUI when the command line is incomplete. Configure a complete `SLICER_PROFILE` and check that `SLICER_PATH` points at the executable, not the app bundle folder.
 - **PrusaSlicer ignores my settings:** `SLICER_PROFILE` must be a single exported config file, not a folder of profiles.
-- **Bambu slicing cannot find the machine preset:** point `SLICER_PATH` at the executable inside a full FULU OrcaSlicer-bambulab or Bambu Studio install, or set `SLICER_PROFILE` to a machine settings file for your exact model.
+- **Bambu slicing cannot find the machine preset:** point `SLICER_PATH` at the executable inside a full Bambu Studio, OrcaSlicer, or FULU OrcaSlicer-bambulab install that includes your model and nozzle, or set `BAMBU_PROFILES_ROOT` to its profile tree. `SLICER_PROFILE` cannot supply a machine preset.
+- **`slicer_profile` is rejected for listing a machine preset:** on the Bambu-compatible path, pass only the process profile. The machine preset comes from `bambu_model` and `nozzle_diameter`.
+- **A custom process or filament profile's parent is missing:** add the directory holding it to `BAMBU_SLICER_PROFILE_DIRS`.
+- **The slice fails with an exit code:** read the reported output tails and suggestions. Bambu Studio's exit 239 means the process profile does not fit the printer preset.
 - **FULU OrcaSlicer-bambulab CLI crashes on macOS:** see [current FULU status](./FULU.md#current-status); Bambu Studio's CLI is a known-good alternative.
 - **Long slices time out:** raise `SLICER_TIMEOUT_MS`.

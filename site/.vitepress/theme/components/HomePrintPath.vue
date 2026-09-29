@@ -19,29 +19,32 @@ import { withBase } from 'vitepress'
           </p>
         </li>
         <li>
-          <h3>Check the temperatures</h3>
+          <h3>Check the file</h3>
           <p>
-            <code>confirm_temperatures</code> reads the extruder and bed targets from the G-code, so they can be
-            compared with the filament before anything is sent.
+            Before a print starts, the server inspects the exact G-code: every heater target is checked against
+            hardware and material ceilings, and the printer must be ready. <code>confirm_temperatures</code> shows
+            the peaks up front.
           </p>
         </li>
         <li>
-          <h3>Send it</h3>
+          <h3>Confirm it</h3>
           <p>
-            <code>upload_gcode</code> sends G-code to OctoPrint, Moonraker, PrusaLink, and the other HTTP backends.
-            Bambu Lab projects go through <code>print_3mf</code> over FTPS and MQTT.
+            You confirm the print through your MCP client. <code>upload_gcode</code> then sends it to OctoPrint,
+            Moonraker, PrusaLink, or another HTTP backend; Bambu Lab projects go through <code>print_3mf</code>
+            over FTPS and MQTT.
           </p>
         </li>
         <li>
           <h3>Start and check</h3>
           <p>
-            Start it with the upload or <code>start_print</code>. A sent command isn't a finished print, so check
-            status afterward; what status reports depends on the backend.
+            A sent command isn't a finished print, so check status afterward; what status reports depends on the
+            backend.
           </p>
         </li>
       </ol>
       <p class="print-path__more">
         <a class="home-link" :href="withBase('/guide/slicing')">Read the slicing guide</a>
+        <a class="home-link" :href="withBase('/guide/setup#print-and-heating-safety')">See the safety gate</a>
         <a class="home-link" :href="withBase('/guide/setup#choose-your-printer-backend')">Compare printer backends</a>
         <a class="home-link" :href="withBase('/reference/bambu-tools')">Print on Bambu Lab</a>
       </p>

@@ -20,10 +20,10 @@ BAMBU_MODEL=p1s
 
 Accepted aliases include `fulu_orca`, `fulu-orca`, `orca-studio`, and `orca_bambulab`. For Bambu printers, this is the default slicer when `SLICER_TYPE` is not set.
 
-- `slice_stl` runs the FULU/Orca project command line (`--slice 0 --export-3mf`) with your model's machine preset to produce a sliced Bambu 3MF.
-- `print_3mf` can auto-slice an unsliced 3MF through FULU OrcaSlicer-bambulab, then upload and start the sliced project through this server's local Bambu print path.
+- `slice_stl` runs the FULU/Orca project command line (`--slice 0 --export-3mf`) with your model and nozzle's machine preset, resolved from the FULU installation's own profile tree, to produce a sliced Bambu 3MF. `SLICER_PROFILE` is a process profile only; see [Bambu-compatible slicing](./SLICING.md#bambu-compatible-slicing).
+- `print_3mf` can auto-slice an unsliced 3MF through FULU OrcaSlicer-bambulab, then inspect, confirm, upload, and start the sliced project through this server's local Bambu print path. A failed slice never uploads the original.
 - `check_fulu_orca_setup` checks the FULU executable, the platform runtime payload, the setup commands, and optionally the BambuNetwork bridge handshake.
-- `fulu_bambu_network_rpc` calls the FULU bridge protocol for diagnostics and development.
+- `fulu_bambu_network_rpc` calls the FULU bridge protocol for diagnostics. Raw print methods are refused.
 
 What stays deliberately explicit:
 
@@ -109,9 +109,9 @@ The result reports missing payload files, the install and verify commands, the e
 
 `fulu_bambu_network_rpc` speaks FULU's bridge frame protocol: little-endian binary frames with JSON bodies, using methods such as `bridge.handshake`, `bridge.capabilities`, `bridge.runtime_info`, and `net.get_user_print_info`.
 
-- **Allowed by default:** `bridge.handshake`, `bridge.capabilities`, `bridge.runtime_info`, `bridge.ping`, `bridge.poll_events`, and `net.*` methods whose names begin with `is_`, `get_`, `build_`, `query_`, or `check_`.
-- **Everything else** can change account, printer, cloud, or print state, and requires `allow_mutating_method: true`.
-- **Print methods** (`net.start_print`, `net.start_local_print`, `net.start_local_print_with_record`, `net.start_send_gcode_to_sdcard`, `net.start_sdcard_print`) also require the Bambu printer model.
+- **Allowed by default:** `bridge.handshake`, `bridge.capabilities`, `bridge.runtime_info`, `bridge.ping`, `bridge.poll_events`, `ft.capabilities`, and `net.*` methods whose names begin with `is_`, `get_`, `build_`, `query_`, or `check_`.
+- **Agent and session setup** (`net.create_agent`, `net.start`, `net.init_log`, `net.set_config_dir`, `net.set_country_code`, `net.connect_server`, `net.change_user`) requires `allow_mutating_method: true`. These methods do not address a printer.
+- **Refused:** raw print methods (`net.start_print`, `net.start_local_print`, `net.start_local_print_with_record`, `net.start_send_gcode_to_sdcard`, `net.start_sdcard_print`), printer messages such as `net.send_message`, file transfers, and unknown methods. They would bypass the inspected print, heating, and printer-state gate. `allow_mutating_method` never enables them, and `bambu_model` is informational only. Print through `print_3mf`, which runs the full [safety gate](./SETUP.md#print-and-heating-safety).
 
 A safe diagnostic call:
 
@@ -121,22 +121,4 @@ A safe diagnostic call:
 }
 ```
 
-A mutating call has to say so explicitly:
-
-```json
-{
-  "method": "net.start_print",
-  "allow_mutating_method": true,
-  "bambu_model": "p1s",
-  "payload": {
-    "client_job_id": 1,
-    "params": {
-      "dev_id": "YOUR_PRINTER_ID"
-    }
-  }
-}
-```
-
-That second example is intentionally incomplete: a real BambuNetwork print call needs FULU's full print parameter payload. The point is that the server exposes the bridge without pretending a cloud print can be safely inferred from a local filename.
-
-<!-- lead: sync after safety + blender integration -->
+The server exposes the bridge for diagnostics without pretending a cloud print can be safely inferred from a local filename.

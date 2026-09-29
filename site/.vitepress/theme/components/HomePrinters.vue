@@ -48,10 +48,17 @@ const tiers = [
         <h3>It stops instead of guessing</h3>
         <ul>
           <li>
+            A person confirms every print start and heat-up, on every printer, through MCP elicitation. Clients that
+            can't ask are refused. Heater-off and cancel are never held up.
+          </li>
+          <li>
+            The exact G-code is inspected first. Every heater target has to fit hardware and material ceilings that
+            only the server's configuration can raise.
+          </li>
+          <li>
             Bambu print tools need your exact model, from <code>BAMBU_MODEL</code> or <code>bambu_model</code>.
             Without it they ask or stop, because G-code for the wrong model can damage hardware.
           </li>
-          <li>A Bambu project without sliced plate G-code stops with an error before anything is uploaded.</li>
           <li>
             Slicer, bridge, and Blender programs come from server configuration. A per-call path is refused unless
             you opt in.
@@ -61,8 +68,8 @@ const tiers = [
           </li>
         </ul>
         <p class="home-printers__guard-links">
+          <a class="home-link" :href="withBase('/guide/setup#print-and-heating-safety')">How the safety gate works</a>
           <a class="home-link" :href="withBase('/reference/limitations')">Read the limitations</a>
-          <a class="home-link" :href="withBase('/reference/safety')">Safety notes</a>
         </p>
       </div>
     </div>

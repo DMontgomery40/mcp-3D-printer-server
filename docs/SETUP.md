@@ -81,13 +81,22 @@ API_KEY=your_api_key              # OctoPrint, Repetier, Prusa, Creality
 # BAMBU_TOKEN=your_access_code    # LAN access code from the printer screen
 # BAMBU_MODEL=p1s                 # Required for Bambu print operations
 # BED_TYPE=textured_plate         # textured_plate, cool_plate, engineering_plate, hot_plate
-# NOZZLE_DIAMETER=0.4
+# NOZZLE_DIAMETER=0.4             # 0.2, 0.4, 0.6, or 0.8 for printing and heating
+
+# --- Print and heating safety (see "Print and heating safety" below) ---
+# PRINT_REQUIRE_CONFIRMATION=0    # Headless only: skip ordinary confirmations (all printers)
+# BAMBU_REQUIRE_CONFIRMATION=0    # Headless only: the same, for Bambu printers only
+# PRINTER_MAX_NOZZLE_TEMP=300     # Non-Bambu heater ceilings in °C (Bambu uses per-model limits)
+# PRINTER_MAX_BED_TEMP=120
+# PRINTER_MAX_CHAMBER_TEMP=60
 
 # --- Slicer (only for slice_stl, process_and_print_stl, and Bambu auto-slicing) ---
 # SLICER_TYPE=prusaslicer         # prusaslicer, slic3r, orcaslicer, orcaslicer-bambulab, bambustudio, cura
 # SLICER_PATH=/path/to/slicer/executable
-# SLICER_PROFILE=/path/to/profile
+# SLICER_PROFILE=/path/to/profile # Bambu-compatible slicers: a process profile only
 # FILAMENT_PROFILE=/path/to/filament.json
+# BAMBU_PROFILES_ROOT=            # Profile tree containing BBL/, if not found from SLICER_PATH
+# BAMBU_TEMPLATE_DIR=~/Sync/bambu/templates
 
 # --- MCP transport ---
 # MCP_TRANSPORT=stdio             # stdio (default) or streamable-http
@@ -111,14 +120,23 @@ API_KEY=your_api_key              # OctoPrint, Repetier, Prusa, Creality
 | `API_KEY` | | OctoPrint, Repetier, Prusa, Creality | Backend API key or token. Klipper and Duet adapters do not send one |
 | `BAMBU_SERIAL` | | Bambu | Printer serial number |
 | `BAMBU_TOKEN` | | Bambu | LAN access code shown on the printer |
-| `BAMBU_MODEL` | | **Bambu printing and Bambu slicing** | Printer model: `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`. **Required** for `print_3mf`, `start_print`, upload with `print: true`, Bambu project slicing, and FULU print RPC methods. If omitted and the MCP client supports elicitation, the server asks. It selects the slicer machine preset; it does not inspect or convert a file that is already sliced. |
-| `BED_TYPE` | `textured_plate` | No | Bambu bed plate: `textured_plate`, `cool_plate`, `engineering_plate`, `hot_plate` |
-| `NOZZLE_DIAMETER` | `0.4` | No | Nozzle diameter in mm, used to select the Bambu machine preset |
+| `BAMBU_MODEL` | | **Bambu printing and Bambu slicing** | Printer model: `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`. **Required** for `print_3mf`, `start_print`, upload with `print: true`, positive Bambu heating, and Bambu-compatible slicing. Slicing also accepts `p2s`, `h2s`, and `h2c` when the installed slicer has that preset. If omitted and the MCP client supports elicitation, the server asks. It selects the slicer machine preset and is checked against the live printer before printing. |
+| `BED_TYPE` | `textured_plate` | No | Bambu bed plate: `textured_plate`, `cool_plate`, `engineering_plate`, `hot_plate`. `print_3mf` requires it to match the sliced plate's bed metadata |
+| `NOZZLE_DIAMETER` | `0.4` | No | Nozzle diameter in mm. Selects the Bambu machine preset; printing and heating accept 0.2, 0.4, 0.6, or 0.8 and check it against the live printer |
+| `PRINT_REQUIRE_CONFIRMATION` | confirmation on | No | Only an explicit `0` skips the ordinary human confirmation before print starts and positive heating, on every printer type. The first print after a finished job still asks. See [print and heating safety](#print-and-heating-safety) |
+| `BAMBU_REQUIRE_CONFIRMATION` | confirmation on | No | Bambu-only form of `PRINT_REQUIRE_CONFIRMATION=0` |
+| `PRINTER_MAX_NOZZLE_TEMP` | `300` | No | Nozzle ceiling in °C for non-Bambu printers. Only the server environment can change it; an invalid value refuses printing and positive heating |
+| `PRINTER_MAX_BED_TEMP` | `120` | No | Bed ceiling in °C for non-Bambu printers |
+| `PRINTER_MAX_CHAMBER_TEMP` | `60` | No | Chamber ceiling in °C for non-Bambu printers |
 | `SLICER_TYPE` | `orcaslicer-bambulab` when `PRINTER_TYPE=bambu`, otherwise `prusaslicer` | No | `prusaslicer`, `slic3r`, `orcaslicer`, `orcaslicer-bambulab` (FULU), `bambustudio`, or `cura`. See [slicer aliases](./SLICING.md#slicer-types-and-aliases) |
 | `SLICER_PATH` | Common install paths for FULU/Orca and Bambu Studio; none for other slicers | To slice | Slicer executable. Per-call `slicer_path` requires `MCP_ALLOW_EXECUTABLE_ARG=1` |
-| `SLICER_PROFILE` | | No | Slicer profile or settings file; see the [slicing guide](./SLICING.md#profiles) |
-| `FILAMENT_PROFILE` | | No | Filament profile loaded with `--load-filaments`. Alias: `SLICER_FILAMENT_PROFILE` |
+| `SLICER_PROFILE` | | No | Bambu-compatible slicers: one process profile JSON; the machine preset always comes from the model and nozzle. Generic OrcaSlicer: `machine.json;process.json`, optionally `\|filament.json`. See the [slicing guide](./SLICING.md#profiles) |
+| `FILAMENT_PROFILE` | | No | Filament profile path(s) loaded with `--load-filaments`, `;`-separated in slot order. Alias: `SLICER_FILAMENT_PROFILE` |
 | `SLICER_TIMEOUT_MS` | `600000` | No | Slicer process deadline in milliseconds |
+| `BAMBU_PROFILES_ROOT` | found from `SLICER_PATH` | No | Profile tree containing `BBL/` for the active Bambu-compatible slicer. Set it for AppImages or non-standard installs. It is never replaced by another installation's tree |
+| `BAMBU_SLICER_PROFILE_DIRS` | the slicers' user `system/BBL` directories | No | Directories (separated with your OS path delimiter) searched for custom process and filament parents, never for machine presets. Set it empty to disable the search |
+| `BAMBU_TEMPLATE_DIR` | `~/Sync/bambu/templates` | No | Local template registry for `slice_with_template`, `list_templates`, `save_template`, and `get_slice_settings` |
+| `BAMBU_TEMPLATE_3MF_PATH` | | No | Default template 3MF whose slicer settings are reused as the process profile |
 | `FULU_ORCA_PATH` | | No | FULU OrcaSlicer-bambulab executable when `SLICER_PATH` is unset. Aliases: `ORCASLICER_BAMBULAB_PATH`, `ORCA_SLICER_BAMBULAB_PATH` |
 | `FULU_ORCA_PLUGIN_DIR` | | No | Directory with FULU's runtime payload, such as `OrcaSlicer.app/Contents/MacOS`. Alias: `ORCASLICER_BAMBULAB_PLUGIN_DIR` |
 | `PJARCZAK_MAC_RUNTIME_DIR` | `~/Library/Application Support/OrcaSlicer/macos-bridge/runtime` | No | Installed FULU macOS runtime directory |
@@ -138,7 +156,23 @@ API_KEY=your_api_key              # OctoPrint, Repetier, Prusa, Creality
 | `BLENDER_MCP_TIMEOUT_MS` | `120000` | No | Connection, discovery, and call deadline, 100 to 300000 ms |
 | `BLENDER_MCP_BRIDGE_COMMAND` | | No | Legacy trusted shell command for `blender_mcp_edit_model`; separate from the standard MCP integration |
 
-<!-- lead: sync after safety + blender integration -->
+The Blender MCP server also reads its own `BLENDER_HOST` and `BLENDER_PORT` (default `localhost:9876`) if the addon listens elsewhere. This server passes only `BLENDER_*` settings to it, never printer credentials. See the [Blender guide](./BLENDER.md).
+
+---
+
+## Print and heating safety
+
+Every print start and positive heating command goes through the same gate on every backend. Heater-off (a target of 0) and `cancel_print` are never gated, and cancelling also cancels checked prints that are still waiting to start.
+
+- **Human confirmation.** The server asks a person through MCP elicitation before each print start and positive heating command. Clients without elicitation support are refused with instructions. `PRINT_REQUIRE_CONFIRMATION=0` (all printers) or `BAMBU_REQUIRE_CONFIRMATION=0` (Bambu only) opts out for deliberately headless setups. A printer that reports a finished job (Moonraker complete or cancelled, PrusaLink FINISHED or STOPPED, Bambu FINISH) always asks, even with the opt-out, because the last part may still be on the bed.
+- **File inspection.** The server inspects a private copy of the exact G-code or 3MF plate it will start: every `S` and `R` heater target, tool changes, and RepRapFirmware and Klipper heater commands. Klipper macro parameters that name a heater are checked; macro bodies stored on the printer cannot be.
+- **Ceilings.** Nozzle, bed, and chamber targets have independent ceilings: 300, 120, and 60 °C by default on non-Bambu printers (`PRINTER_MAX_NOZZLE_TEMP`, `PRINTER_MAX_BED_TEMP`, `PRINTER_MAX_CHAMBER_TEMP`), and per-model hardware limits on Bambu printers. Material ceilings also apply, such as 260 °C for PLA. Only the server environment can change a ceiling; tool arguments and G-code never raise one.
+- **Declared material.** Printing and positive nozzle heating need a material: slicer metadata in the G-code (`; filament_type = PETG`) or the `material` argument, which must not contradict the file. A declaration cannot prove which spool is physically loaded.
+- **Printer state.** Printing, paused, errored, offline, or unreadable printers are refused. On Bambu printers, a fresh MQTT report must match the model, serial, nozzle, and loaded filament, before and after the confirmation and again before dispatch.
+- **Files already on the printer.** `start_print` downloads the file, inspects it, and starts a uniquely named checked copy on Bambu Lab, OctoPrint, Klipper (Moonraker), and Duet. Repetier, Prusa, and Creality refuse remote starts because no verified download route exists; upload the local G-code with `print: true`.
+- **Expected temperatures.** `process_and_print_stl` refuses before uploading when `extruder_temp` or `bed_temp` differs from the sliced job's highest target.
+
+Evidence: the gate is covered by unit tests and MCP-level tests with mocked MQTT and FTPS boundaries and loopback HTTP printer APIs. No physical printer was heated or asked to print in those tests, and acceptance at a mocked boundary does not prove firmware behavior.
 
 ---
 
@@ -244,7 +278,7 @@ Use the harness's built-in code mode or equivalent when available. Otherwise, an
 1. In OctoPrint, open **Settings** and create an application key under **Application Keys**, or copy the global key under **API**.
 2. Set `PRINTER_TYPE=octoprint`, `PRINTER_HOST`, and `API_KEY`. OctoPi serves on port 80; a directly run `octoprint serve` usually listens on 5000.
 
-The adapter connects over plain HTTP and sends the key as `X-Api-Key`. It calls `/api/printer` for status (state and temperatures, not job progress), `/api/files` to list files, `/api/files/local` to upload (optionally selecting and printing), `/api/files/local/<file>` to start a stored file, `/api/job` to cancel, and `/api/printer/bed` or `/api/printer/tool` for temperature targets. The file list returns every file OctoPrint reports, which can be large for big libraries ([#4](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/4)).
+The adapter connects over plain HTTP and sends the key as `X-Api-Key`. It calls `/api/printer` for status (state and temperatures, not job progress), `/api/files` to list files, `/api/files/local` to upload (optionally selecting and printing), `/api/files/local/<file>` to start a file, `/downloads/files/local/<file>` to download a stored file for inspection before `start_print`, `/api/job` to cancel, and `/api/printer/bed` or `/api/printer/tool` (nozzle targets go to `tool0`) for temperature targets. The file list returns every file OctoPrint reports, which can be large for big libraries ([#4](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/4)).
 
 ### Klipper (Moonraker)
 
@@ -252,15 +286,15 @@ The adapter connects over plain HTTP and sends the key as `X-Api-Key`. It calls 
 2. The adapter does not send an API key. Allow the MCP host in Moonraker's `[authorization]` `trusted_clients`, or use an installation without Moonraker authorization.
 3. Set `PRINTER_TYPE=klipper`, `PRINTER_HOST`, and `PRINTER_PORT=7125`.
 
-Status comes from `/printer/info`, which reports the Klipper host state (for example `ready`) but not job progress or temperatures; [#12](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/12) requests richer job status. Other calls: `/server/files/list`, `/server/files/upload`, `/printer/print/start`, `/printer/print/cancel`, and `SET_HEATER_TEMPERATURE` through `/printer/gcode/script` for `bed` and `extruder`.
+Status comes from `/printer/info`, which reports the Klipper host state (for example `ready`) but not job progress or temperatures; [#12](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/12) requests richer job status. The safety gate reads `/printer/objects/query?webhooks&print_stats` to refuse a printer that is printing, paused, or in error. Other calls: `/server/files/list`, `/server/files/upload`, `/server/files/gcodes/<file>` (download for inspection before `start_print`), `/printer/print/start`, `/printer/print/cancel`, and `SET_HEATER_TEMPERATURE` through `/printer/gcode/script` for `bed` and `extruder`.
 
 ### Duet
 
-Set `PRINTER_TYPE=duet`, `PRINTER_HOST`, and `PRINTER_PORT` if not 80. The adapter sends no password. It calls `/machine/status`, `/machine/file-list`, `/machine/file/<file>`, `/machine/file-upload`, and `/machine/code` (G-code `M32` to start, `M0` to cancel, `M140`/`M104` for temperatures). These routes have not been verified against Duet hardware; please report which firmware and host mode you tested.
+Set `PRINTER_TYPE=duet`, `PRINTER_HOST`, and `PRINTER_PORT` if not 80. The adapter targets the Duet Software Framework (DuetWebServer) REST API and sends no password. It calls `GET /machine/status`, `GET /machine/directory/0:/gcodes` to list files, `GET` and `PUT /machine/file/<path>` to download and upload, and `POST /machine/code` with a raw-text G-code body (`M32` to start, `M0` to cancel, `M140`/`M104` for temperatures). The routes follow DuetSoftwareFramework's `MachineController`; standalone RepRapFirmware `rr_*` routes are not supported. They have not been verified against Duet hardware; please report which firmware and host mode you tested.
 
 ### Repetier
 
-Set `PRINTER_TYPE=repetier`, `PRINTER_HOST`, `PRINTER_PORT` (Repetier-Server usually uses 3344), and `API_KEY` from Repetier-Server. The adapter sends the key as an `apikey` query parameter to `/printer/api/` with actions such as `getPrinterInfo`, `ls`, `startJob`, `stopJob`, `setBedTemp`, and `setExtruderTemp`. The adapter does not add a printer slug to the path. It has not been verified against a Repetier-Server install.
+Set `PRINTER_TYPE=repetier`, `PRINTER_HOST`, `PRINTER_PORT` (Repetier-Server usually uses 3344), and `API_KEY` from Repetier-Server. The adapter sends the key as an `apikey` query parameter to `/printer/api/` with actions such as `listPrinter`, `getPrinterInfo`, `ls`, `startJob`, `stopJob`, `setBedTemp`, and `setExtruderTemp`. The adapter does not add a printer slug to the path, and it has not been verified against a Repetier-Server install. It has no verified download route, so `start_print` of a file already on the server is refused; upload the local G-code with `print: true`.
 
 ### Bambu Lab
 
@@ -317,11 +351,11 @@ Set `BAMBU_MODEL` to one of `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, or `h2d`
 - **PrusaLink (local):** Set `PRINTER_TYPE=prusa`, `PRINTER_HOST` to the printer's address, and `API_KEY` to the PrusaLink API key. Local hosts use HTTP unless you give an `https://` host or port 443.
 - **Prusa Connect (cloud):** Set `PRINTER_HOST=connect.prusa3d.com` with `PRINTER_PORT=443`, or `PRINTER_HOST=https://connect.prusa3d.com`. The server normalizes both forms to HTTPS. Cloud access through this adapter has not been confirmed on hardware; see [#9](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/9).
 
-The adapter sends the key as both `X-Api-Key` and `Authorization: Bearer`. If a PrusaLink install only accepts username/password (HTTP digest) authentication, this adapter cannot authenticate yet. Requests try newer routes first and fall back on 404, 405, or 501: status tries `/api/v1/status`, then `/api/v1/printer`, then `/api/printer` (the PrusaLink 0.8.1 fix for [#11](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/11)); files try `/api/v1/storage`, then `/api/files`, then `/api/files/local`.
+The adapter sends the key as both `X-Api-Key` and `Authorization: Bearer`. If a PrusaLink install only accepts username/password (HTTP digest) authentication, this adapter cannot authenticate yet. Requests try newer routes first and fall back on 404, 405, or 501: status tries `/api/v1/status`, then `/api/v1/printer`, then `/api/printer` (the PrusaLink 0.8.1 fix for [#11](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/11)); files try `/api/v1/storage`, then `/api/files`, then `/api/files/local`. `start_print` of a file already on the printer is refused because no verified download route exists; upload the local G-code with `print: true`.
 
 ### Creality
 
-Set `PRINTER_TYPE=creality`, `PRINTER_HOST`, `PRINTER_PORT` if not 80, and `API_KEY` to a bearer token. The adapter calls `/api/device/status`, `/api/storage/list`, `/api/storage/info`, `/api/storage/upload`, `/api/job/start`, `/api/job/cancel`, and `/api/printer/temperature` over HTTP with `Authorization: Bearer <API_KEY>`. It has not been verified against Creality Cloud or stock Creality firmware.
+Set `PRINTER_TYPE=creality`, `PRINTER_HOST`, `PRINTER_PORT` if not 80, and `API_KEY` to a bearer token. The adapter calls `/api/device/status`, `/api/storage/list`, `/api/storage/info`, `/api/storage/upload`, `/api/job/start`, `/api/job/cancel`, and `/api/printer/temperature` over HTTP with `Authorization: Bearer <API_KEY>`. None of these routes has been verified against Creality Cloud or stock Creality firmware. `start_print` of a file already on the printer is refused; upload the local G-code with `print: true`.
 
 If your Creality printer runs Klipper with Moonraker reachable on the network, as with the K1 Max in [#16](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/16), use `PRINTER_TYPE=klipper` instead.
 
@@ -329,15 +363,13 @@ If your Creality printer runs Klipper with Moonraker reachable on the network, a
 
 ## Blender MCP (optional)
 
-Blender MCP lets your agent edit meshes in Blender, for example refitting a downloaded model before slicing. Printer tools work without it.
+Blender MCP lets your agent model or refit parts in Blender, for example refitting a downloaded model before slicing, and export a verified STL. Printer tools work without it. The [Blender guide](./BLENDER.md) covers setup, units, and a worked phone-case example.
 
-1. Install [uv](https://docs.astral.sh/uv/) and the [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) Blender addon. Enable the addon in Blender and start its connection from Blender's sidebar.
+1. Install [Blender](https://www.blender.org/download/), [uv](https://docs.astral.sh/uv/), and the [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) Blender addon (`uvx mcp-for-blender install-addon`, or install its `addon.py` in Blender's add-on preferences). Enable the addon and keep Blender open: the addon does not run in background mode.
 2. Set `BLENDER_MCP_COMMAND` to the full path of `uvx` and `BLENDER_MCP_ARGS` to `["mcp-for-blender"]`. The project was formerly published as `blender-mcp`; `uvx blender-mcp` still works as a compatibility wrapper.
-3. Ask your agent to call `blender_mcp_status` with `{"connect": true}`. That initializes the MCP server and lists its tools; it does not prove the addon inside Blender is connected. A `get_scene_info` call through `blender_mcp_call` checks the addon.
+3. Ask your agent to call `blender_mcp_status` with `{"connect": true}`. That initializes the MCP server and lists its tools by name; it does not prove the addon inside Blender is connected. A `get_scene_info` call through `blender_mcp_call` checks the addon.
 
-Blender and this server must see the same local file paths. See the [Blender tool reference](../README.md#blender-mcp) for the tools and their limits.
-
-<!-- lead: sync after safety + blender integration -->
+Blender and this server must see the same local file paths. See the [Blender tool reference](../README.md#blender-mcp) for `blender_mcp_status`, `blender_mcp_call`, `blender_mcp_export_stl`, and `blender_mcp_edit_model`.
 
 ---
 
@@ -384,5 +416,9 @@ The endpoint is `http://127.0.0.1:3000/mcp` by default. The server binds to `127
 - **Klipper returns 401 or 403:** Moonraker is enforcing authorization. Add the MCP host to `trusted_clients`.
 - **Bambu uploads fail with "Premature close":** update to 1.2.9 or later, which negotiates the TLS session reuse the printer requires.
 - **Bambu print tools ask for or reject the model:** set `BAMBU_MODEL` to your exact model. Do not substitute a similar model.
+- **Prints or heating are refused because the client cannot ask for confirmation:** use an MCP client that supports elicitation. For a deliberately headless setup, set `PRINT_REQUIRE_CONFIRMATION=0`; the first print after a finished job still needs a person to confirm the bed is clear.
+- **A print is refused for a missing material:** the G-code has no `; filament_type` line. Pass `material` (for example `PLA`) to the print or heating tool.
+- **`print_3mf` rejects the bed type:** pass the `bed_type` the plate was sliced for, or slice again for the plate you have installed.
+- **A Bambu slice stops before the slicer runs:** the exact `<model> <nozzle> nozzle` preset is missing from the selected installation, or `SLICER_PROFILE` lists a machine preset. See [Bambu-compatible slicing](./SLICING.md#bambu-compatible-slicing).
 - **A per-call `slicer_path` or `bridge_command` is rejected:** configure the executable in the server environment instead. See [executable settings](#executable-settings-stay-in-server-configuration).
 - **The MCP client lists no tools:** restart or reload the client after changing its configuration, and check the client's MCP logs for the server's startup error.
