@@ -72,6 +72,11 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     return true;
   }
 
+  /** Adapter-specific acknowledgement that an atomic upload-and-print started. */
+  protected uploadStartedPrint(_data: unknown): boolean {
+    return true;
+  }
+
   /** Map caller component names to a heater and the raw adapter name. */
   protected heaterComponent(component: string): HeaterComponent | undefined {
     const normalized = component.trim().toLowerCase();
@@ -242,6 +247,9 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     };
     if (this.uploadStartsPrint) {
       const response = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, true);
+      if (!this.uploadStartedPrint(response)) {
+        throw new Error(`${this.printerLabel} stored ${remoteName} but reports that it did not start printing it.`);
+      }
       return { ...summary, response };
     }
     const upload = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, false);

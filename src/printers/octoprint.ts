@@ -68,6 +68,11 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
     return { state: String(data?.state?.text ?? "unknown"), ready: blocking.length === 0, reason: blocking.join(", ") || undefined };
   }
 
+  /** OctoPrint reports effectivePrint=false when print=true had no effect. */
+  protected uploadStartedPrint(data: any): boolean {
+    return data?.effectivePrint !== false;
+  }
+
   protected async downloadRemoteFile(host: string, port: string, apiKey: string, filename: string, destination: string): Promise<void> {
     await this.downloadToFile(`http://${host}:${port}/downloads/files/local/${encodePath(filename)}`, { "X-Api-Key": apiKey }, destination);
   }

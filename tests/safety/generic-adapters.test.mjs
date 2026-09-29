@@ -306,6 +306,13 @@ test("OctoPrint nozzle targets use tool{n} keys (OctoPrint REST API) instead of 
   await assert.rejects(impl.setTemperature("127.0.0.1", printer.port, "KEY", "chamber", 0), /Unsupported component/);
 });
 
+test("OctoPrint effectivePrint=false is reported as not started instead of success", async (t) => {
+  const adapter = { ...ADAPTERS.octoprint, uploadResponse: { done: true, effectivePrint: false } };
+  const printer = await mockPrinter(t, adapter);
+  const { impl } = adapterWith(adapter);
+  await assert.rejects(impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {}), /did not start printing/);
+});
+
 test("Duet uses verified DSF routes: raw-text /machine/code and PUT /machine/file", async (t) => {
   const printer = await mockPrinter(t, ADAPTERS.duet);
   const { impl } = adapterWith(ADAPTERS.duet);
@@ -344,6 +351,10 @@ test("an invalid ceiling override refuses printing and heating before any reques
   await assert.rejects(impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {}), /PRINTER_MAX_BED_TEMP/);
   await assert.rejects(impl.setTemperature("127.0.0.1", printer.port, "KEY", "bed", 60), /PRINTER_MAX_BED_TEMP/);
   assert.deepEqual(printer.requests, []);
+  // Heater-off never depends on ceiling configuration.
+  await impl.setTemperature("127.0.0.1", printer.port, "KEY", "bed", 0);
+  await impl.setTemperature("127.0.0.1", printer.port, "KEY", "extruder", 0);
+  assert.deepEqual(printer.requests.map((req) => `${req.method} ${req.url}`), ["POST /api/printer/bed", "POST /api/printer/tool"]);
   process.env.PRINTER_MAX_BED_TEMP = "55";
   await assert.rejects(impl.setTemperature("127.0.0.1", printer.port, "KEY", "bed", 60), /55 C server ceiling/);
 });
