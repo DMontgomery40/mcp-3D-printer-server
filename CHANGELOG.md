@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.11
+
+### Discovery
+
+- Add the official MCP Registry ownership field and server metadata for the
+  npm package. The listing documents printer backend configuration and marks
+  API keys and Bambu LAN access codes as secrets.
+
 ## 1.2.10
 
 ### Safety
