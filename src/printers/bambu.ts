@@ -59,7 +59,7 @@ const COMMAND_SETTLE_MS = 300;
 /** bambu-node waits 1 s, then 5 s for its first command; allow that plus margin before giving up on it. */
 const BAMBU_INITIAL_COMMAND_GRACE_MS = 8_000;
 const DEVELOPER_MODE_HINT =
-  "If requests stay unanswered, check that LAN Only Mode is on and, on firmware 01.08.05 and later, that Developer Mode is on (Settings > WLAN); the printer keeps broadcasting status either way.";
+  "Some printers do not answer information requests and only broadcast status (seen on X1 Carbons on firmware 01.07, where control commands still work). On firmware 01.08.05 and later, control commands also need LAN Only Mode and Developer Mode (Settings > WLAN).";
 /** HMS 0500-0500-0001-0007: firmware 01.08.05+ rejected an unsigned MQTT command. */
 const COMMAND_VERIFICATION_HMS = { attr: 0x05000500, code: 0x00010007 };
 const COMMAND_REJECTED_MESSAGE =
@@ -138,8 +138,8 @@ class BambuClientStore {
 
     const connectPromise = printer.connect().then(() => {});
     // bambu-node resolves connect() only after its own initial commands are
-    // answered. A printer that broadcasts reports but ignores third-party
-    // commands (LAN Only Mode without Developer Mode) never answers them, so
+    // answered. A printer that broadcasts reports but never answers information
+    // requests (seen on X1 Carbons on firmware 01.07) never answers them, so
     // connect() would hang forever. Once the MQTT session is up, keep the
     // client after a grace period: reports still fill printer.data, and each
     // caller's own command fails on its own timeout instead. Concurrent callers

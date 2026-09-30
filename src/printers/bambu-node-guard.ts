@@ -4,8 +4,8 @@
  * H2C/H2D Pro/P2S serial prefixes, a get_version reply without an ota module, and
  * transitions such as PAUSE -> IDLE after a cancel. It also sends a PushAll
  * request on connect and leaves its 5 s timeout unhandled, which rejects when a
- * printer ignores third-party commands (LAN Only Mode without Developer Mode on
- * firmware 01.08.05 and later) but still broadcasts reports. Those throws become
+ * printer never answers information requests (seen on X1 Carbons on firmware
+ * 01.07, which still accept control commands) but still broadcasts reports. Those throws become
  * unhandled promise rejections, which terminate Node by default.
  * bambu-printer-mcp avoids this with a postinstall patch; this package does not
  * install one.

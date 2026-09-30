@@ -63,9 +63,8 @@ test("the guard rethrows unrelated rejections and look-alike errors from outside
   }
 });
 
-// A printer that broadcasts reports but ignores third-party commands (LAN Only
-// Mode without Developer Mode) never answers the PushAll bambu-node sends on
-// connect. Its 5 s timeout must not terminate the server. A stub MQTT client
+// A printer that broadcasts reports but never answers information requests
+// never answers the request bambu-node sends on connect. Its 5 s timeout must not terminate the server. A stub MQTT client
 // stands in for the printer; nothing is opened or contacted.
 function runSilentPrinter(guarded) {
   const script = `
@@ -85,7 +84,7 @@ test("an unanswered bambu-node PushAll terminates Node without the guard", () =>
   assert.doesNotMatch(result.stdout, /alive/);
 });
 
-test("the guard keeps the server alive when a printer ignores commands", () => {
+test("the guard keeps the server alive when a printer never answers information requests", () => {
   const result = runSilentPrinter(true);
   assert.equal(result.status, 0, result.stderr.slice(-2000));
   assert.match(result.stdout, /alive/);

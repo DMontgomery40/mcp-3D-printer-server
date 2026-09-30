@@ -6,8 +6,9 @@
 
 - Keep the server alive and answer `get_printer_status` for Bambu printers that
   broadcast reports but do not answer bambu-node's initial request (seen on two
-  X1 Carbons on firmware 01.07 in LAN Only Mode; the cause is unknown, and
-  Developer Mode does not exist on that firmware). The unanswered request used to become an unhandled rejection that
+  X1 Carbons on firmware 01.07 in LAN Only Mode, which still accept control
+  commands such as the chamber light; the cause is unknown, and Developer Mode
+  does not exist on that firmware). The unanswered request used to become an unhandled rejection that
   terminated the server, and bambu-node's `connect()` never resolved, which
   also hung every concurrent caller. The client now proceeds 8 s after the MQTT
   session is up, concurrent callers share that bounded wait, a failed or late
