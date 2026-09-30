@@ -62,3 +62,32 @@ test("the guard rethrows unrelated rejections and look-alike errors from outside
     assert.doesNotMatch(result.stdout, /alive/, body);
   }
 });
+
+// A printer that broadcasts reports but ignores third-party commands (LAN Only
+// Mode without Developer Mode) never answers the PushAll bambu-node sends on
+// connect. Its 5 s timeout must not terminate the server. A stub MQTT client
+// stands in for the printer; nothing is opened or contacted.
+function runSilentPrinter(guarded) {
+  const script = `
+    import { BambuClient, PushAllCommand } from "bambu-node";
+    ${guarded ? `import { installBambuNodeRejectionGuard } from ${JSON.stringify(guard)}; installBambuNodeRejectionGuard();` : ""}
+    const client = new BambuClient({ host: "192.0.2.1", serialNumber: "094TESTONLY", accessToken: "unused" });
+    client.mqttClient = { publish(_topic, _message, _options, callback) { callback?.(); }, on() {}, subscribe() {} };
+    void client.executeCommand(new PushAllCommand());
+    setTimeout(() => { console.log("alive"); process.exit(0); }, 6_500);
+  `;
+  return spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: root, encoding: "utf8", timeout: 15_000, maxBuffer: 64 * 1024 * 1024 });
+}
+
+test("an unanswered bambu-node PushAll terminates Node without the guard", () => {
+  const result = runSilentPrinter(false);
+  assert.notEqual(result.status, 0, "unguarded command timeout must terminate the process");
+  assert.doesNotMatch(result.stdout, /alive/);
+});
+
+test("the guard keeps the server alive when a printer ignores commands", () => {
+  const result = runSilentPrinter(true);
+  assert.equal(result.status, 0, result.stderr.slice(-2000));
+  assert.match(result.stdout, /alive/);
+  assert.ok(result.stderr.includes("Ignored internal status-tracking error: Command execution timed out after 5 seconds."), result.stderr.slice(-500));
+});

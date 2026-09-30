@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep the server alive and answer `get_printer_status` for Bambu printers that
+  broadcast reports but do not answer bambu-node's initial request (seen on two
+  X1 Carbons in LAN Only Mode; firmware 01.08.05 and later ignore third-party
+  commands without Developer Mode, which is the likely cause but was not
+  confirmed). The unanswered request used to become an unhandled rejection that
+  terminated the server, and bambu-node's `connect()` never resolved, which
+  also hung every concurrent caller. The client now proceeds 8 s after the MQTT
+  session is up, concurrent callers share that bounded wait, a failed or late
+  connection is evicted, and `get_printer_status` returns the latest broadcast
+  report with `commandsAnswered: false` and a Developer Mode hint when its own
+  status request also goes unanswered. Evidence: a stub MQTT client for the
+  crash and its guard, and read-only status calls (three concurrent) against two
+  real X1 Carbons on 2026-09-30; no print, heating or motion command was sent.
+  The guard ignores any unawaited bambu-node command timeout, not only the
+  initial one.
+
 ## 1.2.10
 
 ### Safety

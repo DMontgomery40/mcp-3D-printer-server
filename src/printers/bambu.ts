@@ -56,6 +56,10 @@ interface ProjectFileMetadata {
 }
 
 const COMMAND_SETTLE_MS = 300;
+/** bambu-node waits 1 s, then 5 s for its first command; allow that plus margin before giving up on it. */
+const BAMBU_INITIAL_COMMAND_GRACE_MS = 8_000;
+const DEVELOPER_MODE_HINT =
+  "If requests stay unanswered, turn on LAN Only Mode and Developer Mode on the printer (Settings > WLAN); firmware 01.08.05 and later ignore third-party commands without them.";
 /** HMS 0500-0500-0001-0007: firmware 01.08.05+ rejected an unsigned MQTT command. */
 const COMMAND_VERIFICATION_HMS = { attr: 0x05000500, code: 0x00010007 };
 const COMMAND_REJECTED_MESSAGE =
@@ -133,14 +137,57 @@ class BambuClientStore {
     });
 
     const connectPromise = printer.connect().then(() => {});
-    this.initialConnectionPromises.set(key, connectPromise);
+    // bambu-node resolves connect() only after its own initial commands are
+    // answered. A printer that broadcasts reports but ignores third-party
+    // commands (LAN Only Mode without Developer Mode) never answers them, so
+    // connect() would hang forever. Once the MQTT session is up, keep the
+    // client after a grace period: reports still fill printer.data, and each
+    // caller's own command fails on its own timeout instead. Concurrent callers
+    // wait on the same bounded promise.
+    const ready = this.awaitUsableClient(printer, connectPromise, serial).then(() => {
+      this.printers.set(key, printer);
+    });
+    this.initialConnectionPromises.set(key, ready);
+    // A late connect() failure must not leave a half-initialised client cached.
+    connectPromise.catch(() => {
+      if (this.printers.get(key) === printer) this.printers.delete(key);
+    });
 
     try {
-      await connectPromise;
+      await ready;
       return printer;
     } catch (error) {
       this.initialConnectionPromises.delete(key);
+      this.printers.delete(key);
+      void printer.disconnect(true).catch(() => {});
       throw error;
+    } finally {
+      this.initialConnectionPromises.delete(key);
+    }
+  }
+
+  private async awaitUsableClient(printer: BambuClient, connectPromise: Promise<void>, serial: string): Promise<void> {
+    const mqttClient = (printer as unknown as {
+      mqttClient?: { connected?: boolean; once(event: "connect", listener: () => void): unknown };
+    }).mqttClient;
+    let graceTimer: NodeJS.Timeout | undefined;
+    const sessionUpThenSilent = new Promise<void>((resolve) => {
+      const armGrace = () => {
+        graceTimer = setTimeout(() => {
+          console.warn(
+            `Bambu printer ${serial} accepted the MQTT login but did not answer the initial version request; continuing with its broadcast reports. ${DEVELOPER_MODE_HINT}`
+          );
+          resolve();
+        }, BAMBU_INITIAL_COMMAND_GRACE_MS);
+      };
+      if (!mqttClient) return; // no session handle: rely on connect() alone
+      if (mqttClient.connected) armGrace();
+      else mqttClient.once("connect", armGrace);
+    });
+    try {
+      await Promise.race([connectPromise, sessionUpThenSilent]);
+    } finally {
+      if (graceTimer) clearTimeout(graceTimer);
     }
   }
 
