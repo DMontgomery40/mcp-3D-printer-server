@@ -1,5 +1,5 @@
 # Dependencies
-node_modules/
+node_modules
 npm-debug.log
 yarn-debug.log
 yarn-error.log
@@ -79,3 +79,5 @@ coverage/
 !/docs/SLICING.md
 !/docs/FULU.md
 !/docs/BLENDER.md
+
+!docs/PRINT_EVENTS.md

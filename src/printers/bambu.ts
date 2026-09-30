@@ -1,3 +1,4 @@
+import type { PrintEventRuntime, ObservePrinter } from "../events/runtime.js";
 import { PrinterImplementation } from "../types.js";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
@@ -92,6 +93,7 @@ function validateTrayValue(value: unknown, label: string): void {
 }
 
 class BambuClientStore {
+  constructor(private readonly observePrinter?: ObservePrinter) {}
   private printers: Map<string, BambuClient> = new Map();
   private initialConnectionPromises: Map<string, Promise<void>> = new Map();
 
@@ -116,6 +118,8 @@ class BambuClientStore {
       serialNumber: serial,
       accessToken: token,
     });
+
+    this.observePrinter?.(printer, host, serial);
 
     printer.on("client:connect", () => {
       this.printers.set(key, printer);
@@ -168,9 +172,9 @@ class BambuClientStore {
 export class BambuImplementation extends PrinterImplementation {
   private printerStore: BambuClientStore;
 
-  constructor(apiClient: any, private readonly confirm?: ConfirmHardware) {
+  constructor(apiClient: any, private readonly confirm?: ConfirmHardware, private readonly printEvents?: PrintEventRuntime) {
     super(apiClient);
-    this.printerStore = new BambuClientStore();
+    this.printerStore = new BambuClientStore(this.printEvents?.attach);
   }
 
   async confirmHardwareAction(message: string, physicalCheck = false): Promise<void> {
@@ -495,6 +499,7 @@ export class BambuImplementation extends PrinterImplementation {
   async cancelJob(host: string, port: string, apiKey: string): Promise<any> {
     const [serial, token] = this.extractBambuCredentials(apiKey);
     cancelPendingPrinterOperations(host, serial);
+    this.printEvents?.cancel(host, serial, false);
     const printer = await this.getPrinter(host, serial, token);
 
     try {
@@ -502,7 +507,7 @@ export class BambuImplementation extends PrinterImplementation {
       return { status: "success", message: "Cancel command sent successfully." };
     } catch (error) {
       throw new Error(`Failed to cancel print: ${(error as Error).message}`);
-    }
+    } finally { this.printEvents?.persist(); }
   }
 
   async setTemperature(

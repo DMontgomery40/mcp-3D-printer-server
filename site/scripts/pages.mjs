@@ -11,6 +11,13 @@
 
 export const PAGES = [
   {
+    group: 'Guides',
+    route: 'guide/print-events',
+    title: 'Print observations and events',
+    description: 'Optional local print history, durable event capture, and ChatGPT push integration requirements.',
+    sources: [{ file: 'docs/PRINT_EVENTS.md', whole: true }],
+  },
+  {
     group: 'Start',
     route: 'guide/index',
     title: 'Overview',

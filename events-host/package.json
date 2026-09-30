@@ -1,0 +1,19 @@
+{
+  "name": "printer-events-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional authenticated read-only MCP 2.0 print event host",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test host.test.mjs",
+    "start": "node run.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.2.0",
+    "@modelcontextprotocol/node": "2.1.0",
+    "zod": "4.6.5"
+  }
+}

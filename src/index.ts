@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createPrintEventRuntime, PRINT_EVENTS_TOOL, type PrintEventRuntime } from "./events/runtime.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -541,6 +542,7 @@ function credentialSuggestion(): string {
 }
 
 class ThreeDPrinterMCPServer {
+  private readonly printEvents?: PrintEventRuntime;
   private server: Server;
   private readonly blender = new BlenderMcpBridge();
   private printerFactory: PrinterFactory;
@@ -550,6 +552,7 @@ class ThreeDPrinterMCPServer {
 
   constructor() {
     this.runtimeConfig = readRuntimeConfig();
+    this.printEvents = createPrintEventRuntime(DEFAULT_HOST, DEFAULT_BAMBU_SERIAL);
     this.server = new Server(
       {
         name: "mcp-3d-printer-server",
@@ -563,7 +566,7 @@ class ThreeDPrinterMCPServer {
       }
     );
 
-    this.printerFactory = new PrinterFactory((message) => this.confirmHardware(message));
+    this.printerFactory = new PrinterFactory((message) => this.confirmHardware(message), this.printEvents);
     this.stlManipulator = new STLManipulator(TEMP_DIR);
 
     this.setupHandlers();
@@ -882,6 +885,7 @@ class ThreeDPrinterMCPServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
         tools: [
+          PRINT_EVENTS_TOOL,
           {
             name: "get_printer_status",
             description: "Get the current status of the 3D printer",
@@ -1845,6 +1849,9 @@ class ThreeDPrinterMCPServer {
         let result;
 
         switch (name) {
+          case "list_print_events":
+            if (!this.printEvents) throw new Error("Print event recording is disabled");
+            return { content: [{ type: "text", text: JSON.stringify(this.printEvents.list(args)) }] };
           case "get_printer_status":
             result = await this.getPrinterStatus(host, port, type, apiKey, bambuSerial, bambuToken);
             break;

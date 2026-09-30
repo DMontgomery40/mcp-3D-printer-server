@@ -59,7 +59,16 @@
         "dist/blender-mcp-bridge.js",
         "dist/blender-mcp-bridge.d.ts",
         "src/blender-mcp-bridge.ts",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "dist/events",
+        "src/events",
+        "events-host/package.json",
+        "events-host/package-lock.json",
+        "events-host/host.mjs",
+        "events-host/relay.mjs",
+        "events-host/run.mjs",
+        "docs/PRINT_EVENTS.md",
+        "events-host/worker.mjs"
     ],
     "keywords": [
         "mcp",

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in passive Bambu print-completion/problem capture with a private durable journal and a read-only `list_print_events` cursor tool. Suppress completion for cancellation, failed jobs, initial FINISH snapshots, and progress alone; retain observed-job state and deduplicate faults across reconnects/restarts.
+- Add an optional, real SDK2 authenticated read-only host and owner-authorized webhook event service, with callback verification, Standard Webhooks signatures, bounded retries, expiration, replay, and secret rotation. Legacy SDK 1.x transports remain compatible; the isolated host supplies MCP 2.0 discovery/events and OAuth metadata, with an operator-supplied token verifier and approved HTTPS deployment still required. Validate synthetic MQTT transitions, replay/restart, real SDK2 requests and independently verified signed callbacks. Observe one authorized 0.19 g P1S PLA test print with exactly one completion in each development server and accept each real observation through its SDK2 host with a local signed callback receiver; no live ChatGPT delivery is claimed.
+
 ## 1.2.10
 
 ### Safety

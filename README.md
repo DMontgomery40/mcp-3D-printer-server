@@ -843,3 +843,5 @@ Bambu Lab support builds on community protocol research, including [OpenBambuAPI
 This project is listed in the [Glama MCP server directory](https://glama.ai/mcp/servers/7f6v2enbgk). See [CONTRIBUTORS.md](./CONTRIBUTORS.md) for the people whose code, reports, and printer testing shaped it.
 
 </details>
+
+Optional passive print history and the remaining ChatGPT push integration requirements are described in [Print events](docs/PRINT_EVENTS.md).

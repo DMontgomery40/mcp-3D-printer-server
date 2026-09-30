@@ -1,3 +1,4 @@
+import type { PrintEventRuntime } from "../events/runtime.js";
 import { PrinterImplementation } from "../types.js";
 import { OctoPrintImplementation } from "./octoprint.js";
 import { KlipperImplementation } from "./klipper.js";
@@ -22,12 +23,12 @@ export class PrinterFactory {
   private apiClient = axios.create({ timeout: 10000 });
 
   /** confirm is the human (MCP elicitation) confirmation used before prints and positive heating. */
-  constructor(confirm?: ConfirmHardware) {
+  constructor(confirm?: ConfirmHardware, printEvents?: PrintEventRuntime) {
     this.implementations.set("octoprint", new OctoPrintImplementation(this.apiClient, confirm));
     this.implementations.set("klipper", new KlipperImplementation(this.apiClient, confirm));
     this.implementations.set("duet", new DuetImplementation(this.apiClient, confirm));
     this.implementations.set("repetier", new RepetierImplementation(this.apiClient, confirm));
-    this.implementations.set("bambu", new BambuImplementation(this.apiClient, confirm));
+    this.implementations.set("bambu", new BambuImplementation(this.apiClient, confirm, printEvents));
     this.implementations.set("prusa", new PrusaImplementation(this.apiClient, confirm));
     this.implementations.set("creality", new CrealityImplementation(this.apiClient, confirm));
   }
