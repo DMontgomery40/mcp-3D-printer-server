@@ -59,7 +59,7 @@ const COMMAND_SETTLE_MS = 300;
 /** bambu-node waits 1 s, then 5 s for its first command; allow that plus margin before giving up on it. */
 const BAMBU_INITIAL_COMMAND_GRACE_MS = 8_000;
 const DEVELOPER_MODE_HINT =
-  "If requests stay unanswered, turn on LAN Only Mode and Developer Mode on the printer (Settings > WLAN); firmware 01.08.05 and later ignore third-party commands without them.";
+  "If requests stay unanswered, check that LAN Only Mode is on and, on firmware 01.08.05 and later, that Developer Mode is on (Settings > WLAN); the printer keeps broadcasting status either way.";
 /** HMS 0500-0500-0001-0007: firmware 01.08.05+ rejected an unsigned MQTT command. */
 const COMMAND_VERIFICATION_HMS = { attr: 0x05000500, code: 0x00010007 };
 const COMMAND_REJECTED_MESSAGE =
