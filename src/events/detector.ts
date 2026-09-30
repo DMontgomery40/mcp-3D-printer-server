@@ -12,15 +12,15 @@ function fingerprint(raw: Record<string, unknown>, preferred?: "subtask_id" | "t
 function positiveCode(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 0xffffffff ? value : undefined;
 }
-/** Consumes only actual push_status reports; no progress-based completion inference. */
+/** Consumes internal normalized lifecycle reports; each source verifies its native signal. Never infers completion from progress. */
 export class PrintEventDetector {
   private report: Record<string, unknown> = {};
   private connectedEpoch = false;
-  constructor(readonly store: EventStore) {}
+  constructor(readonly store: EventStore, readonly printer = "default") {}
   disconnected(): void { this.report = {}; this.connectedEpoch = false; }
   cancel(persist = true): void {
-    if (this.store.data.observation.active) {
-      this.store.data.observation.cancelled = true;
+    if (this.store.observation(this.printer).active) {
+      this.store.observation(this.printer).cancelled = true;
       if (persist) this.store.save();
     }
   }
@@ -28,7 +28,7 @@ export class PrintEventDetector {
     if (update.command !== "push_status") return;
     // A fresh connection cannot borrow a job identity from the previous connection.
     this.report = { ...this.report, ...update };
-    const state = this.store.data.observation;
+    const state = this.store.observation(this.printer);
     const before = JSON.stringify(state);
     // Keep the originally observed identity field for this job. Late enrichment must not change it.
     const observed = fingerprint(this.report, state.active || (state.terminal && !this.connectedEpoch) ? state.fingerprintSource : undefined);
@@ -52,7 +52,7 @@ export class PrintEventDetector {
     }
     const event = (name: "print.completed" | "print.problem", reason?: "print_error" | "hms" | "failed", codes?: string[]) => {
       this.store.append({ eventId: randomUUID(), name, timestamp: new Date().toISOString(),
-        data: { printer: "default", jobId: state.jobId!, ...(reason ? { reason, codes } : {}) } });
+        data: { printer: this.printer, jobId: state.jobId!, ...(reason ? { reason, codes } : {}) } });
     };
     if (state.active && identity === state.fingerprint && state.jobId && !state.cancelled) {
       const error = positiveCode(this.report.print_error);

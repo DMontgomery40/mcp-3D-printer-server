@@ -125,7 +125,7 @@ test('expiry, revocation, bad verification, invalid arguments, rotation and nonr
     return data.type==='verification'?{status:200,body:JSON.stringify({challenge:data.challenge})}:{status,body:''}; };
   const service=new PrintEventService(f.store,()=>allowed,sender,()=>time),auth={principal:'owner'};
   await assert.rejects(service.handle('events/list',{},{}),e=>e.code===-32012);
-  await assert.rejects(service.handle('events/subscribe',{...params(),arguments:{printer:'other'}},auth),e=>e.code===-32602);
+  await assert.rejects(service.handle('events/subscribe',{...params(),arguments:{printer:'other'}},auth),e=>e.code===-32012);
   const bad=new PrintEventService(f.store,()=>true,async()=>({status:200,body:'{"challenge":"wrong"}'}),()=>time);
   await assert.rejects(bad.handle('events/subscribe',params(),auth),e=>e.code===-32015); assert.equal(f.store.data.subscriptions.length,0);
   await service.handle('events/subscribe',params(),auth);
@@ -158,7 +158,7 @@ test('legacy stdio client discovers and reads the opt-in history tool without co
   assert.ok((await client.listTools()).tools.some(tool=>tool.name==='list_print_events'));
   assert.equal(client.getServerCapabilities().events,undefined);
   const result=await client.callTool({name:'list_print_events',arguments:{}});
-  assert.deepEqual(JSON.parse(result.content[0].text),{events:[],cursor:'0',truncated:false});
+  const page=JSON.parse(result.content[0].text);assert.ok(page.journalId);delete page.journalId;assert.deepEqual(page,{events:[],cursor:'0',truncated:false});
   await assert.rejects(client.request({method:'server/discover',params:{}},(await import('zod')).z.any()),error=>error.code===-32601);
   await client.close();
 });
@@ -236,4 +236,59 @@ test('one owners transient authorization failure cannot starve another owner or 
  const d=new PrintEventDetector(f.store);observe(d,running);observe(d,{gcode_state:'FINISH'});
  fail=true;await service.deliverPending();assert.equal(ids.length,1);assert.equal(f.store.data.subscriptions[0].position,0);
  fail=false;await service.deliverPending();assert.equal(ids.length,2);assert.notEqual(ids[0],ids[1]);
+});
+test('farm identities isolate jobs, replay, subscriptions and revoked permissions',async t=> {
+ const f=fixture(t),printers=['farm-a','farm-b','constructor'];
+ const a=new PrintEventDetector(f.store,'farm-a'),b=new PrintEventDetector(f.store,'farm-b');
+ observe(a,running);observe(b,running);observe(a,{gcode_state:'FINISH'});observe(b,{gcode_state:'FAILED'});
+ const c=new PrintEventDetector(f.store,'constructor');observe(c,running);observe(c,{gcode_state:'FINISH'});
+ assert.deepEqual(f.store.data.history.map(e=>[e.data.printer,e.name]),[['farm-a','print.completed'],['farm-b','print.problem'],['constructor','print.completed']]);
+ const received=[];let allowed=true;
+ const policy=({principal},printer)=>allowed&&principal==='a'&&printer==='farm-a';
+ const service=new PrintEventService(f.store,policy,async(_url,body)=>{const data=JSON.parse(body);if(data.type==='verification')return {status:200,body:JSON.stringify({challenge:data.challenge})};received.push(data);return {status:204,body:''};},Date.now,printers);
+ const catalog=await service.handle('events/list',{}, {principal:'a'});assert.deepEqual(catalog.events[0].inputSchema.properties.printer.enum,['farm-a']);
+ const p={...params(),arguments:{printer:'farm-a'}};
+ await assert.rejects(service.handle('events/subscribe',{...p,arguments:{printer:'farm-b'}},{principal:'a'}),/Forbidden/);
+ await service.handle('events/subscribe',p,{principal:'a'});await service.deliverPending();assert.equal(received.length,1);assert.equal(received[0].data.printer,'farm-a');
+ await service.deliverPending();assert.equal(received.length,1);
+ const restarted=new PrintEventDetector(f.reopen(),'farm-a');observe(restarted,running);observe(restarted,{gcode_state:'FINISH'});assert.equal(f.store.data.history.length,3);
+ const resumed=new PrintEventService(f.store,policy,undefined,Date.now,printers);allowed=false;await resumed.deliverPending();assert.equal(f.store.data.subscriptions.length,0);
+});
+
+
+test('remote cursors and retention expose only the selected printer and advertise supported event types',async t=> {
+ const {listPrinterEvents}=await import('../dist/events/service.js');const f=fixture(t);
+ const append=(printer,id)=>f.store.append({eventId:id,name:'print.completed',timestamp:new Date().toISOString(),data:{printer,jobId:id}});
+ append('b','b1');append('a','a1');append('b','b2');append('a','a2');f.store.save();
+ const page=listPrinterEvents(f.store,'a');assert.deepEqual(page.events.map(e=>e.cursor),['1','2']);assert.equal(page.cursor,'2');assert.ok(page.events.every(e=>!('printerCursor' in e)));
+ const service=new PrintEventService(f.store,(_owner,printer)=>printer==='a',undefined,Date.now,['a','b'],()=>['print.completed']);
+ assert.deepEqual((await service.handle('events/list',{}, {principal:'a'})).events.map(e=>e.name),['print.completed']);
+ for(const printer of ['b','unknown'])await assert.rejects(service.handle('events/subscribe',{...params(),arguments:{printer}},{principal:'a'}),e=>e.code===-32012);
+ await assert.rejects(service.handle('events/subscribe',{...params('print.problem'),arguments:{printer:'a'}},{principal:'a'}),e=>e.code===-32602);
+});
+test('failed durable subscription save does not activate a callback',async t=> {
+ const f=fixture(t),service=new PrintEventService(f.store,()=>true,async(_url,body)=>({status:200,body:JSON.stringify({challenge:JSON.parse(body).challenge})}));
+ const save=f.store.save;f.store.save=()=>{throw Error('disk full');};
+ try {await assert.rejects(service.handle('events/subscribe',params(),{principal:'a'}),/disk full/);assert.equal(f.store.data.subscriptions.length,0);}finally{f.store.save=save;}
+});
+test('a slow callback or verification does not block another owners receipt',async t=> {
+ const f=fixture(t);let release,waiting;const gate=new Promise(resolve=>{release=resolve;});const started=new Promise(resolve=>{waiting=resolve;});const received=[];
+ const service=new PrintEventService(f.store,()=>true,async(url,body)=>{const data=JSON.parse(body);if(data.type==='verification')return {status:200,body:JSON.stringify({challenge:data.challenge})};if(url.endsWith('/slow')){waiting();await gate;}received.push(url);return {status:204,body:''};});
+ await service.handle('events/subscribe',{...params(),delivery:{...params().delivery,url:'https://receiver.example.com/slow'}},{principal:'a'});await service.handle('events/subscribe',params(),{principal:'b'});
+ const d=new PrintEventDetector(f.store);observe(d,running);observe(d,{gcode_state:'FINISH'});
+ const delivery=service.deliverPending();await started;await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(received,['https://receiver.example.com/events']);release();await delivery;assert.equal(received.length,2);
+ let verifyRelease;const verifyGate=new Promise(resolve=>{verifyRelease=resolve;});const verificationService=new PrintEventService(f.store,()=>true,async(url,body)=>{const data=JSON.parse(body);if(url.endsWith('/wait'))await verifyGate;return {status:200,body:JSON.stringify({challenge:data.challenge})};});
+ const pending=verificationService.handle('events/subscribe',{...params(),delivery:{...params().delivery,url:'https://receiver.example.com/wait'}},{principal:'c'});
+ await verificationService.handle('events/subscribe',params(),{principal:'d'});assert.ok(f.store.data.subscriptions.some(s=>s.owner==='d'));verifyRelease();await pending;
+});
+test('bounded delivery rotates across queued subscriptions rather than starving later subscribers',async t=> {
+ const f=fixture(t),service=new PrintEventService(f.store,()=>true,async(_url,body)=>{const data=JSON.parse(body);return data.type==='verification'?{status:200,body:JSON.stringify({challenge:data.challenge})}:{status:204,body:''};});
+ for(let i=0;i<35;i++)await service.handle('events/subscribe',{...params(),delivery:{...params().delivery,url:`https://receiver.example.com/${i}`}},{principal:'a'});
+ const d=new PrintEventDetector(f.store);for(let i=0;i<2;i++){observe(d,running);observe(d,{gcode_state:'FINISH'});}await service.deliverPending();await service.deliverPending();assert.ok(f.store.data.subscriptions.every(s=>s.position>0));
+});
+test('refresh keeps an ACK made during challenge verification and returns its actual cursor',async t=> {
+ const f=fixture(t);let time=1000000,release,start;const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>start=resolve);let wait=false;
+ const service=new PrintEventService(f.store,()=>true,async(_url,body)=>{const data=JSON.parse(body);if(data.type==='verification'){if(wait){start();await gate;}return {status:200,body:JSON.stringify({challenge:data.challenge})};}return {status:204,body:''};},()=>time);
+ await service.handle('events/subscribe',params(),{principal:'a'});const d=new PrintEventDetector(f.store);observe(d,running);observe(d,{gcode_state:'FINISH'});
+ time+=300001;wait=true;const refresh=service.handle('events/subscribe',params(),{principal:'a'});await started;await service.deliverPending();release();const result=await refresh;assert.equal(result.cursor,'1');assert.equal(f.store.data.subscriptions[0].position,1);
 });

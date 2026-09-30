@@ -6,10 +6,12 @@ export interface PrintEvent {
   eventId: string;
   name: "print.completed" | "print.problem";
   timestamp: string;
-  data: { printer: "default"; jobId: string; reason?: "print_error" | "hms" | "failed"; codes?: string[] };
+  data: { printer: string; jobId: string; test?: boolean; reason?: "print_error" | "hms" | "failed"; codes?: string[] };
   cursor: string;
+  printerCursor?: string;
 }
 export interface ObservationState {
+  sourceRecord?: string;
   fingerprint?: string;
   fingerprintSource?: "subtask_id" | "task_id" | "gcode_file";
   jobId?: string;
@@ -19,13 +21,13 @@ export interface ObservationState {
   problems: string[];
 }
 export interface Subscription {
-  id: string; owner: string; name: PrintEvent["name"]; url: string; secret: string;
+  id: string; owner: string; printer?: string; name: PrintEvent["name"]; url: string; secret: string;
   previousSecret?: string; rotateUntil?: number;
   expires: number; position: number; verifiedAt?: number;
   attempts: number; retryAt: number; stopped?: boolean;
 }
 interface Data {
-  version: 1; sequence: number; history: PrintEvent[]; sourceCursor?: string;
+  version: 1; journalId?: string; printerSequences?: Record<string, number>; sequence: number; history: PrintEvent[]; sourceCursor?: string; sourceCursors?: Record<string, string>; sourceJournalIds?: Record<string, string>; observations?: Record<string, ObservationState>;
   observation: ObservationState; subscriptions: Subscription[];
 }
 /** Private, bounded single-writer journal. Never place it inside a repository/package. */
@@ -50,8 +52,22 @@ export class EventStore {
           !this.data.observation || !Array.isArray(this.data.observation.problems)) {
         throw new Error("Invalid print event journal");
       }
+      this.data.journalId ??= randomUUID();
+      this.data.printerSequences ??= {};
+      for (const event of this.data.history) {
+        const printer = event.data.printer;
+        const previous = Object.prototype.hasOwnProperty.call(this.data.printerSequences, printer) ? this.data.printerSequences[printer] : 0;
+        event.printerCursor ??= printer === "default" ? event.cursor : String(previous + 1);
+        this.data.printerSequences[printer] = Math.max(previous, Number(event.printerCursor));
+      }
       this.save();
     } catch (error) { unlinkSync(this.lock); throw error; }
+  }
+  observation(printer = "default"): ObservationState {
+    if (printer === "default") return this.data.observation;
+    this.data.observations ??= {};
+    if (!Object.prototype.hasOwnProperty.call(this.data.observations, printer)) this.data.observations[printer] = { active: false, cancelled: false, terminal: false, problems: [] };
+    return this.data.observations[printer];
   }
   save(): void {
     if (this.closed) throw new Error("Event journal is closed");
@@ -66,12 +82,17 @@ export class EventStore {
       }
     } finally { if (existsSync(temporary)) unlinkSync(temporary); }
   }
+  printerHead(printer: string): number {
+    return Object.prototype.hasOwnProperty.call(this.data.printerSequences, printer) ? this.data.printerSequences![printer] : 0;
+  }
   append(event: Omit<PrintEvent, "cursor">): PrintEvent {
-    const saved = { ...event, cursor: String(++this.data.sequence) };
+    const printerSequence = this.printerHead(event.data.printer) + 1;
+    this.data.printerSequences![event.data.printer] = printerSequence;
+    const saved = { ...event, cursor: String(++this.data.sequence), printerCursor: String(printerSequence) };
     this.data.history.push(saved);
     const removed = this.data.history.slice(0, Math.max(0, this.data.history.length - this.limit));
     for (const subscription of this.data.subscriptions) {
-      if (removed.some(item => item.name === subscription.name && Number(item.cursor) > subscription.position)) subscription.stopped = true;
+      if (removed.some(item => item.name === subscription.name && item.data.printer === (subscription.printer ?? "default") && Number(item.printerCursor) > subscription.position)) subscription.stopped = true;
     }
     this.data.history = this.data.history.slice(-this.limit);
     return saved; // Caller commits event and observation atomically with save().

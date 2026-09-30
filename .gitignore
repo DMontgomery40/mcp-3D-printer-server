@@ -81,3 +81,5 @@ coverage/
 !/docs/BLENDER.md
 
 !docs/PRINT_EVENTS.md
+
+!plugins/print-events/skills/print-notifications/SKILL.md

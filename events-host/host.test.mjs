@@ -21,7 +21,7 @@ function request(method,params={},auth=token,version='2026-07-28') {
  return new Request('http://127.0.0.1/mcp',{method:'POST',headers:{host:'127.0.0.1','Mcp-Method':method,...params.name?{'Mcp-Name':encodeURIComponent(params.name)}:{},'content-type':'application/json',accept:'application/json, text/event-stream','MCP-Protocol-Version':version,...auth?{authorization:`Bearer ${auth}`}:{}} ,
  body:JSON.stringify({jsonrpc:'2.0',id:1,method,params:{...params,_meta:{[PROTOCOL_VERSION_META_KEY]:version,[CLIENT_CAPABILITIES_META_KEY]:{}}}})});
 }
-const authenticate=async req=>req.headers.get('authorization')===`Bearer ${token}`?{principal:'operator'}:undefined;
+const authenticate=async req=>req.headers.get('authorization')===`Bearer ${token}`?{principal:'operator',scopes:['printer:read']}:undefined;
 test('official SDK2 discovery, tools and full signed event lifecycle use one authenticated endpoint',async t=> {
  const store=fixture(t);let received=[];
  const sender=async (_url,body,headers)=> {
@@ -35,7 +35,7 @@ test('official SDK2 discovery, tools and full signed event lifecycle use one aut
  const discovery=await (await host.fetch(request('server/discover'))).json();
  assert.ok(!discovery.error,JSON.stringify(discovery));assert.equal(discovery.result.resultType,'complete');
  assert.ok(discovery.result.supportedVersions.includes('2026-07-28'));assert.deepEqual(discovery.result.capabilities.events,{});
- const tools=await (await host.fetch(request('tools/list'))).json();assert.ok(tools.result.tools.some(t=>t.name==='list_print_events'));
+ const tools=await (await host.fetch(request('tools/list'))).json();assert.ok(tools.result.tools.some(t=>t.name==='list_print_events'));for(const tool of tools.result.tools)assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:['printer:read']}]);
  const status=await (await host.fetch(request('tools/call',{name:'get_printer_status',arguments:{}}))).json();assert.deepEqual(JSON.parse(status.result.content[0].text),{printer:'default',connected:true,status:'RUNNING'});assert.ok(!JSON.stringify(status).includes('private-'));
  const eventTypes=await (await host.fetch(request('events/list'))).json();assert.equal(eventTypes.result.events.length,2);
  const sub=await (await host.fetch(request('events/subscribe',subscribe))).json();assert.ok(sub.result?.id,JSON.stringify(sub));
@@ -87,4 +87,32 @@ test('real legacy child clean shutdown removes its event lock and recording work
   finally {await source.close();}
   assert.equal(existsSync(`${journal}.lock`),false);
  }
+});
+
+test('application-policy OAuth declares no invented custom scopes',async t=> {
+ const store=fixture(t),oauthMetadata={issuer:'https://printer.example.com',authorization_endpoint:'https://printer.example.com/authorize',token_endpoint:'https://printer.example.com/token',response_types_supported:['code']};
+ const host=createPrintEventHost({store,authenticate,authorize:()=>true,oauthMetadata,resourceServerUrl:'https://printer.example.com/mcp',scopesSupported:[]});t.after(()=>host.close());
+ const denied=await host.fetch(request('tools/list',{},null));assert.ok(!denied.headers.get('www-authenticate').includes('scope='));
+ const tools=await (await host.fetch(request('tools/list'))).json();for(const tool of tools.result.tools)assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:[]}]);
+});
+test('farm host restricts discovery, history, status, subscriptions and delivery to each owner printer',async t=>{
+ const store=fixture(t),received=[];
+ for(const printer of ['farm-a','farm-b']){const d=new PrintEventDetector(store,printer);d.observe({command:'push_status',gcode_state:'RUNNING',task_id:'same-private-id',print_error:0,hms:[]});d.observe({command:'push_status',gcode_state:'FINISH'});}
+ const host=createPrintEventHost({store,printers:['farm-a','farm-b'],authenticate,authorize:(_context,printer)=>printer==='farm-a',sender:async(_url,body)=>{const data=JSON.parse(body);if(data.type==='verification')return {status:200,body:JSON.stringify({challenge:data.challenge})};received.push(data);return {status:204,body:''};}});t.after(()=>host.close());
+ const catalog=await (await host.fetch(request('events/list'))).json();assert.deepEqual(catalog.result.events[0].inputSchema.properties.printer.enum,['farm-a']);
+ const tools=await (await host.fetch(request('tools/list'))).json();assert.deepEqual(tools.result.tools[0].inputSchema.properties.printer.enum,['farm-a']);
+ const history=await (await host.fetch(request('tools/call',{name:'list_print_events',arguments:{printer:'farm-a'}}))).json();const page=JSON.parse(history.result.content[0].text);assert.equal(page.events.length,1);assert.equal(page.events[0].data.printer,'farm-a');
+ const denied=await (await host.fetch(request('tools/call',{name:'list_print_events',arguments:{printer:'farm-b'}}))).json();assert.equal(denied.error.code,-32012);
+ const blocked=await (await host.fetch(request('events/subscribe',{...subscribe,arguments:{printer:'farm-b'}}))).json();assert.equal(blocked.error.code,-32012);
+ await host.fetch(request('events/subscribe',{...subscribe,arguments:{printer:'farm-a'}}));await host.service.deliverPending();assert.equal(received.length,1);assert.equal(received[0].data.printer,'farm-a');
+});
+
+test('host enforces actual granted scopes rather than replacing them with advertised scopes',async t=> {
+ const store=fixture(t),host=createPrintEventHost({store,authenticate:async()=>({principal:'operator',scopes:[]}),authorize:()=>true});t.after(()=>host.close());assert.equal((await host.fetch(request('server/discover'))).status,403);
+ const optional=createPrintEventHost({store,authenticate,authorize:()=>true,scopesSupported:['printer:read','printer:optional'],requiredScopes:['printer:read']});t.after(()=>optional.close());assert.equal((await optional.fetch(request('server/discover'))).status,200);const tools=await (await optional.fetch(request('tools/list'))).json();assert.deepEqual(tools.result.tools[0].securitySchemes,[{type:'oauth2',scopes:['printer:read']}]);
+});
+test('relay refuses replaced source journals and malformed private event data without advancing watermarks',async t=> {
+ const store=fixture(t),page={journalId:'journal-a',events:[],cursor:'1',truncated:false},source={list:async()=>({content:[{type:'text',text:JSON.stringify(page)}]})};
+ await relayOnce(source,store);page.journalId='journal-b';await assert.rejects(relayOnce(source,store),/identity changed/);assert.equal(store.data.sourceCursor,'1');delete page.journalId;await assert.rejects(relayOnce(source,store),/identity missing/);
+ page.journalId='journal-a';page.cursor='2';page.events=[{eventId:'private-invalid',name:'print.problem',timestamp:new Date().toISOString(),data:{printer:'default',jobId:'opaque',reason:'failed',codes:[{secret:'private'}]},cursor:'2'}];await assert.rejects(relayOnce(source,store),/alias mismatch/);assert.equal(store.data.sourceCursor,'1');assert.equal(store.data.history.length,0);
 });

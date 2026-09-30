@@ -11,8 +11,8 @@ export const PRINT_EVENTS_TOOL = { name: "list_print_events", description: "Read
 export class PrintEventRuntime {
   readonly detector: PrintEventDetector;
   private failed = false;
-  constructor(readonly store: EventStore, private readonly host: string, private readonly serial: string) {
-    this.detector = new PrintEventDetector(store);
+  constructor(readonly store: EventStore, private readonly host: string, private readonly serial: string, readonly printer = "default") {
+    this.detector = new PrintEventDetector(store, printer);
   }
   private safely(operation: () => void): void {
     if (this.failed) return;
@@ -43,8 +43,9 @@ export function createPrintEventRuntime(host: string, serial: string): PrintEven
   const filename = process.env.MCP_PRINT_EVENT_STORE;
   if (!filename) return undefined;
   try {
-    if (!isAbsolute(filename) || !serial.trim()) throw new Error("Invalid event configuration");
-    const runtime = new PrintEventRuntime(new EventStore(filename), host, serial);
+    const printer = process.env.MCP_PRINT_EVENT_PRINTER_ID ?? "default";
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(printer) || !isAbsolute(filename) || !serial.trim()) throw new Error("Invalid event configuration");
+    const runtime = new PrintEventRuntime(new EventStore(filename), host, serial, printer);
     process.once("exit", () => runtime.close());
     return runtime;
   } catch {

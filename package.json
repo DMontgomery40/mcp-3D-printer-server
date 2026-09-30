@@ -68,7 +68,13 @@
         "events-host/relay.mjs",
         "events-host/run.mjs",
         "docs/PRINT_EVENTS.md",
-        "events-host/worker.mjs"
+        "events-host/worker.mjs",
+        "events-host/cloudflare-auth.mjs",
+        "events-host/sources.mjs",
+        "events-host/oauth-auth.mjs",
+        "plugins/print-events",
+        "scripts/prepare-events-plugin.mjs",
+        "scripts/inject-test-print-event.mjs"
     ],
     "keywords": [
         "mcp",

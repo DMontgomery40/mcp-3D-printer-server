@@ -8,12 +8,14 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test host.test.mjs",
+    "test": "node --test host.test.mjs cloudflare-auth.test.mjs oauth-auth.test.mjs sources.test.mjs",
     "start": "node run.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.2.0",
     "@modelcontextprotocol/node": "2.1.0",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "jose": "6.2.1",
+    "ws": "8.22.0"
   }
 }
