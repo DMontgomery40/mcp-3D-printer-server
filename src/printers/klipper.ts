@@ -9,21 +9,25 @@ function encodePath(filename: string): string {
 export class KlipperImplementation extends GenericPrinterImplementation {
   protected readonly printerLabel = "Klipper/Moonraker";
 
+  protected authHeaders(apiKey: string): Record<string, unknown> {
+    return apiKey ? { headers: { "X-Api-Key": apiKey } } : {};
+  }
+
   async getStatus(host: string, port: string, apiKey: string) {
     const url = `http://${host}:${port}/printer/info`;
-    const response = await this.apiClient.get(url);
+    const response = await this.apiClient.get(url, this.authHeaders(apiKey));
     return response.data;
   }
 
   async getFiles(host: string, port: string, apiKey: string) {
     const url = `http://${host}:${port}/server/files/list`;
-    const response = await this.apiClient.get(url);
+    const response = await this.apiClient.get(url, this.authHeaders(apiKey));
     return response.data;
   }
 
   async getFile(host: string, port: string, apiKey: string, filename: string) {
     const url = `http://${host}:${port}/server/files/metadata?filename=${encodeURIComponent(filename)}`;
-    const response = await this.apiClient.get(url);
+    const response = await this.apiClient.get(url, this.authHeaders(apiKey));
     return response.data;
   }
 
@@ -35,7 +39,10 @@ export class KlipperImplementation extends GenericPrinterImplementation {
   protected async readPrinterState(host: string, port: string, apiKey: string): Promise<GenericPrinterState> {
     let data: any;
     try {
-      data = (await this.apiClient.get(`http://${host}:${port}/printer/objects/query?webhooks&print_stats`)).data;
+      data = (await this.apiClient.get(
+        `http://${host}:${port}/printer/objects/query?webhooks&print_stats`,
+        this.authHeaders(apiKey)
+      )).data;
     } catch (error) {
       throw new Error(`Cannot read Klipper/Moonraker printer state; nothing was sent: ${(error as Error).message}`);
     }
@@ -60,7 +67,11 @@ export class KlipperImplementation extends GenericPrinterImplementation {
   }
 
   protected async downloadRemoteFile(host: string, port: string, apiKey: string, filename: string, destination: string): Promise<void> {
-    await this.downloadToFile(`http://${host}:${port}/server/files/gcodes/${encodePath(filename)}`, {}, destination);
+    await this.downloadToFile(
+      `http://${host}:${port}/server/files/gcodes/${encodePath(filename)}`,
+      apiKey ? { "X-Api-Key": apiKey } : {},
+      destination
+    );
   }
 
   /** Current Moonraker returns {result:{item}}; older releases returned result "success". */
@@ -77,7 +88,8 @@ export class KlipperImplementation extends GenericPrinterImplementation {
 
     const response = await this.apiClient.post(url, formData as any, {
       headers: {
-        ...formData.getHeaders()
+        ...formData.getHeaders(),
+        ...(apiKey ? { "X-Api-Key": apiKey } : {})
       }
     });
 
@@ -87,7 +99,7 @@ export class KlipperImplementation extends GenericPrinterImplementation {
   protected async rawStartJob(host: string, port: string, apiKey: string, filename: string) {
     const url = `http://${host}:${port}/printer/print/start`;
 
-    const response = await this.apiClient.post(url, { filename } as any);
+    const response = await this.apiClient.post(url, { filename } as any, this.authHeaders(apiKey));
 
     return response.data;
   }
@@ -95,7 +107,7 @@ export class KlipperImplementation extends GenericPrinterImplementation {
   protected async rawCancelJob(host: string, port: string, apiKey: string) {
     const url = `http://${host}:${port}/printer/print/cancel`;
 
-    const response = await this.apiClient.post(url, null as any);
+    const response = await this.apiClient.post(url, null as any, this.authHeaders(apiKey));
 
     return response.data;
   }
@@ -114,7 +126,7 @@ export class KlipperImplementation extends GenericPrinterImplementation {
 
     const response = await this.apiClient.post(url, {
       script: gcode
-    } as any);
+    } as any, this.authHeaders(apiKey));
 
     return response.data;
   }
