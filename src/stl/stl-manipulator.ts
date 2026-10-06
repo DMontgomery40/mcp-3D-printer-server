@@ -870,7 +870,7 @@ export class STLManipulator extends EventEmitter {
     
     try {
       if (progressCallback) progressCallback(0, "Starting base extension operation...");
-      console.log(`Extending base of ${stlFilePath} by ${extensionInches} inches`);
+      console.error(`Extending base of ${stlFilePath} by ${extensionInches} inches`);
       
       // Load the STL file
       const { geometry, boundingBox } = await this.loadSTL(stlFilePath, progressCallback);
@@ -947,7 +947,7 @@ export class STLManipulator extends EventEmitter {
         output: outputFilePath
       });
       
-      console.log(`Modified STL saved to ${outputFilePath}`);
+      console.error(`Modified STL saved to ${outputFilePath}`);
       return outputFilePath;
     } catch (error) {
       console.error("Error extending STL base:", error);
@@ -1320,7 +1320,7 @@ export class STLManipulator extends EventEmitter {
       const mergedGeometry = BufferGeometryUtils.mergeVertices(geometry, tolerance);
       const newVertexCount = mergedGeometry.attributes.position.count;
 
-      console.log(`Merged vertices: ${originalVertexCount} -> ${newVertexCount} (Tolerance: ${tolerance}mm)`);
+      console.error(`Merged vertices: ${originalVertexCount} -> ${newVertexCount} (Tolerance: ${tolerance}mm)`);
       if (progressCallback) progressCallback(70, `Vertices merged: ${originalVertexCount} -> ${newVertexCount}`);
 
       if (!this.activeOperations.get(operationId)) throw new Error("Operation cancelled");
@@ -1364,7 +1364,7 @@ export class STLManipulator extends EventEmitter {
 
       if (center.lengthSq() < 0.0001) { // Already centered (or very close)
           if (progressCallback) progressCallback(100, "Model is already centered.");
-          console.log("Model already centered. No changes made.");
+          console.error("Model already centered. No changes made.");
           this.emit('operationComplete', { operationId, type: 'centerModel', success: true, output: stlFilePath, message: "Model already centered." });
           return stlFilePath; // Return original path
       }

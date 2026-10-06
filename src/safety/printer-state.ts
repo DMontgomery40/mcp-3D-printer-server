@@ -21,7 +21,7 @@ const MODEL_IDS: Record<string, string> = {
 };
 const SERIAL_MODELS: Record<string, string> = {
   "093": "H2S", "094": "H2D", "239": "H2C", "31B": "H2D Pro", "20P": "X2D",
-  "00M": "X1C", "00W": "X1", "03W": "X1E", "01S": "P1P", "01P": "P1S", "22E": "P2S", "030": "A1", "039": "A1 Mini",
+  "00M": "X1C", "00W": "X1", "03W": "X1E", "01S": "P1P", "01P": "P1S", "22E": "P2S", "039": "A1", "030": "A1 Mini",
 };
 
 function object(value: unknown): value is Record<string, any> {

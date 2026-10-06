@@ -1,6 +1,37 @@
 # Changelog
 
-## 1.2.11
+## 1.2.11 — 2026-10-06
+
+### Fixed
+
+- Send Moonraker's configured `API_KEY` as `X-Api-Key` on every request,
+  including multipart uploads and remote-file inspection downloads. Thanks to
+  Jack Manning (@EastArctica) for [#30](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/30)
+  and Klipper 0.13.0 authentication evidence. Loopback tests cover authenticated
+  and trusted-client configurations; no maintainer physical print was run.
+- Correct fresh Bambu A1/A1 mini serial identity (`039` / `030`) and accept the
+  official A1/A1 mini `M109 H` wait parameter without weakening independently
+  checked S/R temperature targets. Port the fork's fixes reported by @Steavie
+  ([#39](https://github.com/DMontgomery40/bambu-printer-mcp/issues/39)) and implemented
+  by @nitpreet22 ([#41](https://github.com/DMontgomery40/bambu-printer-mcp/pull/41)).
+  Covered by mocked identity and file-inspection regressions.
+- Keep model parsing, slicing, and STL diagnostics on stderr so they cannot
+  corrupt stdio MCP messages, following @travismcashan's report in the fork's
+  [#44](https://github.com/DMontgomery40/bambu-printer-mcp/issues/44). Subprocess
+  regressions check the compiled parser and slicer.
+- Make Bambu file metadata lookup read-only through the shared FTPS client;
+  remove the obsolete `bambu-js` dependency that created directories during reads.
+
+### Dependencies and interoperability
+
+- Update the MCP SDK to 1.32.1, basic-ftp to 6.2.2, JSZip to 3.10.2, dotenv
+  within version 16, and proxy-addr to its patched release. The production npm
+  audit reports no vulnerabilities; unresolved nodemon watcher advisories are
+  development-only and remain deferred rather than forcing an unsafe downgrade.
+- Verify discovery, invocation, and STL export with upstream mcp-for-blender
+  2.1.9 and the former blender-mcp 2.0.0 package in isolated Blender 5.0.1.
+  The exported fixture has 12 triangles and measures 40 × 20 × 10 mm. This
+  verifies application interoperability, not a user's live scene or a print.
 
 ### Discovery
 
