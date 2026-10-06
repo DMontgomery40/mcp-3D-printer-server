@@ -275,7 +275,9 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
       }
       if(['M104','M109','M140','M190','M141','M191'].includes(code)) {
         const args=parameters(argumentsText,'A');
-        for(const key of args.keys()) if(!'SRTA'.includes(key)) fail(`unsupported ${code} temperature parameter ${key}`);
+        const vendorWait=code==='M109' && ['a1','a1mini'].includes(model);
+        for(const key of args.keys()) if(!'SRTA'.includes(key) && !(key==='H' && vendorWait)) fail(`unsupported ${code} temperature parameter ${key}`);
+        if(args.has('H') && (!Number.isFinite(args.get('H')) || args.get('H')!<0 || args.get('H')!>300)) fail(`unsupported ${code} wait parameter H`);
         if(!args.has('S')&&!args.has('R')) fail(`missing ${code} temperature target`);
         const component= ['M104','M109'].includes(code)?'nozzle': ['M140','M190'].includes(code)?'bed':'chamber';
         // Heater T is a physical nozzle, unlike standalone remapped T filament selection.

@@ -2002,7 +2002,7 @@ class ThreeDPrinterMCPServer {
 
             // Define progress callback for UI updates
             const processProgressCallback = (progress: number, message?: string) => {
-              console.log(`Process progress: ${progress}% - ${message || ''}`);
+              console.error(`Process progress: ${progress}% - ${message || ''}`);
             };
 
             // 1. Extend the base of the STL file
@@ -2130,7 +2130,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const scaleProgressCallback = (progress: number, message?: string) => {
-              console.log(`Scale progress: ${progress}% - ${message || ''}`);
+              console.error(`Scale progress: ${progress}% - ${message || ''}`);
             };
             
             let scaleFactors: number | [number, number, number];
@@ -2162,7 +2162,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const rotateProgressCallback = (progress: number, message?: string) => {
-              console.log(`Rotate progress: ${progress}% - ${message || ''}`);
+              console.error(`Rotate progress: ${progress}% - ${message || ''}`);
             };
             
             // Get rotation angles, defaulting to 0 for any undefined axis
@@ -2186,7 +2186,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const translateProgressCallback = (progress: number, message?: string) => {
-              console.log(`Translate progress: ${progress}% - ${message || ''}`);
+              console.error(`Translate progress: ${progress}% - ${message || ''}`);
             };
             
             // Get translation values, defaulting to 0 for any undefined axis
@@ -2210,7 +2210,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const modifySectionProgressCallback = (progress: number, message?: string) => {
-              console.log(`Modify section progress: ${progress}% - ${message || ''}`);
+              console.error(`Modify section progress: ${progress}% - ${message || ''}`);
             };
             
             // Determine the section to modify
@@ -2287,7 +2287,7 @@ class ThreeDPrinterMCPServer {
             
             // Define progress callback for UI updates
             const visualizationProgressCallback = (progress: number, message?: string) => {
-              console.log(`Visualization progress: ${progress}% - ${message || ''}`);
+              console.error(`Visualization progress: ${progress}% - ${message || ''}`);
             };
             
             // Get width and height parameters, with defaults
@@ -2347,7 +2347,7 @@ class ThreeDPrinterMCPServer {
                   "slicer_path"
                 ) ?? DEFAULT_SLICER_PATH;
               try {
-                console.log(`3MF has no gcode — auto-slicing with ${slicerType} for ${printModel}`);
+                console.error(`3MF has no gcode — auto-slicing with ${slicerType} for ${printModel}`);
                 threeMFPath = await this.stlManipulator.sliceSTL(
                   threeMFPath,
                   slicerType,
@@ -2359,7 +2359,7 @@ class ThreeDPrinterMCPServer {
                   // Slice for the plate and nozzle the print will be checked against.
                   { bedType: printBedType, ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}) }
                 );
-                console.log("Auto-sliced to: " + threeMFPath);
+                console.error("Auto-sliced to: " + threeMFPath);
               } catch (sliceErr: any) {
                 // Never fall back to uploading the original unsliced project.
                 // Rethrow the original instance (for example a SlicerError) so
@@ -2385,7 +2385,7 @@ class ThreeDPrinterMCPServer {
             try {
                 // --- Parse 3MF --- 
                 const parsed3MFData = await parse3MF(threeMFPath);
-                console.log(`Successfully parsed 3MF file: ${threeMFPath}`);
+                console.error(`Successfully parsed 3MF file: ${threeMFPath}`);
                 const amsOptions = this.resolveAmsPrintOptions(
                   parsed3MFData,
                   args as Record<string, unknown> | undefined

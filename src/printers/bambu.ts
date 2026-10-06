@@ -4,7 +4,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Client as FTPClient } from "basic-ftp";
-import { BambuPrinter } from "bambu-js";
 import { BambuClient, PushAllCommand } from "bambu-node";
 import { MAX_PRINT_FILE_BYTES, readSafe3mfArchive } from "../safety/archive.js";
 import { inspectPrintFile, type PrintFileInspection } from "../safety/print-file.js";
@@ -595,8 +594,7 @@ export class BambuImplementation extends PrinterImplementation {
   }
 
   async getFile(host: string, port: string, apiKey: string, filename: string) {
-    const [serial, token] = this.extractBambuCredentials(apiKey);
-    const printer = new BambuPrinter(host, serial, token);
+    const [, token] = this.extractBambuCredentials(apiKey);
 
     const normalized = filename.replace(/^\/+/, "");
     const directory = path.posix.dirname(normalized) === "." ? "cache" : path.posix.dirname(normalized);
@@ -604,10 +602,14 @@ export class BambuImplementation extends PrinterImplementation {
 
     let exists = false;
 
-    await printer.manipulateFiles(async (context) => {
-      const entries = await context.readDir(directory);
-      exists = entries.includes(baseName);
-    });
+    const client = new FTPClient(15_000);
+    try {
+      await client.access(this.ftpsOptions(host, token));
+      const entries = await client.list(`/${directory}`);
+      exists = entries.some(entry => entry.name === baseName);
+    } finally {
+      client.close();
+    }
 
     return {
       name: `${directory}/${baseName}`,

@@ -348,3 +348,14 @@ test('ambiguous heater candidates still enforce every possible material temperat
   const selected=await inspect(t,'',{model:'h2d'},{...entries,'Metadata/plate_1.gcode':'T1\nM104 S300\n'});
   assert.deepEqual(selected.usedFilamentPositions,[1]);
 });
+
+test('A1 and A1 mini M109 H wait limits are accepted while S stays the checked target',async t=>{
+  // Official Bambu Studio 02.08 start G-code: A1 emits M109 S25 H140 and M109 S220 H300; A1 mini emits M109 S100 H170.
+  const a1=await inspect(t,header('A1')+'M109 S25 H140\nM109 S220 H300\nG1 X10 Y10 E1\n',{model:'a1'});
+  assert.equal(a1.maxNozzleTemperature,220);
+  assert.equal((await inspect(t,header('A1 mini')+'M109 S100 H170\n',{model:'a1mini'})).maxNozzleTemperature,100);
+  for(const command of ['M109 S25 H301','M109 S25 H-1','M109 S25 H','M109 S400 H140','M109 R400 H140','M104 S220 H140','M190 S60 H140','M109 H140'])
+    await assert.rejects(inspect(t,header('A1')+command+'\n',{model:'a1'}),/temperature|unsupported|parameter|limit|target/i,command);
+  for(const model of ['P1S','X1C','H2D'])
+    await assert.rejects(inspect(t,header(model,'PLA',model==='H2D'?'0.4;0.4':'0.4')+'M109 S25 H140\n',{model:model.toLowerCase()}),/temperature parameter H/,model);
+});

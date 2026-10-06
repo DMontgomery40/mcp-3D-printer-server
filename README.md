@@ -37,7 +37,8 @@ Preserve my existing servers and settings. Prefer the published npm package
 Ask which printer system I use and set PRINTER_TYPE to match. Never guess it.
 Then ask only for the values that backend needs:
 - octoprint: PRINTER_HOST, PRINTER_PORT if not 80, API_KEY
-- klipper (Moonraker): PRINTER_HOST, PRINTER_PORT (usually 7125)
+- klipper (Moonraker): PRINTER_HOST, PRINTER_PORT (usually 7125),
+  API_KEY if Moonraker requires authentication
 - duet: PRINTER_HOST, PRINTER_PORT if not 80
 - repetier: PRINTER_HOST, PRINTER_PORT (usually 3344), API_KEY
 - bambu: PRINTER_HOST, BAMBU_SERIAL, BAMBU_TOKEN (the LAN access code),
@@ -764,7 +765,7 @@ For example, `printer://192.168.1.100/status` reads the status of the printer at
 1. **Status depth varies by backend.** Bambu status includes progress, layers, and time remaining. OctoPrint status comes from `/api/printer` (state and temperatures, not job progress). Klipper status comes from Moonraker's `/printer/info`, which reports the host state but not job progress or temperatures. Duet, Repetier, and Creality responses have not been verified on hardware.
 2. **Cancel, but no pause.** There is no pause or resume tool. `cancel_print` stops the job.
 3. **Plain HTTP for most backends.** OctoPrint, Klipper, Duet, Repetier, and Creality adapters connect over `http://`. The Prusa adapter uses HTTPS for Prusa Connect, an `https://` host, or port 443.
-4. **Klipper and Duet send no credentials.** Moonraker must trust the MCP host, and a password-protected Duet cannot be reached yet.
+4. **Moonraker authentication is optional; Duet has no password support.** Set `API_KEY` for Moonraker hosts that require authentication. Leave it empty only when Moonraker trusts the MCP host. A password-protected Duet cannot be reached yet.
 5. **Command sent is not print finished.** A success response means the printer or its host accepted the request. Check status, and the printer itself, before you walk away.
 6. **Bambu prints need a sliced project and the right model.** `print_3mf` needs a `.3mf` with `Metadata/plate_<n>.gcode`, uploads it to `cache/`, and starts plate 1. Print settings such as layer height and temperatures cannot be changed at print time. `start_print` handles plain `.gcode` files only.
 7. **Bambu AMS mapping is simple.** `ams_mapping` values are sorted and padded to five entries; real behavior still depends on firmware, loaded filament, and the project's metadata. For AMS inventory and color matching, see [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).

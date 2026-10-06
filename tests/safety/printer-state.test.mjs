@@ -207,3 +207,15 @@ test('fresh reads publish pushall and get_version with string sequence ids witho
   assert.equal(published.find(payload => payload.info).info.command,'get_version');
   for (const payload of published) assert.match(Object.values(payload)[0].sequence_id, /^\d+$/);
 });
+
+test('fresh A1 returned serials distinguish full-size 039 from mini 030',async()=>{
+  for(const [prefix,expected] of [['039','a1'],['030','a1mini']]) {
+    const serial=prefix+'FIXTURE';
+    const printer=rawPrinter((payload,emit)=>{
+      if(payload.pushing) emit({print:{command:'push_status',gcode_state:'IDLE',print_error:0,hms:[],nozzle_diameter:'0.4'}},`device/${serial}/report`);
+      if(payload.info) emit({info:{command:'get_version',module:[{name:'ota',sn:serial}]}},`device/${serial}/report`);
+    });
+    const result=await safety.readFreshPrinterStatus(printer,serial,50);
+    assert.equal(result.model,expected);assert.equal(result.observedSerial,serial);
+  }
+});

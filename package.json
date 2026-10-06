@@ -1,6 +1,7 @@
 {
     "name": "mcp-3d-printer-server",
-    "version": "1.2.10",
+    "mcpName": "io.github.DMontgomery40/mcp-3d-printer-server",
+    "version": "1.2.11",
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "main": "dist/index.js",
     "repository": "https://github.com/DMontgomery40/mcp-3D-printer-server",
@@ -59,7 +60,9 @@
         "dist/blender-mcp-bridge.js",
         "dist/blender-mcp-bridge.d.ts",
         "src/blender-mcp-bridge.ts",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "CONTRIBUTORS.md",
+        "server.json"
     ],
     "keywords": [
         "mcp",
@@ -76,14 +79,13 @@
     "author": "David Montgomery",
     "license": "GPL-2.0",
     "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.27.0",
+        "@modelcontextprotocol/sdk": "^1.32.1",
         "axios": "^1.20.0",
-        "bambu-js": "^2.2.2",
         "bambu-node": "3.22.21",
-        "basic-ftp": "^5.3.1",
-        "dotenv": "^16.3.1",
+        "basic-ftp": "^6.2.2",
+        "dotenv": "^16.6.1",
         "form-data": "^4.0.6",
-        "jszip": "^3.10.1",
+        "jszip": "^3.10.2",
         "three": "^0.173.0",
         "xml2js": "^0.6.2",
         "zod": "^3.25.76"

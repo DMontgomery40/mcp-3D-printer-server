@@ -55,7 +55,7 @@ npm link
 |---|---|---|---|---|
 | `bambu` | Bambu Lab | MQTT over TLS on port 8883, FTPS on port 990 | `BAMBU_SERIAL`, `BAMBU_TOKEN` (LAN access code), `BAMBU_MODEL` | **Most tested.** Maintainer hardware testing, shared with the Bambu-only fork. The FTPS fix for [#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22) is tested against a local FTPS server; confirmation on the reporter's X1C is outstanding. |
 | `octoprint` | OctoPrint | HTTP REST API, port 80 on OctoPi | `API_KEY`, sent as `X-Api-Key` | **Community-reported.** Used against a real OctoPrint instance in [#4](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/4). |
-| `klipper` | Klipper (Moonraker) | HTTP API, usually port 7125 | None sent; Moonraker must trust the MCP host | **Community-reported.** Used with a Creality K1 Max through Moonraker in [#16](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/16). |
+| `klipper` | Klipper (Moonraker) | HTTP API, usually port 7125 | Optional `API_KEY`, sent as `X-Api-Key`; otherwise Moonraker must trust the MCP host | **Community-reported.** Used with a Creality K1 Max through Moonraker in [#16](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/16). |
 | `prusa` | PrusaLink / Prusa Connect | HTTP for local PrusaLink, HTTPS for `connect.prusa3d.com` or port 443 | `API_KEY`, sent as `X-Api-Key` and as a bearer token | **Community-reported.** PrusaLink 0.8.1 status fixed after [#11](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/11); Prusa Connect setup discussed in [#9](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/9). |
 | `duet` | Duet | HTTP, port 80 | None sent | **Unverified.** No hardware reports yet. |
 | `repetier` | Repetier-Server | HTTP, usually port 3344 | `API_KEY`, sent as the `apikey` query parameter | **Unverified.** No hardware reports yet. |
@@ -74,7 +74,7 @@ Create a `.env` file in the directory where you run the server, or pass environm
 PRINTER_TYPE=octoprint            # octoprint, klipper, duet, repetier, bambu, prusa, creality
 PRINTER_HOST=192.168.1.100        # Printer or host-software address
 PRINTER_PORT=80                   # 7125 for Moonraker, 3344 for Repetier-Server
-API_KEY=your_api_key              # OctoPrint, Repetier, Prusa, Creality
+API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier, Prusa, Creality
 
 # --- Bambu Lab only ---
 # BAMBU_SERIAL=01P00A123456789    # Printer serial number
@@ -118,7 +118,7 @@ API_KEY=your_api_key              # OctoPrint, Repetier, Prusa, Creality
 | `PRINTER_TYPE` | `octoprint` | Yes | Printer adapter: `octoprint`, `klipper`, `duet`, `repetier`, `bambu`, `prusa`, or `creality` |
 | `PRINTER_HOST` | `localhost` | Yes | Printer or host-software address. Prusa also accepts `connect.prusa3d.com` or a full `https://` URL |
 | `PRINTER_PORT` | `80` | Depends on backend | HTTP port for non-Bambu backends. Set `7125` for Moonraker and `3344` for Repetier-Server |
-| `API_KEY` | | OctoPrint, Repetier, Prusa, Creality | Backend API key or token. Klipper and Duet adapters do not send one |
+| `API_KEY` | | OctoPrint, authenticated Moonraker, Repetier, Prusa, Creality | Backend API key or token. Duet does not send one |
 | `BAMBU_SERIAL` | | Bambu | Printer serial number |
 | `BAMBU_TOKEN` | | Bambu | LAN access code shown on the printer |
 | `BAMBU_MODEL` | | **Bambu printing and Bambu slicing** | Printer model: `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`. **Required** for `print_3mf`, `start_print`, upload with `print: true`, positive Bambu heating, and Bambu-compatible slicing. Slicing also accepts `p2s`, `h2s`, and `h2c` when the installed slicer has that preset. If omitted and the MCP client supports elicitation, the server asks. It selects the slicer machine preset and is checked against the live printer before printing. |
@@ -208,7 +208,7 @@ Replace the `env` block with the values for your backend:
 | Backend | `env` values |
 |---|---|
 | OctoPrint | `PRINTER_TYPE=octoprint`, `PRINTER_HOST`, `PRINTER_PORT` (80 on OctoPi, 5000 for `octoprint serve`), `API_KEY` |
-| Klipper (Moonraker) | `PRINTER_TYPE=klipper`, `PRINTER_HOST`, `PRINTER_PORT=7125` |
+| Klipper (Moonraker) | `PRINTER_TYPE=klipper`, `PRINTER_HOST`, `PRINTER_PORT=7125`, `API_KEY` if required |
 | Duet | `PRINTER_TYPE=duet`, `PRINTER_HOST`, `PRINTER_PORT` if not 80 |
 | Repetier-Server | `PRINTER_TYPE=repetier`, `PRINTER_HOST`, `PRINTER_PORT=3344`, `API_KEY` |
 | Bambu Lab | `PRINTER_TYPE=bambu`, `PRINTER_HOST`, `BAMBU_SERIAL`, `BAMBU_TOKEN`, `BAMBU_MODEL` |
@@ -289,7 +289,7 @@ The adapter connects over plain HTTP and sends the key as `X-Api-Key`. It calls 
 ### Klipper (Moonraker)
 
 1. Make sure Moonraker is reachable from the machine running the MCP server, usually on port 7125.
-2. The adapter does not send an API key. Allow the MCP host in Moonraker's `[authorization]` `trusted_clients`, or use an installation without Moonraker authorization.
+2. If Moonraker requires authentication, set `API_KEY` to its API key. The adapter sends `X-Api-Key` on status, file, upload, start, cancel, and heater requests. Leave it empty only when Moonraker trusts the MCP host. See [Moonraker authentication](https://moonraker.readthedocs.io/en/latest/external_api/authorization/).
 3. Set `PRINTER_TYPE=klipper`, `PRINTER_HOST`, and `PRINTER_PORT=7125`.
 
 Status comes from `/printer/info`, which reports the Klipper host state (for example `ready`) but not job progress or temperatures; [#12](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/12) requests richer job status. The safety gate reads `/printer/objects/query?webhooks&print_stats` to refuse a printer that is printing, paused, or in error. Other calls: `/server/files/list`, `/server/files/upload`, `/server/files/gcodes/<file>` (download for inspection before `start_print`), `/printer/print/start`, `/printer/print/cancel`, and `SET_HEATER_TEMPERATURE` through `/printer/gcode/script` for `bed` and `extruder`.
