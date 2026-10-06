@@ -2,6 +2,9 @@
 
 ## 1.2.11 — 2026-10-06
 
+This release also includes the safety, slicing, Blender, and documentation
+changes prepared as 1.2.10 below. Version 1.2.10 was not published to npm.
+
 ### Fixed
 
 - Send Moonraker's configured `API_KEY` as `X-Api-Key` on every request,
@@ -39,7 +42,7 @@
   npm package. The listing documents printer backend configuration and marks
   API keys and Bambu LAN access codes as secrets.
 
-## 1.2.10
+## 1.2.10 — repository changes, not published to npm
 
 ### Safety
 
