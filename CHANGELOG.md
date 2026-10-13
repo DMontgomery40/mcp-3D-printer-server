@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.12 — 2026-10-13
+
+### Fixed
+
+- Correct fresh H2C (`31B`) and H2D Pro (`239`) returned-serial identity without trusting configured identity or suppressing conflicts. Accept a cloud print-job identifier in `model_id` only when another recognized observed model or returned serial identifies the printer; unknown actual model fields still reject. Port reports from Adam (@adamkaplan, [fork #47](https://github.com/DMontgomery40/bambu-printer-mcp/issues/47)) and JaviOFC ([fork #36](https://github.com/DMontgomery40/bambu-printer-mcp/issues/36)).
+- Accept Bambu Studio 02.08 P2S per-variant nozzle tables alongside the selected plate header, and the exact P2S `M145 P0/P1` airduct forms. Preserve selected extruder/variant conflicts and independent thermal checks. Port Izzy Mansurov's (@sapoepsilon) code and regressions from [fork #33](https://github.com/DMontgomery40/bambu-printer-mcp/pull/33), including the subsequent selection-validation corrections.
+- Accept the official H2C startup forms only inside its single bounded executable startup block, with independent base/derived nozzle and bed checks and declared filament positions. Keep configuration `layer_change_gcode` keys from ending startup; actual layer markers and extrusion still close it. Reject unchecked `G383 U` targets outside the allowance. Thanks to Adam for [fork #48](https://github.com/DMontgomery40/bambu-printer-mcp/issues/48) and the exact vendor template evidence.
+- Accept the official X2D bare material-switch `B` flag and exact `M620.22 I<declared filament> P1` runout-purge form while rejecting unsupported variants and preserving heater ceilings. Thanks to Travis Cashman (@travismcashan) for [fork #44](https://github.com/DMontgomery40/bambu-printer-mcp/issues/44). These are file-inspection changes; no native X2D helper is added to this server.
+
+### Dependencies
+
+- Update basic-ftp to 6.2.3 for [GHSA-r4jh-29pc-gfqr](https://github.com/patrickjuchli/basic-ftp/security/advisories/GHSA-r4jh-29pc-gfqr): rejected control-character passwords/resume paths no longer cause an uncaught exception or leave the client unusable, and rejected PASS errors omit the password. Keep bambu-node pinned and preserve the parent's direct MQTT wire-shape and rejection guard.
+
+Validation uses mocked transports, the pinned official H2C template, unsafe-file mutations, and clean package installations. No physical printer operation is performed or claimed.
+
 ## 1.2.11 — 2026-10-06
 
 This release also includes the safety, slicing, Blender, and documentation

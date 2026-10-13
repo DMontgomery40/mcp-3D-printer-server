@@ -7,22 +7,49 @@
     "url": "https://github.com/DMontgomery40/mcp-3D-printer-server",
     "source": "github"
   },
-  "version": "1.2.11",
+  "version": "1.2.12",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "mcp-3d-printer-server",
-      "version": "1.2.11",
+      "version": "1.2.12",
       "runtimeHint": "npx",
-      "transport": { "type": "stdio" },
+      "transport": {
+        "type": "stdio"
+      },
       "environmentVariables": [
-        { "name": "PRINTER_TYPE", "description": "Printer backend: octoprint, klipper, duet, repetier, bambu, prusa, or creality.", "isRequired": true },
-        { "name": "PRINTER_HOST", "description": "Printer IP address or hostname.", "isRequired": true },
-        { "name": "PRINTER_PORT", "description": "Optional backend-specific port." },
-        { "name": "API_KEY", "description": "API key for printer backends that require authentication.", "isSecret": true },
-        { "name": "BAMBU_SERIAL", "description": "Printer serial number; required for Bambu Lab." },
-        { "name": "BAMBU_TOKEN", "description": "LAN access code; required for Bambu Lab.", "isSecret": true },
-        { "name": "BAMBU_MODEL", "description": "Exact Bambu model; required for Bambu print operations." }
+        {
+          "name": "PRINTER_TYPE",
+          "description": "Printer backend: octoprint, klipper, duet, repetier, bambu, prusa, or creality.",
+          "isRequired": true
+        },
+        {
+          "name": "PRINTER_HOST",
+          "description": "Printer IP address or hostname.",
+          "isRequired": true
+        },
+        {
+          "name": "PRINTER_PORT",
+          "description": "Optional backend-specific port."
+        },
+        {
+          "name": "API_KEY",
+          "description": "API key for printer backends that require authentication.",
+          "isSecret": true
+        },
+        {
+          "name": "BAMBU_SERIAL",
+          "description": "Printer serial number; required for Bambu Lab."
+        },
+        {
+          "name": "BAMBU_TOKEN",
+          "description": "LAN access code; required for Bambu Lab.",
+          "isSecret": true
+        },
+        {
+          "name": "BAMBU_MODEL",
+          "description": "Exact Bambu model; required for Bambu print operations."
+        }
       ]
     }
   ]

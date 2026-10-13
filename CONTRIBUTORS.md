@@ -6,6 +6,9 @@ Thank you to everyone who builds, tests, reports problems, and shares real print
 
 | Contributor | Contribution |
 | --- | --- |
+| [Adam (@adamkaplan)](https://github.com/adamkaplan) | Supplies H2C serial/status evidence in [fork #47](https://github.com/DMontgomery40/bambu-printer-mcp/issues/47) and exact Bambu Studio 02.08 startup/template reproductions in [fork #48](https://github.com/DMontgomery40/bambu-printer-mcp/issues/48), ported here with fresh identity and bounded file-inspection regressions. No maintainer physical H2C print is claimed. |
+| [Izzy Mansurov (sapoepsilon)](https://github.com/sapoepsilon) | Implements P2S extruder-variant and airduct inspection in [fork #33](https://github.com/DMontgomery40/bambu-printer-mcp/pull/33). Original code authorship is retained in the port, alongside unsafe-file and selected-header regressions; hardware printing is not claimed. |
+| [JaviOFC](https://github.com/JaviOFC) | Provides X2D firmware/status evidence in [fork #36](https://github.com/DMontgomery40/bambu-printer-mcp/issues/36) demonstrating that a cloud job identifier in model_id is not a printer declaration. The observed-identity correction and conflict regressions are ported here. |
 | [Jack Manning (EastArctica)](https://github.com/EastArctica) | Sends `X-Api-Key` on every Klipper/Moonraker request, including uploads and remote-file downloads, in [#30](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/30). Supplies Klipper 0.13.0 evidence of authenticated status succeeding after the previous 401 response. |
 | [nitpreet22](https://github.com/nitpreet22) | Adds A1/A1 mini `M109 H` wait compatibility and safety regressions in the Bambu fork's [#41](https://github.com/DMontgomery40/bambu-printer-mcp/pull/41), ported here with original code authorship. Shares Windows A1 slicing and file-inspection evidence; this is not physical-print verification. |
 | [Javier Cortejoso (jcortejoso)](https://github.com/jcortejoso) | Reads the FULU bridge command from server configuration by default, with an explicit opt-in for per-call bridge commands, in [#20](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/20). [#21](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/21) extends the same gate to every per-call executable selector. |
@@ -19,7 +22,7 @@ Thank you to everyone who builds, tests, reports problems, and shares real print
 | Contributor | Contribution |
 | --- | --- |
 | [Steavie](https://github.com/Steavie) | Reports reversed A1/A1 mini serial identity in the Bambu fork's [#39](https://github.com/DMontgomery40/bambu-printer-mcp/issues/39). This repository now uses the corrected prefixes for fresh safety identity, with mocked MQTT regressions. |
-| [Travis Cashman (travismcashan)](https://github.com/travismcashan) | Reports MCP stdout pollution from model parsing and slicing in the Bambu fork's [#44](https://github.com/DMontgomery40/bambu-printer-mcp/issues/44). The stderr correction and subprocess regressions are also applied here. |
+| [Travis Cashman (travismcashan)](https://github.com/travismcashan) | Reports MCP stdout pollution from model parsing and slicing in the Bambu fork's [#44](https://github.com/DMontgomery40/bambu-printer-mcp/issues/44). The stderr correction and subprocess regressions are also applied here. Their exact stock material-switch and runout-purge evidence informs the X2D file-inspection port; maintainer validation remains offline and mocked. |
 | [Lickitysplitted](https://github.com/Lickitysplitted) | Diagnoses Bambu FTPS "Premature close" upload failures on an X1C as missing TLS session reuse in [#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22). Release 1.2.9 addresses it; confirmation on that X1C firmware is still outstanding. |
 | [CrowSoda](https://github.com/CrowSoda) | Tries slicing and printing on a Creality K1 Max through Klipper and Moonraker, and reports invalid OrcaSlicer CLI flags, missing filament-profile support, and unregistered upload and start tools in [#16](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/16). All three are fixed. |
 | [dongio20](https://github.com/dongio20) | Reports the PrusaLink 0.8.1 status 404, with firmware details and the working endpoint, in [#11](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/11). Fixed in [#15](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/15). |
@@ -43,6 +46,10 @@ Thank you to everyone who builds, tests, reports problems, and shares real print
 - [David Montgomery (DMontgomery40)](https://github.com/DMontgomery40): project maintainer and Bambu Lab hardware testing.
 
 See the [full contribution history](https://github.com/DMontgomery40/mcp-3D-printer-server/graphs/contributors) for commit authorship. Credit here includes bug reports, printer evidence, and reviewed proposals as well as merged code.
+
+## Dependency maintenance
+
+Thanks to [Patrick Juchli](https://github.com/patrickjuchli) and the basic-ftp maintainers for [6.2.3](https://github.com/patrickjuchli/basic-ftp/releases/tag/v6.2.3), which fixes rejected-command crashes, client recovery, and password exposure in PASS errors. The compatible FTPS security update is validated in this release.
 
 ## Open-source community and interoperability
 

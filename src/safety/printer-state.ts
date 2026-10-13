@@ -20,7 +20,7 @@ const MODEL_IDS: Record<string, string> = {
   N2S: "A1", A1M: "A1 Mini", C11: "P1P", C12: "P1S", C13: "X1E", "BL-P001": "X1C", "BL-P002": "X1",
 };
 const SERIAL_MODELS: Record<string, string> = {
-  "093": "H2S", "094": "H2D", "239": "H2C", "31B": "H2D Pro", "20P": "X2D",
+  "093": "H2S", "094": "H2D", "31B": "H2C", "239": "H2D Pro", "20P": "X2D",
   "00M": "X1C", "00W": "X1", "03W": "X1E", "01S": "P1P", "01P": "P1S", "22E": "P2S", "039": "A1", "030": "A1 Mini",
 };
 
@@ -28,10 +28,15 @@ function object(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 function observedIdentity(raw: Record<string, any>, configuredSerial: string) {
-  const declarations = [raw.model_id, raw.model, raw.printer_type, raw.device?.devModel, raw.device?.dev_model]
+  const recognizedModelFromModelId = typeof raw.model_id === "string" && raw.model_id.trim()
+    ? normalizeModel(MODEL_IDS[raw.model_id.trim().toUpperCase()] ?? raw.model_id)
+    : undefined;
+  const declarations = [raw.model, raw.printer_type, raw.device?.devModel, raw.device?.dev_model]
     .filter(value => typeof value === "string" && value.trim());
   const models = declarations.map(value => normalizeModel(MODEL_IDS[value.trim().toUpperCase()] ?? value));
   if (models.some(model => !model)) throw new Error("Printer reported an unknown model identity; cannot verify this printer.");
+  if (recognizedModelFromModelId) models.unshift(recognizedModelFromModelId);
+  const hasReportedModel = models.length > 0;
   const serials = [raw.serial, raw.serial_number, raw.sn, raw.device?.sn,
     ...(Array.isArray(raw.modules) ? raw.modules.filter((module: any) => module?.name === "ota").map((module: any) => module.sn) : [])]
     .filter(value => typeof value === "string" && value.trim()).map(value => value.trim());
@@ -44,7 +49,7 @@ function observedIdentity(raw: Record<string, any>, configuredSerial: string) {
   }
   if (new Set(models).size > 1) throw new Error("Printer returned contradictory model identity information.");
   const model = models[0];
-  return { model, observedSerial: serials[0], identitySource: declarations.length ? "report" : "module-serial" };
+  return { model, observedSerial: serials[0], identitySource: hasReportedModel ? "report" : "module-serial" };
 }
 
 /** Only raw reports received after this request are evidence. Never read printer.data here. */
