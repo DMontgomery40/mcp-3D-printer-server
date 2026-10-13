@@ -166,6 +166,58 @@ test('ambiguous H2D nozzle variant selections and contradictory header types rej
   project.printer_extruder_variant[4]='Direct Drive High Flow';project.nozzle_type[4]='stainless_steel';
   await assert.rejects(inspect(t,'',{model:'h2d'},entries),/nozzle.*type|extruder|variant|metadata/i);
 });
+// Shape of a Bambu Studio 02.08 P2S GUI slice: the project stores per-variant
+// tables, while the plate header records the selected single-extruder values.
+const p2sGuiProject=()=>({
+  printer_model:'Bambu Lab P2S',nozzle_diameter:['0.6'],filament_type:['PLA'],extruder_type:['Direct Drive'],nozzle_volume_type:['Standard'],
+  printer_extruder_id:['1','1','1'],printer_extruder_variant:['Direct Drive Standard','Direct Drive High Flow','Direct Drive E3D High Flow'],
+  nozzle_type:['hardened_steel','hardened_steel','hardened_steel']
+});
+const p2sGuiHeader='; nozzle_type = hardened_steel\n; nozzle_volume_type = Standard\n; printer_extruder_id = 1\n; printer_extruder_variant = "Direct Drive Standard"\n; printer_model = Bambu Lab P2S\n';
+const p2sEntries=(project,gcode)=>({'Metadata/project_settings.config':project,'Metadata/plate_1.gcode':gcode});
+test('P2S GUI variant tables accept the selected single-extruder header values',async t=>{
+  const result=await inspect(t,'',{model:'p2s'},p2sEntries(p2sGuiProject(),p2sGuiHeader+'G1 X100 Y100\n'));
+  assert.deepEqual(result.nozzleTypes,['hardened_steel']);assert.deepEqual(result.nozzleFlows,['standard']);assert.deepEqual(result.nozzleDiameters,[0.6]);
+  const project=p2sGuiProject();project.nozzle_type=['stainless_steel','hardened_steel','hardened_steel'];
+  const gcode=p2sGuiHeader.replace('hardened_steel','stainless_steel')+'G1 X100 Y100\n';
+  assert.deepEqual((await inspect(t,'',{model:'p2s'},p2sEntries(project,gcode))).nozzleTypes,['stainless_steel']);
+});
+test('P2S selected extruder ids and variants cannot contradict the project tables',async t=>{
+  const cases=[
+    [p2sGuiProject(),p2sGuiHeader.replace('printer_extruder_id = 1','printer_extruder_id = 2')],
+    [p2sGuiProject(),p2sGuiHeader.replace('printer_extruder_id = 1','printer_extruder_id = 1;1')],
+    [p2sGuiProject(),p2sGuiHeader.replace('printer_extruder_id = 1','printer_extruder_id = x')],
+    [{...p2sGuiProject(),printer_extruder_id:['1','1']},p2sGuiHeader],
+    [{...p2sGuiProject(),printer_extruder_id:['1','1','2']},p2sGuiHeader],
+    [p2sGuiProject(),p2sGuiHeader.replace('nozzle_type = hardened_steel','nozzle_type = brass')],
+    [{...p2sGuiProject(),nozzle_type:['stainless_steel','hardened_steel','hardened_steel']},p2sGuiHeader.replace('Direct Drive Standard','Direct Drive High Flow')],
+    [{...p2sGuiProject(),nozzle_type:['stainless_steel','hardened_steel','hardened_steel']},p2sGuiHeader.replace('Direct Drive Standard','Direct Drive Standard;Direct Drive High Flow')]
+  ];
+  for(const [project,header] of cases)
+    await assert.rejects(inspect(t,'',{model:'p2s'},p2sEntries(project,header+'G1 X100 Y100\n')),/extruder|variant|nozzle type|contradict|metadata/i,header);
+  const project=p2sGuiProject();delete project.printer_extruder_id;
+  await assert.rejects(inspect(t,'',{model:'p2s'},p2sEntries(project,p2sGuiHeader.replace(/; printer_extruder_id[^\n]*\n/,'')+'G1 X100 Y100\n')),/extruder/i);
+});
+test('H2D selected extruder ids and variants in the plate header must match the project tables',async t=>{
+  const {project,plate}=await h2dGuiData();
+  project.nozzle_type=['stainless_steel','hardened_steel','hardened_steel','stainless_steel','hardened_steel'];
+  const entries={'Metadata/project_settings.config':project,'Metadata/plate_1.json':plate};
+  entries['Metadata/plate_1.gcode']='; printer_extruder_id = 1;2\n; printer_extruder_variant = "Direct Drive High Flow";"Direct Drive High Flow"\nG1 X100 Y100\n';
+  assert.deepEqual((await inspect(t,'',{model:'h2d'},entries)).nozzleTypes,['hardened_steel','stainless_steel']);
+  for(const gcode of ['; printer_extruder_id = 2;1\n','; printer_extruder_id = 1\n','; printer_extruder_variant = "Direct Drive Standard";"Direct Drive High Flow"\n']) {
+    entries['Metadata/plate_1.gcode']=gcode+'G1 X100 Y100\n';
+    await assert.rejects(inspect(t,'',{model:'h2d'},entries),/extruder|variant|nozzle type|metadata/i,gcode);
+  }
+});
+test('P2S airduct mode switches are accepted and other M145 forms still reject',async t=>{
+  const p2s=header('P2S','PLA','0.6');
+  const result=await inspect(t,p2s+'M145 P0 ; cooling\nM106 P2 S255\nM191 S0\nM145 P1 ; heating\nM104 S220\n',{model:'p2s'});
+  assert.equal(result.maxNozzleTemperature,220);assert.equal(result.maxChamberTemperature,0);
+  for(const command of ['M145 P2','M145 P0 S300','M145 S0 H400','M145','M145 PNaN','M145 P1 T400','M104 S400'])
+    await assert.rejects(inspect(t,p2s+command+'\n',{model:'p2s'}),/temperature|unsupported|parameter|limit|target/i,command);
+  for(const model of ['P1S','X1C','A1'])
+    await assert.rejects(inspect(t,header(model)+'M145 P0\n',{model:model.toLowerCase()}),/M145/,model);
+});
 test('checked-in H2D M620.15 cooling target uses the incoming filament material',async t=>{
   const {project}=await h2dGuiData();
   const cooling=templateLine(project.change_filament_gcode,'M620.15')

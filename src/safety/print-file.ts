@@ -178,6 +178,18 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
     const entries=list(value).map(entry=>entry.toLowerCase().replace(/[\s_-]+/g,'_'));
     return entries.length && entries.every(Boolean)?entries:undefined;
   };
+  // Bambu Studio writes printer_extruder_id/printer_extruder_variant to
+  // project_settings.config as the full per-variant table, but to the plate
+  // G-code header as the per-physical-extruder selection it sliced with (for
+  // example ["1","1","1"] vs "1" on a single-nozzle P2S). Only table-shaped
+  // values may describe rows; the selected form, when present, must match.
+  const variantTable=<T>(key:string,rows:number,convert:(value:unknown)=>T[]|undefined):{table:T[];selected?:T[]}=>{
+    const field=key.replace(/_/g,' ');const values=metadataValues(metadata,[key]);
+    const selectedValues=values.filter(value=>list(value).length!==rows);
+    if(selectedValues.some(value=>list(value).length!==nozzleDiameters.length)) return fail(`unknown or malformed ${field} metadata`);
+    const table=consistent(values.filter(value=>list(value).length===rows),convert,field);
+    return {table,selected:selectedValues.length?consistent(selectedValues,convert,`selected ${field}`):undefined};
+  };
   const nozzleMetadata=(keys:string[],variantRows=false):string[]|undefined=>{
     const values=metadataValues(metadata,keys);
     return values.length ? consistent(values,value=>{
@@ -188,18 +200,22 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
       // Bambu GUI projects may store nozzle types per extruder variant, while
       // diameters and selected flow types are per physical extruder. Never truncate
       // that variant table or mistake its rows for filament/nozzle positions.
-      const ids=consistent(metadataValues(metadata,['printer_extruder_id']),value=>{
-        const ids=list(value);return ids.length===entries.length && ids.every(id=>/^[1-9]\d*$/.test(id) && Number(id)<=nozzleDiameters.length)?ids.map(Number):undefined;
-      },'printer extruder id');
+      const {table:ids,selected:selectedIds}=variantTable('printer_extruder_id',entries.length,value=>{
+        const ids=list(value);return ids.length>0 && ids.every(id=>/^[1-9]\d*$/.test(id) && Number(id)<=nozzleDiameters.length)?ids.map(Number):undefined;
+      });
+      // The selected form names each physical extruder once, in order.
+      if(selectedIds && selectedIds.some((id,index)=>id!==index+1)) return undefined;
       const resolved:string[]=[];
       for(let index=0;index<nozzleDiameters.length;index++) {
         const rows=ids.flatMap((id,row)=>id===index+1?[row]:[]);
         if(!rows.length) return undefined;
         if(rows.every(row=>entries[row]===entries[rows[0]])) {resolved.push(entries[rows[0]]);continue;}
-        const variants=consistent(metadataValues(metadata,['printer_extruder_variant']),normalizedEntries,'printer extruder variant');
+        const {table:variants,selected:selectedVariants}=variantTable('printer_extruder_variant',entries.length,normalizedEntries);
         const extruders=consistent(metadataValues(metadata,['extruder_type']),normalizedEntries,'extruder type');
-        if(variants.length!==entries.length || extruders.length!==nozzleDiameters.length || !nozzleFlows) return undefined;
-        const selected=rows.filter(row=>variants[row]===`${extruders[index]}_${nozzleFlows[index]}`);
+        if(extruders.length!==nozzleDiameters.length || !nozzleFlows) return undefined;
+        const variant=`${extruders[index]}_${nozzleFlows[index]}`;
+        if(selectedVariants && selectedVariants[index]!==variant) return undefined;
+        const selected=rows.filter(row=>variants[row]===variant);
         if(selected.length!==1) return undefined;
         resolved.push(entries[selected[0]]);
       }
@@ -338,8 +354,11 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
       } else if((/^M620\./.test(code) && !['M620.3','M620.6','M620.11'].includes(code)) || /^M621\./.test(code)) {
         fail(`unsupported thermal-affecting filament command ${code}`);
       } else if(code==='M145') {
+        // Airduct mode switch (P0 cooling, P1 heating) in the official H2-series,
+        // X2D and P2S start/end G-code; it sets no heater target. Other forms and
+        // models without a switchable airduct stay rejected.
         const args=parameters(argumentsText);
-        if(args.size!==1 || !args.has('P') || ![0,1].includes(args.get('P')!) || !['h2d','h2dpro','h2c','h2s','x2d'].includes(model)) fail('unsupported thermal-affecting M145 parameters');
+        if(args.size!==1 || !args.has('P') || ![0,1].includes(args.get('P')!) || !['h2d','h2dpro','h2c','h2s','x2d','p2s'].includes(model)) fail('unsupported thermal-affecting M145 parameters');
       } else if(code==='M142') {
         // Bambu chamber fan regulation thresholds, not an active heater command.
         const args=parameters(argumentsText);for(const key of ['S','R']) if(args.has(key) && (!Number.isFinite(args.get(key)) || args.get(key)!<0 || args.get(key)!>65)) fail('unsupported chamber fan temperature threshold');
