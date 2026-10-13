@@ -70,7 +70,7 @@ function parameters(text: string, flags = ''): Map<string,number> {
   return result;
 }
 // Layer comments only close a startup exception; they can never enable one.
-const isLayerMarker=(line:string):boolean=>/^\s*;\s*(?:LAYER_CHANGE|CHANGE_LAYER|LAYER\s*:|layer num\/total_layer_count\s*:)/i.test(line);
+const isLayerMarker=(line:string):boolean=>/^\s*;\s*(?:(?:LAYER_CHANGE|CHANGE_LAYER)(?:\s|$)|LAYER\s*:|layer num\/total_layer_count\s*:)/i.test(line);
 function boundedX1ePurge(lines:string[],index:number):boolean {
   // Official X1E common flush: 50 mm at 200 mm/min, followed immediately by
   // lowering the target. No dwell, XY extrusion, repeated block or open-ended
@@ -154,11 +154,12 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
     if(plateIndex!==0) return fail('raw G-code has only plate index 0');source=bytes.toString('utf8');
   } else return fail('unsupported printable artifact; use a sliced .3mf or textual .gcode file');
   if(/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffd]/.test(source)) return fail('binary or malformed G-code is not supported');
-  const lines=source.split(/\r\n|\n|\r/);const metadata:Metadata[]=[project];
+  const lines=source.split(/\r\n|\n|\r/);const headers:Metadata[]=[];
   for(const line of lines) {
     const match=line.match(/^\s*;\s*([a-z_][a-z0-9_]*(?:\s+used\s+\[(?:g|mm)\])?)\s*(?:=|:)\s*(.*?)\s*$/i);
-    if(match) metadata.push({[match[1].toLowerCase()]:match[2]});
+    if(match) headers.push({[match[1].toLowerCase()]:match[2]});
   }
+  const metadata:Metadata[]=[project,...headers];
   validateFffJob([...metadata,plate]);
   const declaredModel=consistent(metadataValues(metadata,['printer_model']),normalizeModel,'printer model');
   if(declaredModel!==model) return fail(`file model ${declaredModel} contradicts requested model ${model}`);
@@ -178,6 +179,17 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
     const entries=list(value).map(entry=>entry.toLowerCase().replace(/[\s_-]+/g,'_'));
     return entries.length && entries.every(Boolean)?entries:undefined;
   };
+  // Bambu Studio writes printer_extruder_id/printer_extruder_variant to
+  // project_settings.config as the full per-variant table, but to the plate
+  // G-code header as the per-physical-extruder selection it sliced with (for
+  // example ["1","1","1"] vs "1" on a single-nozzle P2S). Preserve the source:
+  // a plate header can never substitute a full table for its selected values.
+  const variantTable=<T>(key:string,rows:number,convert:(value:unknown)=>T[]|undefined):{table:T[];selected?:T[]}=>{
+    const field=key.replace(/_/g,' ');const tableValues=metadataValues([project],[key]);const selectedValues=metadataValues(headers,[key]);
+    if(tableValues.some(value=>list(value).length!==rows) || selectedValues.some(value=>list(value).length!==nozzleDiameters.length)) return fail(`unknown or malformed ${field} metadata`);
+    const table=consistent(tableValues,convert,field);
+    return {table,selected:selectedValues.length?consistent(selectedValues,convert,`selected ${field}`):undefined};
+  };
   const nozzleMetadata=(keys:string[],variantRows=false):string[]|undefined=>{
     const values=metadataValues(metadata,keys);
     return values.length ? consistent(values,value=>{
@@ -188,18 +200,27 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
       // Bambu GUI projects may store nozzle types per extruder variant, while
       // diameters and selected flow types are per physical extruder. Never truncate
       // that variant table or mistake its rows for filament/nozzle positions.
-      const ids=consistent(metadataValues(metadata,['printer_extruder_id']),value=>{
-        const ids=list(value);return ids.length===entries.length && ids.every(id=>/^[1-9]\d*$/.test(id) && Number(id)<=nozzleDiameters.length)?ids.map(Number):undefined;
-      },'printer extruder id');
+      const {table:ids,selected:selectedIds}=variantTable('printer_extruder_id',entries.length,value=>{
+        const ids=list(value);return ids.length>0 && ids.every(id=>/^[1-9]\d*$/.test(id) && Number(id)<=nozzleDiameters.length)?ids.map(Number):undefined;
+      });
+      // The selected form names each physical extruder once, in order.
+      if(selectedIds && selectedIds.some((id,index)=>id!==index+1)) return undefined;
+      const variants=metadataValues(metadata,['printer_extruder_variant']).length
+        ? variantTable('printer_extruder_variant',entries.length,normalizedEntries):undefined;
+      const extruders=variants ? consistent(metadataValues(metadata,['extruder_type']),normalizedEntries,'extruder type'):undefined;
       const resolved:string[]=[];
       for(let index=0;index<nozzleDiameters.length;index++) {
         const rows=ids.flatMap((id,row)=>id===index+1?[row]:[]);
         if(!rows.length) return undefined;
-        if(rows.every(row=>entries[row]===entries[rows[0]])) {resolved.push(entries[rows[0]]);continue;}
-        const variants=consistent(metadataValues(metadata,['printer_extruder_variant']),normalizedEntries,'printer extruder variant');
-        const extruders=consistent(metadataValues(metadata,['extruder_type']),normalizedEntries,'extruder type');
-        if(variants.length!==entries.length || extruders.length!==nozzleDiameters.length || !nozzleFlows) return undefined;
-        const selected=rows.filter(row=>variants[row]===`${extruders[index]}_${nozzleFlows[index]}`);
+        if(!variants) {
+          if(!rows.every(row=>entries[row]===entries[rows[0]])) return undefined;
+          resolved.push(entries[rows[0]]);continue;
+        }
+        // Validate declared variants even when all rows use the same material.
+        if(!extruders || extruders.length!==nozzleDiameters.length || !nozzleFlows) return undefined;
+        const variant=`${extruders[index]}_${nozzleFlows[index]}`;
+        if(variants.selected && variants.selected[index]!==variant) return undefined;
+        const selected=rows.filter(row=>variants.table[row]===variant);
         if(selected.length!==1) return undefined;
         resolved.push(entries[selected[0]]);
       }
@@ -228,6 +249,10 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
   let nozzleTarget=0;let selectsAms=false;let pending: number|undefined;let previous: number|undefined;
   let maxNozzleTemperature=0,maxBedTemperature=0,maxChamberTemperature=0,commandCount=0;
   let depositionStarted=false,commonFlushUsed=false;
+  // Bound the H2C vendor forms to its one explicit executable startup block.
+  const startupStarts=lines.flatMap((line,index)=>/^\s*;\s*EXECUTABLE_BLOCK_START\s*$/i.test(line)?[index]:[]);
+  const startupEnds=lines.flatMap((line,index)=>/^\s*;\s*MACHINE_START_GCODE_END\s*$/i.test(line)?[index]:[]);
+  const h2cStartup=(index:number)=>model==='h2c' && !depositionStarted && startupStarts.length===1 && startupEnds.length===1 && index>startupStarts[0] && index<startupEnds[0];
   const heat=(component:'nozzle'|'bed'|'chamber',value:number,position?:number,allMaterials=false,startupPurge=false)=>{
     const affected=allMaterials || position===undefined ? materials.map((_,index)=>index) : [requirePosition(position)];
     if(component==='nozzle' && startupPurge) validateStartupPurgeTemperature(value,model,affected.map(index=>materials[index]));
@@ -246,8 +271,10 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
   };
   for(let index=0;index<lines.length;index++) {
     try {
-      if(isLayerMarker(lines[index])) closeStartupWindow();
+      if(isLayerMarker(lines[index]) || /^\s*;\s*MACHINE_START_GCODE_END\s*$/i.test(lines[index])) closeStartupWindow();
       let line=stripComments(lines[index]);if(!line||line==='%') continue;
+      // The official H2C template emits this literal separator without a semicolon.
+      if(line==='========== record data ==========' && h2cStartup(index)) continue;
       line=line.replace(/^N\d+\s*/i,'').replace(/\*\d+\s*$/,'');
       if(/[{}\[\]#]/.test(line)) fail('unresolved dynamic command syntax');
       if(/^SYNC(?=$|\s)/i.test(line)) {
@@ -275,6 +302,30 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
       }
       if(['M104','M109','M140','M190','M141','M191'].includes(code)) {
         const args=parameters(argumentsText,'A');
+        // Official A1 and A1 mini start G-code waits with M109 S<target> H<limit>
+        // (S25 H140, S100 H170, S220 H300). H is not a heater target: S stays the
+        // checked target, so H is accepted only within those vendor bounds.
+        if(args.has('O')) {
+          // H2C's exact all-hotend preheat offset is relative to the declared
+          // first-layer targets. Check every base and derived target, never use
+          // editable maxima or an unchecked offset as thermal evidence.
+          if(code!=='M104' || !h2cStartup(index) || args.size!==2 || args.get('O')!==-80 || !Number.isNaN(args.get('A')!)) fail('unsupported H2C startup offset parameters');
+          const targets=consistent(metadataValues(metadata,['nozzle_temperature_initial_layer']),value=>{
+            const values=list(value);return values.length===materials.length && values.every(v=>NUMBER.test(v) && Number.isFinite(Number(v)))?values.map(Number):undefined;
+          },'first-layer nozzle temperature');
+          for(let position=0;position<targets.length;position++) {
+            validateTemperature('nozzle',targets[position],model,[materials[position]]);
+            const preheat=Math.max(0,targets[position]-80);
+            validateTemperature('nozzle',preheat,model,[materials[position]]);
+            nozzleTarget=Math.max(nozzleTarget,preheat);
+            maxNozzleTemperature=Math.max(maxNozzleTemperature,preheat);
+          }
+          continue;
+        }
+        if(args.has('D')) {
+          if(!['M140','M190'].includes(code) || !h2cStartup(index) || args.size!==1) fail('unsupported H2C startup bed parameters');
+          heat('bed',args.get('D')!,undefined,true);continue;
+        }
         const vendorWait=code==='M109' && ['a1','a1mini'].includes(model);
         for(const key of args.keys()) if(!'SRTA'.includes(key) && !(key==='H' && vendorWait)) fail(`unsupported ${code} temperature parameter ${key}`);
         if(args.has('H') && (!Number.isFinite(args.get('H')) || args.get('H')!<0 || args.get('H')!>300)) fail(`unsupported ${code} wait parameter H`);
@@ -288,12 +339,21 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
         if(commonFlush) commonFlushUsed=true;
         for(const key of ['S','R']) if(args.has(key)) heat(component,args.get(key)!,position,args.has('T') || args.has('A'),commonFlush);
       } else if(code==='M620' || code==='M621') {
-        const args=parameters(argumentsText,'MA');
+        const args=parameters(argumentsText,model==='x2d'?'MAB':model==='h2c'?'MAN':'MA');
+        if(args.has('N') && (code!=='M620' || !h2cStartup(index) || args.size!==1 || !Number.isNaN(args.get('N')!))) fail('unsupported H2C startup hotend-remap flag');
+        // X2D templates use B as a bare material-switch flag, never a target.
+        if(args.has('B') && (model!=='x2d' || !Number.isNaN(args.get('B')!))) fail('unsupported material-switch B flag');
         if(args.has('S')) {
           const position=args.get('S')!;
           if([254,255,65279,65535].includes(position)) {if(code==='M621') {previous=active;active=undefined;}pending=undefined;}
           else {selectsAms=true;requirePosition(position);if(code==='M620') pending=position;else {validateTemperature('nozzle',nozzleTarget,model,[materials[position]]);previous=active;active=position;pending=undefined;}}
         }
+      } else if(code==='M620.22') {
+        // Official X2D runout auto-purge enables the declared project filament.
+        // It supplies no heater target; all explicit heat still uses the shared gate.
+        const args=parameters(argumentsText);
+        if(model!=='x2d' || args.size!==2 || !args.has('I') || args.get('P')!==1) fail('unsupported M620.22 runout purge parameters');
+        requirePosition(args.get('I')!);
       } else if(code==='M620.1' || code==='M620.10') {
         const args=parameters(argumentsText,'E');
         const position=code==='M620.10' && args.get('A')===1 ? pending ?? active : code==='M620.10' && args.get('A')===0 ? active : undefined;
@@ -306,10 +366,22 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
         if(args.has('T')) heat('nozzle',args.get('T')!,active);
       } else if(/^G150\./.test(code) && /T/i.test(argumentsText)) {
         fail(`unsupported thermal-affecting wipe command ${code}`);
+      } else if(code==='M620.14') {
+        const args=parameters(argumentsText);
+        // H2C tower coordinates include the rear wipe area outside object bounds.
+        if(!h2cStartup(index) || args.size!==2 || !['X','Y'].every(key=>args.has(key) && Number.isFinite(args.get(key)) && args.get(key)!>=0 && args.get(key)!<=350)) fail('unsupported H2C startup tower parameters');
+      } else if(model==='h2c' && ['G383','G383.3','G383.7'].includes(code) && /U/i.test(argumentsText)) {
+        const args=parameters(argumentsText);
+        const expected=code==='G383.7'?'UJ':code==='G383.3'?'UL':'OUL';
+        if(!h2cStartup(index) || args.size!==expected.length || [...args.keys()].some(key=>!expected.includes(key)) || args.get('U')!==140 ||
+           (code==='G383.7' && args.get('J')!==0) || (code==='G383' && args.get('O')!==2)) fail('unsupported H2C startup probing parameters');
+        const position=args.has('L')?requirePosition(args.get('L')!):active;
+        heat('nozzle',args.get('U')!,position);
       } else if(code==='G383' || code==='G383.3') {
         // Bambu probing routines carry nozzle temperature in T and optionally
         // the project filament position in L (including the H2D G383.3 form).
         const args=parameters(argumentsText);
+        if(args.has('U')) fail('unsupported G383 temperature parameter U outside H2C startup');
         if(code==='G383.3' && (!args.has('T') || [...args.keys()].some(key=>!'TL'.includes(key)))) fail('unsupported G383.3 temperature parameters');
         const position=args.has('L')?requirePosition(args.get('L')!):active;
         if(args.has('T')) heat('nozzle',args.get('T')!,position);
@@ -338,8 +410,11 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
       } else if((/^M620\./.test(code) && !['M620.3','M620.6','M620.11'].includes(code)) || /^M621\./.test(code)) {
         fail(`unsupported thermal-affecting filament command ${code}`);
       } else if(code==='M145') {
+        // Airduct mode switch (P0 cooling, P1 heating) in the official H2-series,
+        // X2D and P2S start/end G-code; it sets no heater target. Other forms and
+        // models without a switchable airduct stay rejected.
         const args=parameters(argumentsText);
-        if(args.size!==1 || !args.has('P') || ![0,1].includes(args.get('P')!) || !['h2d','h2dpro','h2c','h2s','x2d'].includes(model)) fail('unsupported thermal-affecting M145 parameters');
+        if(args.size!==1 || !args.has('P') || ![0,1].includes(args.get('P')!) || !['h2d','h2dpro','h2c','h2s','x2d','p2s'].includes(model)) fail('unsupported thermal-affecting M145 parameters');
       } else if(code==='M142') {
         // Bambu chamber fan regulation thresholds, not an active heater command.
         const args=parameters(argumentsText);for(const key of ['S','R']) if(args.has(key) && (!Number.isFinite(args.get(key)) || args.get(key)!<0 || args.get(key)!>65)) fail('unsupported chamber fan temperature threshold');

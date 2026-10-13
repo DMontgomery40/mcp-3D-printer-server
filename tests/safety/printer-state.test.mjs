@@ -219,3 +219,22 @@ test('fresh A1 returned serials distinguish full-size 039 from mini 030',async()
     assert.equal(result.model,expected);assert.equal(result.observedSerial,serial);
   }
 });
+
+test('ignores a print-job id in model_id when model or returned serial identifies X2D', () => {
+  const requirements = req({model:'x2d',nozzleDiameters:[],verifyMaterials:false});
+  assert.doesNotThrow(() => check(fresh({model_id:'USb5974ce12ab89d',model:'X2D'}), requirements));
+  assert.doesNotThrow(() => check(fresh({model_id:'USb5974ce12ab89d',modules:[{name:'ota',sn:'20PTEST'}]}, {serial:'20PTEST'}), requirements));
+  assert.throws(() => check(fresh({model_id:'N6',model:'P1S'}), requirements), /contradictory/i);
+  assert.throws(() => check(fresh({model_id:undefined,model:'P1S',modules:[{name:'ota',sn:'20PTEST'}]}, {serial:'20PTEST'}), requirements), /contradictory/i);
+  assert.throws(() => check(fresh({model_id:'USb5974ce12ab89d',model:'X2D',printer_type:'unknown'}), requirements), /unknown model identity/i);
+});
+
+test('official H2C and H2D Pro returned serials agree with declared identity and reject conflicts', () => {
+  for(const [prefix,model,modelId,other] of [['31B','h2c','O1C2','O1E'],['239','h2dpro','O1E','O1C2']]) {
+    const serial=prefix+'TEST';
+    const status=fresh({model_id:modelId,modules:[{name:'ota',sn:serial}]},{serial});
+    assert.doesNotThrow(()=>check(status,req({model,serial,nozzleDiameters:[]})));
+    assert.throws(()=>check(fresh({model_id:other,modules:[{name:'ota',sn:serial}]},{serial}),req({model,serial,nozzleDiameters:[]})),/identity|conflict|model/i);
+    assert.throws(()=>check(fresh({model_id:undefined}),req({model,serial,nozzleDiameters:[]})),/identity|model/i);
+  }
+});

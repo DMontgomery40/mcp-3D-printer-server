@@ -1,4 +1,4 @@
-// Ported from bambu-printer-mcp tests/safety/print-file.test.mjs; print-file.ts is a verbatim port.
+// Ported Bambu inspection regressions; transports remain mocked and no physical printer is contacted.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs/promises';
@@ -83,8 +83,6 @@ test('explicit physical heater targets cannot silently select a different filame
 test('switching to a low-temperature material cannot inherit an unsafe high-temperature target',async t=>{
   await assert.rejects(inspect(t,header('H2D','PLA;PA-CF','0.4;0.4')+'T1\nM104 S330\nT0\nG1 E10\n',{model:'h2d'}),/PLA|material|temperature/i);
 });
-// The fork's installed-profile startup-routine test needs the slicer profile
-// flattener (owned by the slicer port), so it is omitted here.
 test('zero-padded heater commands and concatenated commands cannot bypass inspection',async t=>{
   for(const command of ['M0104 S400','N5M00109 R400','G1X0M104S400','M00104.0 S400','M620.99 T400']) await assert.rejects(inspect(t,header()+command+'\n'),/temperature|unsupported|command|limit/i);
 });
@@ -165,6 +163,86 @@ test('ambiguous H2D nozzle variant selections and contradictory header types rej
   entries['Metadata/plate_1.gcode']='G1 X100 Y100\n';
   project.printer_extruder_variant[4]='Direct Drive High Flow';project.nozzle_type[4]='stainless_steel';
   await assert.rejects(inspect(t,'',{model:'h2d'},entries),/nozzle.*type|extruder|variant|metadata/i);
+});
+// Shape of a Bambu Studio 02.08 P2S GUI slice: the project stores per-variant
+// tables, while the plate header records the selected single-extruder values.
+const p2sGuiProject=()=>({
+  printer_model:'Bambu Lab P2S',nozzle_diameter:['0.6'],filament_type:['PLA'],extruder_type:['Direct Drive'],nozzle_volume_type:['Standard'],
+  printer_extruder_id:['1','1','1'],printer_extruder_variant:['Direct Drive Standard','Direct Drive High Flow','Direct Drive E3D High Flow'],
+  nozzle_type:['hardened_steel','hardened_steel','hardened_steel']
+});
+const p2sGuiHeader='; nozzle_type = hardened_steel\n; nozzle_volume_type = Standard\n; printer_extruder_id = 1\n; printer_extruder_variant = "Direct Drive Standard"\n; printer_model = Bambu Lab P2S\n';
+const p2sEntries=(project,gcode)=>({'Metadata/project_settings.config':project,'Metadata/plate_1.gcode':gcode});
+test('P2S GUI variant tables accept the selected single-extruder header values',async t=>{
+  const result=await inspect(t,'',{model:'p2s'},p2sEntries(p2sGuiProject(),p2sGuiHeader+'G1 X100 Y100\n'));
+  assert.deepEqual(result.nozzleTypes,['hardened_steel']);assert.deepEqual(result.nozzleFlows,['standard']);assert.deepEqual(result.nozzleDiameters,[0.6]);
+  const project=p2sGuiProject();project.nozzle_type=['stainless_steel','hardened_steel','hardened_steel'];
+  const gcode=p2sGuiHeader.replace('hardened_steel','stainless_steel')+'G1 X100 Y100\n';
+  assert.deepEqual((await inspect(t,'',{model:'p2s'},p2sEntries(project,gcode))).nozzleTypes,['stainless_steel']);
+  const uniform=p2sGuiProject();delete uniform.printer_extruder_variant;delete uniform.extruder_type;
+  assert.deepEqual((await inspect(t,'',{model:'p2s'},p2sEntries(uniform,p2sGuiHeader.replace(/; printer_extruder_variant[^\n]*\n/,'')+'G1 X100 Y100\n'))).nozzleTypes,['hardened_steel']);
+});
+test('P2S selected extruder ids and variants cannot contradict the project tables',async t=>{
+  const cases=[
+    [p2sGuiProject(),p2sGuiHeader.replace('printer_extruder_id = 1','printer_extruder_id = 2')],
+    [p2sGuiProject(),p2sGuiHeader.replace('printer_extruder_id = 1','printer_extruder_id = 1;1')],
+    [p2sGuiProject(),p2sGuiHeader.replace('printer_extruder_id = 1','printer_extruder_id = x')],
+    [{...p2sGuiProject(),printer_extruder_id:['1','1']},p2sGuiHeader],
+    [{...p2sGuiProject(),printer_extruder_id:['1','1','2']},p2sGuiHeader],
+    [p2sGuiProject(),p2sGuiHeader.replace('nozzle_type = hardened_steel','nozzle_type = brass')],
+    [{...p2sGuiProject(),nozzle_type:['stainless_steel','hardened_steel','hardened_steel']},p2sGuiHeader.replace('Direct Drive Standard','Direct Drive High Flow')],
+    [{...p2sGuiProject(),nozzle_type:['stainless_steel','hardened_steel','hardened_steel']},p2sGuiHeader.replace('Direct Drive Standard','Direct Drive Standard;Direct Drive High Flow')]
+  ];
+  for(const [project,header] of cases)
+    await assert.rejects(inspect(t,'',{model:'p2s'},p2sEntries(project,header+'G1 X100 Y100\n')),/extruder|variant|nozzle type|contradict|metadata/i,header);
+  const project=p2sGuiProject();delete project.printer_extruder_id;
+  await assert.rejects(inspect(t,'',{model:'p2s'},p2sEntries(project,p2sGuiHeader.replace(/; printer_extruder_id[^\n]*\n/,'')+'G1 X100 Y100\n')),/extruder/i);
+});
+test('uniform P2S nozzle materials still require valid selected variant metadata',async t=>{
+  for(const variant of ['Direct Drive High Flow','Direct Drive Standard;Direct Drive High Flow','bogus']) {
+    const gcode=p2sGuiHeader.replace('"Direct Drive Standard"',`"${variant}"`)+'G1 X100 Y100\n';
+    await assert.rejects(inspect(t,'',{model:'p2s'},p2sEntries(p2sGuiProject(),gcode)),/extruder|variant|nozzle type|metadata/i,variant);
+  }
+  const project=p2sGuiProject();project.printer_extruder_variant=['Direct Drive Standard','Direct Drive High Flow'];
+  await assert.rejects(inspect(t,'',{model:'p2s'},p2sEntries(project,p2sGuiHeader+'G1 X100 Y100\n')),/variant|metadata/i);
+});
+test('P2S plate headers cannot substitute full project extruder tables for selections',async t=>{
+  for(const header of [
+    p2sGuiHeader.replace('printer_extruder_id = 1','printer_extruder_id = 1;1;1'),
+    p2sGuiHeader.replace('"Direct Drive Standard"','"Direct Drive Standard";"Direct Drive High Flow";"Direct Drive E3D High Flow"')
+  ]) {
+    await assert.rejects(inspect(t,'',{model:'p2s'},p2sEntries(p2sGuiProject(),header+'G1 X100 Y100\n')),/extruder|variant|metadata/i,header);
+  }
+});
+test('H2D selected extruder ids and variants in the plate header must match the project tables',async t=>{
+  const {project,plate}=await h2dGuiData();
+  project.nozzle_type=['stainless_steel','hardened_steel','hardened_steel','stainless_steel','hardened_steel'];
+  const entries={'Metadata/project_settings.config':project,'Metadata/plate_1.json':plate};
+  entries['Metadata/plate_1.gcode']='; printer_extruder_id = 1;2\n; printer_extruder_variant = "Direct Drive High Flow";"Direct Drive High Flow"\nG1 X100 Y100\n';
+  assert.deepEqual((await inspect(t,'',{model:'h2d'},entries)).nozzleTypes,['hardened_steel','stainless_steel']);
+  for(const gcode of ['; printer_extruder_id = 2;1\n','; printer_extruder_id = 1\n','; printer_extruder_variant = "Direct Drive Standard";"Direct Drive High Flow"\n']) {
+    entries['Metadata/plate_1.gcode']=gcode+'G1 X100 Y100\n';
+    await assert.rejects(inspect(t,'',{model:'h2d'},entries),/extruder|variant|nozzle type|metadata/i,gcode);
+  }
+});
+test('A1 and A1 mini M109 H wait limits are accepted while S stays the checked target',async t=>{
+  // Official Bambu Studio 02.08 start G-code: A1 emits M109 S25 H140 and M109 S220 H300; A1 mini emits M109 S100 H170.
+  const a1=await inspect(t,header('A1')+'M109 S25 H140\nM109 S220 H300\nG1 X10 Y10 E1\n',{model:'a1'});
+  assert.equal(a1.maxNozzleTemperature,220);
+  assert.equal((await inspect(t,header('A1 mini')+'M109 S100 H170\n',{model:'a1mini'})).maxNozzleTemperature,100);
+  for(const command of ['M109 S25 H301','M109 S25 H-1','M109 S25 H','M109 S400 H140','M109 R400 H140','M104 S220 H140','M190 S60 H140','M109 H140'])
+    await assert.rejects(inspect(t,header('A1')+command+'\n',{model:'a1'}),/temperature|unsupported|parameter|limit|target/i,command);
+  for(const model of ['P1S','X1C','H2D'])
+    await assert.rejects(inspect(t,header(model,'PLA',model==='H2D'?'0.4;0.4':'0.4')+'M109 S25 H140\n',{model:model.toLowerCase()}),/temperature parameter H/,model);
+});
+test('P2S airduct mode switches are accepted and other M145 forms still reject',async t=>{
+  const p2s=header('P2S','PLA','0.6');
+  const result=await inspect(t,p2s+'M145 P0 ; cooling\nM106 P2 S255\nM191 S0\nM145 P1 ; heating\nM104 S220\n',{model:'p2s'});
+  assert.equal(result.maxNozzleTemperature,220);assert.equal(result.maxChamberTemperature,0);
+  for(const command of ['M145 P2','M145 P0 S300','M145 S0 H400','M145','M145 PNaN','M145 P1 T400','M104 S400'])
+    await assert.rejects(inspect(t,p2s+command+'\n',{model:'p2s'}),/temperature|unsupported|parameter|limit|target/i,command);
+  for(const model of ['P1S','X1C','A1'])
+    await assert.rejects(inspect(t,header(model)+'M145 P0\n',{model:model.toLowerCase()}),/M145/,model);
 });
 test('checked-in H2D M620.15 cooling target uses the incoming filament material',async t=>{
   const {project}=await h2dGuiData();
@@ -349,13 +427,66 @@ test('ambiguous heater candidates still enforce every possible material temperat
   assert.deepEqual(selected.usedFilamentPositions,[1]);
 });
 
-test('A1 and A1 mini M109 H wait limits are accepted while S stays the checked target',async t=>{
-  // Official Bambu Studio 02.08 start G-code: A1 emits M109 S25 H140 and M109 S220 H300; A1 mini emits M109 S100 H170.
-  const a1=await inspect(t,header('A1')+'M109 S25 H140\nM109 S220 H300\nG1 X10 Y10 E1\n',{model:'a1'});
-  assert.equal(a1.maxNozzleTemperature,220);
-  assert.equal((await inspect(t,header('A1 mini')+'M109 S100 H170\n',{model:'a1mini'})).maxNozzleTemperature,100);
-  for(const command of ['M109 S25 H301','M109 S25 H-1','M109 S25 H','M109 S400 H140','M109 R400 H140','M104 S220 H140','M190 S60 H140','M109 H140'])
-    await assert.rejects(inspect(t,header('A1')+command+'\n',{model:'a1'}),/temperature|unsupported|parameter|limit|target/i,command);
-  for(const model of ['P1S','X1C','H2D'])
-    await assert.rejects(inspect(t,header(model,'PLA',model==='H2D'?'0.4;0.4':'0.4')+'M109 S25 H140\n',{model:model.toLowerCase()}),/temperature parameter H/,model);
+// Official X2D start/change/end templates use a bare B selector and I<filament> P1 auto-purge.
+test('X2D vendor switches and runout purge retain declared filament and heater checks', async t => {
+  const base=header('X2D','PLA;PETG','0.4;0.4');
+  const routine='M620 S0A H-1 B\nM620.22 I0 P1\nM104 S220\nM621 S0A B\nM620 S1A B H0\nM620.22 I1 P1\nM109 S240\nM621 S1A B\nM620 S65279 B\nM621 S65279 B\nM620 S65535 B\nM621 S65535 B\n';
+  const result=await inspect(t,base+routine,{model:'x2d'});
+  assert.equal(result.maxNozzleTemperature,240);
+  assert.deepEqual(result.usedFilamentPositions,[0,1]);
+  for(const command of ['M620 S0A B1','M621 S0A B1','M620 S2A B','M620.22 I2 P1','M620.22 I0 P2','M620.22 I0','M620.22 I0 P1 T400','M620.22 I0 P1 S400','M620.22 I0 P1\nM104 S400','M620 S0A B\nM620.10 A1 T400'])
+    await assert.rejects(inspect(t,base+command+'\n',{model:'x2d'}),/unsupported|parameter|position|mapping|temperature|limit/i,command);
+  for(const model of ['P1S','A1','H2D']) for(const command of ['M620 S0A B','M620.22 I0 P1'])
+    await assert.rejects(inspect(t,header(model,'PLA',model==='H2D'?'0.4;0.4':'0.4')+command+'\n',{model:model.toLowerCase()}),/parameter|unsupported/i);
+});
+
+const h2cHeader=()=>header('H2C','PLA','0.4;0.4')+'; nozzle_temperature_initial_layer = 220\n';
+const h2cStartup = 'M620 N\nM104 O-80 A\nM140 D55\nM620.14 X95.5 Y336\nM190 D55\nG383.3 U140 L0\nG383.7 U140 J0\n========== record data ==========\nM104 S220\n';
+test('BambuStudio 02.08 H2C startup commands pass without losing independent temperature checks',async t=>{
+  const r=await inspect(t,h2cHeader()+'; EXECUTABLE_BLOCK_START\n'+h2cStartup+'; MACHINE_START_GCODE_END\nG1 X10 Y10 E1\n',{model:'h2c'});
+  assert.equal(r.maxNozzleTemperature,220);assert.equal(r.maxBedTemperature,55);
+  assert.deepEqual(r.usedFilamentPositions,[0]);
+});
+test('H2C startup forms reject other models, late commands, extra parameters and unsafe targets',async t=>{
+  const forms=['M620 N','M104 O-80 A','M140 D55','M190 D55','M620.14 X95.5 Y336','G383.3 U140 L0','G383 O2 U140 L0','G383.7 U140 J0','========== record data =========='];
+  for(const command of forms) {
+    await assert.rejects(inspect(t,header()+'; EXECUTABLE_BLOCK_START\n'+command+'\n',{model:'p1s'}),/unsupported|syntax|missing/i,command);
+    await assert.rejects(inspect(t,h2cHeader()+'; EXECUTABLE_BLOCK_START\nM104 S220\n; MACHINE_START_GCODE_END\n'+command+'\n',{model:'h2c'}),/unsupported|syntax|missing|startup/i,command);
+  }
+  for(const command of ['M140 D130','M190 D130','M140 D55 S400','M104 O20 A','M104 O-80 A S330','G383.3 U400 L0','G383.3 U140 L8','G383.7 U140 J1','M620 N1','M620.14 X95 Y336 T400','M104 S330'])
+    await assert.rejects(inspect(t,h2cHeader()+'; EXECUTABLE_BLOCK_START\n'+command+'\n; MACHINE_START_GCODE_END\n',{model:'h2c'}),/unsupported|parameter|temperature|limit|material|declared/i,command);
+  await assert.rejects(inspect(t,h2cHeader().replace('= 220','= 400')+'; EXECUTABLE_BLOCK_START\nM104 O-80 A\n; MACHINE_START_GCODE_END\n',{model:'h2c'}),/temperature|limit/i);
+  await assert.rejects(inspect(t,header('H2C','PLA','0.4;0.4')+'; EXECUTABLE_BLOCK_START\nM104 O-80 A\n; MACHINE_START_GCODE_END\n',{model:'h2c'}),/metadata|temperature/i);
+});
+test('config layer_change_gcode does not close startup but a real layer marker does',async t=>{
+  const config='; CONFIG_BLOCK_START\n; layer_change_gcode = ; layer num/total_layer_count: {layer_num+1}/[total_layer_count]\\nM104 S220\n; CONFIG_BLOCK_END\n';
+  await inspect(t,h2cHeader()+config+'; EXECUTABLE_BLOCK_START\n'+h2cStartup+'; MACHINE_START_GCODE_END\n',{model:'h2c'});
+  for(const marker of ['; LAYER_CHANGE','; layer num/total_layer_count: 1/50','G1 X10 Y10 E1'])
+    await assert.rejects(inspect(t,h2cHeader()+'; EXECUTABLE_BLOCK_START\nM104 S220\n'+marker+'\nM104 O-80 A\n',{model:'h2c'}),/unsupported|startup/i);
+});
+
+test('pinned official H2C 02.08 template thermal command inventory is inspected',async t=>{
+  const bytes=await fs.readFile(new URL('../fixtures/h2c-02.08/machine_start_gcode.json',import.meta.url));
+  // BambuStudio v02.08.02.61, resources/profiles/BBL/machine/
+  // Bambu Lab H2C 0.4 nozzle template machine_start_gcode.json (issue #48).
+  assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'b473d17fe7af0f2e431f8003782d0ab1f74b7a1e2ce73e265b3d7716e9ec8ce5');
+  const template=JSON.parse(bytes).machine_start_gcode;
+  const commands=template.split('\n').map(l=>l.trim()).filter(l=>/^(?:M104|M109|M140|M190|M620|M621|G383)(?:\.|\s|$)/.test(l) || l==='========== record data ==========');
+  const expand=line=>{
+    // Substitute normal declared PLA fixture values; this is offline template
+    // inspection, not a claim that a slicer or physical printer executed it.
+    for(let pass=0;pass<3;pass++) line=line.replace(/\{[^{}]*\}|\[[^\[\]]*\]/g,expr=>/nozzle_temperature/.test(expr)?'220':/flush_temperatures/.test(expr)?'240':/bed_temperature/.test(expr)?'55':/nozzle_diameter/.test(expr)?'0.4':'0');
+    return line;
+  };
+  const r=await inspect(t,h2cHeader()+'; EXECUTABLE_BLOCK_START\n'+commands.map(expand).join('\n')+'\n; MACHINE_START_GCODE_END\n',{model:'h2c'});
+  assert.equal(r.maxNozzleTemperature,240);assert.equal(r.maxBedTemperature,55);
+});
+test('H2C all-hotend preheat checks unused declared materials without adding AMS positions',async t=>{
+  const source=header('H2C','PLA;PETG','0.4;0.4')+'; nozzle_temperature_initial_layer = 220;250\n; EXECUTABLE_BLOCK_START\nM104 O-80 A\nT0\nM104 S220\n; MACHINE_START_GCODE_END\n';
+  const r=await inspect(t,source,{model:'h2c'});assert.deepEqual(r.usedFilamentPositions,[0]);
+  await assert.rejects(inspect(t,source.replace('220;250','220;340'),{model:'h2c'}),/PETG|temperature|limit/i);
+});
+
+test('unrecognized G383 U targets cannot bypass other models thermal checks',async t=>{
+  for(const model of ['P1S','H2D','X2D']) await assert.rejects(inspect(t,header(model)+'G383 O2 U400 L0\n',{model:model.toLowerCase()}),/unsupported|temperature/i);
 });
