@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.13 — 2026-10-20
+
+### Dependencies
+
+- Refresh the reproducible installation/test lock from MQTT.js 5.10.4 to 5.16.1, including its fix for reconnecting when the previous stream is already destroyed. Keep bambu-node pinned at 3.22.21 and preserve the server's checked MQTT wire format and rejection guard. Thank you to [Henk Kraal (hkraal)](https://github.com/hkraal) and the [MQTT.js maintainers](https://github.com/mqttjs/MQTT.js/releases/tag/v5.16.1).
+- Update the documentation build's source-map-js to 1.2.2 for [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q), which addresses indexed source-map offsets blocking the event loop. Thank you to [7rulnik](https://github.com/7rulnik/source-map-js/pull/79). Refresh compatible Node 18 typings and MQTT's required transitive packages.
+
+The root lock controls `npm ci`, including CI and reproducible local installs; npm does not ship that lock to consumers. Existing parent projects can retain older transitive MQTT versions and must refresh their own locks. This is not a new published MQTT minimum or a claim that every advisory is resolved. Remaining nodemon/chokidar/braces and VitePress/Vite/esbuild development-server advisories have no compatible automatic fix; no major upgrade or downgrade is forced. Printer safety behavior is unchanged and no physical printer operation is performed.
+
 ## 1.2.12 — 2026-10-13
 
 ### Fixed
