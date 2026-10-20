@@ -51,6 +51,8 @@ See the [full contribution history](https://github.com/DMontgomery40/mcp-3D-prin
 
 Thanks to [Patrick Juchli](https://github.com/patrickjuchli) and the basic-ftp maintainers for [6.2.3](https://github.com/patrickjuchli/basic-ftp/releases/tag/v6.2.3), which fixes rejected-command crashes, client recovery, and password exposure in PASS errors. The compatible FTPS security update is validated in this release.
 
+Thanks to [Henk Kraal (hkraal)](https://github.com/hkraal) and the [MQTT.js maintainers](https://github.com/mqttjs/MQTT.js/releases/tag/v5.16.1) for correcting reconnect behavior when the previous stream is destroyed, and to [7rulnik](https://github.com/7rulnik/source-map-js/pull/79) for the indexed source-map offset security fix in source-map-js 1.2.2. Their fixes are incorporated into the installation/test and documentation locks; published consumers still manage their own transitive locks. Thanks also to the [DefinitelyTyped contributors](https://github.com/DefinitelyTyped/DefinitelyTyped) for maintained Node 18 and stream typings.
+
 ## Open-source community and interoperability
 
 Special thanks to the [FULU Foundation](https://www.fulu.org/), [Louis Rossmann](https://www.youtube.com/@rossmanngroup), and the [OrcaSlicer-bambulab contributors](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) for their work supporting user control and interoperable tools. This is community recognition, separate from code authorship in this repository. The Bambu-only fork, [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp), credits its own contributors in its [CONTRIBUTORS.md](https://github.com/DMontgomery40/bambu-printer-mcp/blob/main/CONTRIBUTORS.md).
