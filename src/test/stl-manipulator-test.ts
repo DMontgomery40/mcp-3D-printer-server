@@ -2,6 +2,7 @@
 
 import { STLManipulator, ProgressCallback } from '../stl/stl-manipulator.js';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import * as THREE from 'three';
 
@@ -10,6 +11,9 @@ const TEST_DIR = path.join(process.cwd(), 'test');
 if (!fs.existsSync(TEST_DIR)) {
   fs.mkdirSync(TEST_DIR, { recursive: true });
 }
+
+// Operation outputs go to a scratch folder removed after the run
+const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stl-manipulator-test-'));
 
 // Path for a sample STL file
 const sampleStlPath = path.join(TEST_DIR, 'sample_cube.stl');
@@ -48,8 +52,8 @@ async function testSTLManipulator() {
     // Create a sample STL for testing
     const stlPath = await createSampleCube();
     
-    // Create an instance of the STL manipulator with the test directory
-    const manipulator = new STLManipulator(TEST_DIR);
+    // Write operation outputs to a scratch folder, not the tracked test directory
+    const manipulator = new STLManipulator(outputDir);
     
     // Listen for events from the manipulator
     manipulator.on('operationComplete', (data) => {
@@ -116,7 +120,9 @@ async function testSTLManipulator() {
     console.log('\nAll tests completed successfully!');
   } catch (error) {
     console.error('An error occurred during testing:', error);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
   }
 }
 
