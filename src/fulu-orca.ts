@@ -99,6 +99,46 @@ export function isFuluPrintRpcMethod(method: string): boolean {
   return FULU_PRINT_RPC_METHODS.has(method.trim());
 }
 
+const FULU_LINUX_DOCS = "https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md#linux";
+
+/**
+ * FULU's Linux host opens its network and source libraries by bare name from
+ * its working directory instead of PJARCZAK_BAMBU_PLUGIN_DIR
+ * (FULU-Foundation/OrcaSlicer-bambulab#51), so name them in that directory
+ * unless they are already set. macOS wrappers run the host in a Linux guest
+ * that may not see host paths, so they are left alone.
+ */
+export function linuxPluginLibraryEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
+  const pluginDir = env.PJARCZAK_BAMBU_PLUGIN_DIR?.trim();
+  if (platform !== "linux" || !pluginDir) return {};
+  const libraries: Record<string, string> = {};
+  if (!env.PJARCZAK_BAMBU_NETWORK_SO?.trim()) libraries.PJARCZAK_BAMBU_NETWORK_SO = path.resolve(pluginDir, "libbambu_networking.so");
+  if (!env.PJARCZAK_BAMBU_SOURCE_SO?.trim()) libraries.PJARCZAK_BAMBU_SOURCE_SO = path.resolve(pluginDir, "libBambuSource.so");
+  return libraries;
+}
+
+/** FULU's Linux host exits 101 when it cannot reopen a socket stdout (FULU-Foundation/OrcaSlicer-bambulab#50). */
+const STDOUT_SOCKET_HINT =
+  "Exit code 101 means FULU's Linux host could not reopen its stdout, which fails when stdout is a socket, as Node.js provides " +
+  "(https://github.com/FULU-Foundation/OrcaSlicer-bambulab/issues/50). Launch the host through a wrapper that pipes its output through cat: " +
+  FULU_LINUX_DOCS;
+
+/** Actionable hints for a bridge run: the exit-101 socket bug and a host that cannot open the plug-in libraries. */
+function bridgeHints(exitCode: number | null, responses: Record<string, unknown>): string[] {
+  const hints: string[] = [];
+  if (exitCode === 101) hints.push(STDOUT_SOCKET_HINT);
+  const fileOpenFailure = (Object.values(responses) as Array<{ network_status?: unknown; error?: unknown } | null>)
+    .find((value) => [value?.network_status, value?.error].some((text) => typeof text === "string" && /file open failed/i.test(text)));
+  if (fileOpenFailure) {
+    hints.push(
+      `FULU BambuNetwork bridge could not open its networking library (${String(fileOpenFailure.network_status ?? fileOpenFailure.error)}). ` +
+      "Set PJARCZAK_BAMBU_PLUGIN_DIR to the directory containing libbambu_networking.so and libBambuSource.so, " +
+      `or set PJARCZAK_BAMBU_NETWORK_SO and PJARCZAK_BAMBU_SOURCE_SO to their absolute paths: ${FULU_LINUX_DOCS}`
+    );
+  }
+  return hints;
+}
+
 function normalizePlatform(value: string | undefined): SupportedPlatform {
   const normalized = (value || process.platform).trim().toLowerCase();
   if (normalized === "mac" || normalized === "macos" || normalized === "darwin") {
@@ -284,7 +324,7 @@ function setupCommands(platform: SupportedPlatform, pluginDir: string, runtimeDi
     const verify = path.join(pluginDir, "verify_runtime_macos.sh");
     const bridgeHost = path.join(runtimeDir || "", "pjarczak_bambu_linux_host");
     const wrapper = path.join(pluginDir, "pjarczak-bambu-linux-host-wrapper");
-    return [
+    const commands = [
       {
         label: "install macOS Lima runtime",
         command: `bash ${quoteShell(install)} -PackageDir ${quoteShell(pluginDir)} -PluginDir ${quoteShell(pluginDir)}`,
@@ -297,11 +337,15 @@ function setupCommands(platform: SupportedPlatform, pluginDir: string, runtimeDi
         label: "verify macOS Lima runtime core before Linux plugin payload is present",
         command: `bash ${quoteShell(verify)} -PackageDir ${quoteShell(pluginDir)} -PluginDir ${quoteShell(pluginDir)} -AllowMissingLinuxPlugin`,
       },
-      {
+    ];
+    // The wrapper ships in FULU's macOS bundle; suggest it only where it exists.
+    if (fs.existsSync(wrapper)) {
+      commands.push({
         label: "bridge command for FULU BambuNetwork runtime",
         command: `${quoteShell(wrapper)} ${quoteShell(bridgeHost)}`,
-      },
-    ];
+      });
+    }
+    return commands;
   }
 
   if (platform === "win32") {
@@ -336,6 +380,11 @@ function setupCommands(platform: SupportedPlatform, pluginDir: string, runtimeDi
       label: "configure MCP slicer path",
       command: "SLICER_TYPE=orcaslicer-bambulab SLICER_PATH=/path/to/orcaslicer",
     },
+    {
+      label: "bridge command for FULU's Linux host, piped through cat (FULU #50)",
+      command: `FULU_BAMBU_BRIDGE_COMMAND="${quoteShell(path.join(pluginDir, "pjarczak_bambu_linux_host"))} | cat" ` +
+        "PJARCZAK_BAMBU_PLUGIN_DIR=\"$HOME/.config/OrcaSlicer/plugins\"",
+    },
   ];
 }
 
@@ -350,6 +399,7 @@ function defaultBridgeCommand(platform: SupportedPlatform, pluginDir: string, ru
 
   if (platform === "darwin") {
     const wrapper = path.join(pluginDir, "pjarczak-bambu-linux-host-wrapper");
+    if (!fs.existsSync(wrapper)) return undefined;
     const runtimeHost = path.join(
       runtimeDir || defaultRuntimeDir(platform) || "",
       "pjarczak_bambu_linux_host"
@@ -358,8 +408,10 @@ function defaultBridgeCommand(platform: SupportedPlatform, pluginDir: string, ru
   }
 
   if (platform === "linux") {
+    // The v1.0.0 host exits 101 on the socket stdout Node.js gives a child
+    // (FULU-Foundation/OrcaSlicer-bambulab#50); a shell pipe through cat avoids it.
     const host = path.join(pluginDir, "pjarczak_bambu_linux_host");
-    return fs.existsSync(host) ? quoteShell(host) : undefined;
+    return fs.existsSync(host) ? `${quoteShell(host)} | cat` : undefined;
   }
 
   return undefined;
@@ -417,6 +469,7 @@ async function runBridgeRequests(
   return await new Promise((resolve, reject) => {
     const child = spawn(command, {
       shell: true,
+      env: { ...process.env, ...linuxPluginLibraryEnv(process.env, process.platform) },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -433,13 +486,35 @@ async function runBridgeRequests(
       callback();
     };
 
+    const unanswered = new Set(requests.map((request) => request.id));
     const timer = setTimeout(() => {
+      child.stdin?.end();
       child.kill("SIGKILL");
-      settle(() => reject(new Error(`FULU bridge request timed out after ${timeoutMs}ms.`)));
+      // Keep what the host did say: a hung host is diagnosed from its stderr and partial answers.
+      const responses = Object.fromEntries(parseBridgeFrames(Buffer.concat(stdoutChunks))
+        .filter((frame) => frame.type === FRAME_TYPE_JSON_RESPONSE)
+        .map((frame) => [String(frame.id), (() => { try { return JSON.parse(frame.payload.toString("utf8")); } catch { return null; } })()]));
+      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim().slice(-1000);
+      const hints = bridgeHints(null, responses);
+      settle(() => reject(new Error(
+        `FULU bridge request timed out after ${timeoutMs}ms with ${unanswered.size} of ${requests.length} request(s) unanswered.` +
+        (stderr ? ` Host stderr: ${stderr}` : "") + (hints.length ? ` ${hints.join(" ")}` : "")
+      )));
     }, timeoutMs);
 
-    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    // FULU's host exits on stdin EOF without answering requests still in
+    // flight, so stdin closes only once every request has a response.
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      if (!unanswered.size) return;
+      for (const frame of parseBridgeFrames(Buffer.concat(stdoutChunks))) {
+        if (frame.type === FRAME_TYPE_JSON_RESPONSE) unanswered.delete(frame.id);
+      }
+      if (!unanswered.size) child.stdin?.end();
+    });
     child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    // A host that exits early (exit code 101) closes the pipe; close reports the result.
+    child.stdin?.on("error", () => {});
     child.on("error", (error) => {
       settle(() => reject(error));
     });
@@ -478,7 +553,7 @@ async function runBridgeRequests(
     for (const request of requests) {
       child.stdin?.write(writeJsonRequestFrame(request.id, request.method, request.payload));
     }
-    child.stdin?.end();
+    if (!unanswered.size) child.stdin?.end();
   });
 }
 
@@ -493,9 +568,13 @@ async function probeFuluBridge(command: string, timeoutMs: number): Promise<Reco
     timeoutMs
   );
 
+  const handshake = probe.responses["1"] as { ok?: unknown; network_loaded?: unknown } | undefined;
+  const hints = bridgeHints(probe.exitCode, probe.responses);
   return {
     exitCode: probe.exitCode,
-    ok: probe.ok && Boolean(probe.responses["1"]),
+    // A handshake from a host that could not load the networking plug-in is not a ready bridge.
+    ok: probe.ok && Boolean(handshake) && handshake?.ok !== false && handshake?.network_loaded !== false,
+    ...(hints.length ? { hints } : {}),
     stderr: probe.stderr,
     logs: probe.logs,
     handshake: probe.responses["1"] || null,
@@ -546,6 +625,7 @@ export async function invokeFuluBridgeRpc(options: FuluBridgeRpcOptions): Promis
     options.timeoutMs || 5000
   );
 
+  const hints = bridgeHints(bridgeResult.exitCode, bridgeResult.responses);
   return {
     method,
     readOnly,
@@ -554,6 +634,7 @@ export async function invokeFuluBridgeRpc(options: FuluBridgeRpcOptions): Promis
     bambuModel: options.bambuModel || undefined,
     exitCode: bridgeResult.exitCode,
     ok: bridgeResult.ok,
+    ...(hints.length ? { hints } : {}),
     stderr: bridgeResult.stderr,
     logs: bridgeResult.logs,
     response: bridgeResult.responses["1"] || null,
@@ -601,6 +682,12 @@ export async function inspectFuluOrcaSetup(options: FuluOrcaSetupOptions): Promi
     pluginDir: pluginDir || null,
     runtimeDir: runtimeDir || null,
     bridgeCommand: bridgeCommand || null,
+    // Linux only: absolute plug-in library paths passed to FULU's host (FULU #51).
+    ...(platform === "linux" ? { pluginLibraries: {
+      ...Object.fromEntries(["PJARCZAK_BAMBU_NETWORK_SO", "PJARCZAK_BAMBU_SOURCE_SO"]
+        .filter((name) => process.env[name]?.trim()).map((name) => [name, process.env[name]!.trim()])),
+      ...linuxPluginLibraryEnv(process.env, process.platform),
+    } } : {}),
     fileChecks,
     missingRequiredFiles,
     optionalMissingFiles,
@@ -626,7 +713,12 @@ export async function inspectFuluOrcaSetup(options: FuluOrcaSetupOptions): Promi
       "Bambu print start still enforces BAMBU_MODEL before generating or sending project G-code.",
       "Raw bridge print methods are disabled; print_3mf inspects the exact plate, checks the live printer and asks for human confirmation.",
       "The FULU BambuNetwork bridge is a separate runtime from the LAN MQTT/FTPS path; use bridge probing to verify that runtime before relying on cloud behavior.",
-      "FULU macOS release bundles may ship the bridge dylib and host shims before the Linux plugin .so payload is present; missing linux-plugin entries mean the slicer can still be tested, but the BambuNetwork bridge is not fully ready.",
+      ...(platform === "darwin"
+        ? ["FULU macOS release bundles may ship the bridge dylib and host shims before the Linux plugin .so payload is present; missing linux-plugin entries mean the slicer can still be tested, but the BambuNetwork bridge is not fully ready."]
+        : []),
+      ...(platform === "linux"
+        ? ["FULU's v1.0.0 Linux host exits 101 when its stdout is a Node.js socket (FULU #50) and opens the plug-in libraries from its working directory (FULU #51). Pipe the host through cat and set PJARCZAK_BAMBU_PLUGIN_DIR; the server then passes the absolute library paths."]
+        : []),
     ],
   };
 }

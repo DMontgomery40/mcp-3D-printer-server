@@ -11,7 +11,9 @@ import { detectProfilesRoot } from '../slicer/profile-flatten.js';
 import {
   BambuCliProfilePreparer,
   assertSlicedProjectOutput,
+  bambuCliFailureReason,
   buildBambuCliArgs,
+  planBambuCliInput,
   type BambuCliSlicerType,
   type BambuSliceOptions,
 } from '../slicer/bambu-cli.js';
@@ -180,6 +182,27 @@ export class STLManipulator extends EventEmitter {
     }
 
     return timeoutMs;
+  }
+
+  /**
+   * Apply slice_stl's scale and rotations to a copy of the mesh as OrcaSlicer's
+   * CLI would, about the model's centre. Orca adds each --rotate* to the
+   * object's Euler angles (ModelVolume::rotate), so the result rotates about X,
+   * then Y, then Z whatever the argument order, after scaling. The slicer then
+   * places the result on the plate.
+   */
+  private async transformMeshForCli(stlFilePath: string, options: BambuSliceOptions, outputDir: string): Promise<string> {
+    const { geometry, boundingBox } = await this.loadSTL(stlFilePath);
+    const center = new THREE.Vector3();
+    boundingBox.getCenter(center);
+    const radians = (degrees: number) => degrees * Math.PI / 180;
+    geometry.applyMatrix4(new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z));
+    if (options.scale !== undefined) geometry.applyMatrix4(new THREE.Matrix4().makeScale(options.scale, options.scale, options.scale));
+    if (options.rotateX) geometry.applyMatrix4(new THREE.Matrix4().makeRotationX(radians(options.rotateX)));
+    if (options.rotateY) geometry.applyMatrix4(new THREE.Matrix4().makeRotationY(radians(options.rotateY)));
+    if (options.rotate) geometry.applyMatrix4(new THREE.Matrix4().makeRotationZ(radians(options.rotate)));
+    geometry.applyMatrix4(new THREE.Matrix4().makeTranslation(center.x, center.y, center.z));
+    return this.saveSTL(geometry, path.join(outputDir, `${path.basename(stlFilePath, path.extname(stlFilePath))}_transformed.stl`));
   }
 
   /**
@@ -1060,6 +1083,7 @@ export class STLManipulator extends EventEmitter {
             }
             options.loadFilaments = legacyFilaments;
           }
+          const cliInput = planBambuCliInput(cliType, is3mf, options);
           const profilesRoot = detectProfilesRoot(slicerPath, cliType);
           const preparer = new BambuCliProfilePreparer(path.join(this.tempDir, 'slicer-profiles'));
           const bundle = await preparer.prepare(
@@ -1072,7 +1096,9 @@ export class STLManipulator extends EventEmitter {
             options
           );
           bambuOutputDir = fs.mkdtempSync(path.join(this.tempDir, `${operationId}-bambu-output-`));
-          args = [...buildBambuCliArgs(bundle, bambuOutputDir, exportName, options), stlFilePath];
+          // The transformed copy lives in the run's output directory, which is removed afterwards.
+          const inputPath = cliInput.meshTransformed ? await this.transformMeshForCli(stlFilePath, options, bambuOutputDir) : stlFilePath;
+          args = [...buildBambuCliArgs(bundle, bambuOutputDir, exportName, options, cliInput), inputPath];
           bambuExport = {
             producedPath: path.join(bambuOutputDir, exportName),
             // One folder per operation: concurrent slices of same-named inputs
@@ -1135,12 +1161,14 @@ export class STLManipulator extends EventEmitter {
       if (progressCallback) progressCallback(20, `Executing slicer: ${slicerPath} ${args.join(' ')}`);
       console.error(`Executing: ${slicerPath} ${args.join(' ')}`);
 
+      const cliOutputDir = bambuOutputDir;
       await runSlicerProcess({
         command: slicerPath,
         args,
         timeoutMs: this.resolveSlicerTimeoutMs(),
         slicerType,
         isCancelled: () => !this.activeOperations.get(operationId),
+        failureReason: cliOutputDir ? (exitCode) => bambuCliFailureReason(exitCode, cliOutputDir) : undefined,
       });
 
       if (!this.activeOperations.get(operationId)) {

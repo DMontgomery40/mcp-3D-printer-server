@@ -50,7 +50,13 @@ export async function requireHumanConfirmation(
   physicalCheck = false
 ): Promise<void> {
   if (!physicalCheck && confirmationOptOut(scope)) return;
-  if (!confirm || !(await confirm(message))) {
-    throw new Error("Hardware safety confirmation was declined or unavailable. Use an MCP client with elicitation support. No command was sent.");
+  if (!confirm) throw new Error(CONFIRMATION_UNAVAILABLE);
+  if (!(await confirm(message))) {
+    throw new Error("Hardware safety confirmation was declined or cancelled in the MCP client. No command was sent. " + (physicalCheck
+      ? "This confirmation covers a physical check at the printer and always needs a person to accept it."
+      : "Some clients decline prompts automatically, for example in a non-interactive permission mode. A deliberately headless " +
+        `setup that approves jobs another way can set ${scope === "bambu"
+          ? "PRINT_REQUIRE_CONFIRMATION=0 (or BAMBU_REQUIRE_CONFIRMATION=0)"
+          : "PRINT_REQUIRE_CONFIRMATION=0"} to skip ordinary print and heating prompts.`));
   }
 }

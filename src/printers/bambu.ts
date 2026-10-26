@@ -12,6 +12,7 @@ import {
   manualHeatingRequirements,
   publishBambuCommand,
   readFreshPrinterStatus,
+  unchippedNozzles,
   validatePrinterState,
   type PrinterStateRequirements,
 } from "../safety/printer-state.js";
@@ -184,11 +185,14 @@ export class BambuImplementation extends PrinterImplementation {
 
   async confirmPrintPreflight(serial: string, status: any, inspection: PrintFileInspection): Promise<string | undefined> {
     const finishedJob = this.finishedJobIdentity(status);
+    const unchipped = unchippedNozzles(status?.raw);
     await this.confirmHardwareAction(
       `Start a checked print on ${inspection.model.toUpperCase()} (${serial})? Nozzles: ${inspection.nozzleDiameters.join(", ")} mm. ` +
       `Materials: ${inspection.materials.join(", ")}. Peak targets: nozzle ${inspection.maxNozzleTemperature}°C, bed ${inspection.maxBedTemperature}°C, chamber ${inspection.maxChamberTemperature}°C. ` +
       `File SHA-256: ${inspection.sha256}. Confirm the physical spool labels and that the build plate is clear.` +
-      (finishedJob !== undefined ? " The printer reports FINISH: remove the previous part and debris before confirming." : ""),
+      (finishedJob !== undefined ? " The printer reports FINISH: remove the previous part and debris before confirming." : "") +
+      (unchipped.length ? ` Printer ${unchipped.length === 1 ? `nozzle ${unchipped[0]} reports` : `nozzles ${unchipped.join(" and ")} report`} no identity chip, ` +
+        `so ${unchipped.length === 1 ? "its" : "their"} diameter and type are the printer's configured settings; confirm they match the installed ${unchipped.length === 1 ? "hotend" : "hotends"}.` : ""),
       finishedJob !== undefined
     );
     return finishedJob;
@@ -261,8 +265,12 @@ export class BambuImplementation extends PrinterImplementation {
         console.warn("PushAllCommand failed, continuing with cached status", error);
       }
 
-      if (!printer.data || Object.keys(printer.data).length === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+      // The first push after connecting can be a sparse hello (model and
+      // modules); the full status follows. Returning before it merges reported
+      // status UNKNOWN, so wait for gcode_state within the same 1.5 s bound.
+      const deadline = Date.now() + 1500;
+      while (typeof printer.data?.gcode_state !== "string" && Date.now() < deadline) {
+        await sleep(50);
       }
 
       const data = printer.data;

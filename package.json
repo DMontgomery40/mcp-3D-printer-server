@@ -1,7 +1,7 @@
 {
     "name": "mcp-3d-printer-server",
     "mcpName": "io.github.DMontgomery40/mcp-3d-printer-server",
-    "version": "1.2.13",
+    "version": "1.2.14",
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "main": "dist/index.js",
     "repository": "https://github.com/DMontgomery40/mcp-3D-printer-server",
@@ -88,7 +88,7 @@
         "jszip": "^3.10.2",
         "three": "^0.173.0",
         "xml2js": "^0.6.2",
-        "zod": "^3.25.76"
+        "zod": "^4.6.7"
     },
     "devDependencies": {
         "@types/jszip": "^3.4.0",

@@ -11,6 +11,8 @@ export interface SlicerRunOptions {
   slicerType: string;
   /** Polled while the slicer runs; returning true kills it. */
   isCancelled?: () => boolean;
+  /** The slicer's own reason for a nonzero exit, read before its output directory is removed. */
+  failureReason?: (exitCode: number | null) => string | undefined;
 }
 
 export interface SlicerRunResult {
@@ -51,7 +53,7 @@ function describeOutput(stdoutTail: string, stderrTail: string): string {
  * cancellation rejects with a SlicerError that includes the evidence.
  */
 export function runSlicerProcess(options: SlicerRunOptions): Promise<SlicerRunResult> {
-  const { command, args, timeoutMs, slicerType, isCancelled } = options;
+  const { command, args, timeoutMs, slicerType, isCancelled, failureReason } = options;
   return new Promise((resolve, reject) => {
     const stdout = new TailBuffer();
     const stderr = new TailBuffer();
@@ -107,9 +109,10 @@ export function runSlicerProcess(options: SlicerRunOptions): Promise<SlicerRunRe
           : signal
             ? `Slicer was terminated by signal ${signal}`
             : `Slicer exited with code ${code}`;
+      const cliReason = timedOut || cancelled ? undefined : failureReason?.(code);
       settle(() => reject(new SlicerError(
         "execution",
-        `${reason} (${slicerType}: ${command}).\n${describeOutput(stdoutTail, stderrTail)}`,
+        `${reason} (${slicerType}: ${command})${cliReason ? `: ${cliReason}` : ""}.\n${describeOutput(stdoutTail, stderrTail)}`,
         {
           slicerType,
           slicerPath: command,

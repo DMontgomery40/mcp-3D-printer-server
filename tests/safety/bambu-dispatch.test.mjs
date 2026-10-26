@@ -139,10 +139,37 @@ test("a declined human confirmation stops before upload", async (t) => {
   const file = await fixture(t);
   const prompts = [];
   const { printer, events } = isolatedPrinter(safetyStatus(), async (message) => { prompts.push(message); return false; });
-  await assert.rejects(print3mf(printer, file), /confirmation was declined/i);
+  await assert.rejects(print3mf(printer, file), (error) => {
+    // bambu-printer-mcp #67: a client that supports elicitation can still decline; do not send people looking for another client.
+    assert.match(error.message, /confirmation was declined or cancelled/i);
+    assert.match(error.message, /PRINT_REQUIRE_CONFIRMATION=0 \(or BAMBU_REQUIRE_CONFIRMATION=0\)/);
+    assert.doesNotMatch(error.message, /Use an MCP client with elicitation support/);
+    return true;
+  });
   assertNoDispatch(events);
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /P1S.*PLA.*nozzle 220°C, bed 60°C.*SHA-256/s);
+  assert.doesNotMatch(prompts[0], /identity chip/);
+});
+
+test("a print without any confirmation callback says confirmation is unavailable", async (t) => {
+  const file = await fixture(t);
+  const { printer, events } = isolatedPrinter();
+  printer.confirm = undefined;
+  await assert.rejects(print3mf(printer, file), /requires an MCP client with elicitation support/);
+  assertNoDispatch(events);
+});
+
+test("the print preflight names nozzles without an identity chip", async () => {
+  const prompts = [];
+  const printer = new BambuImplementation({}, async (message) => { prompts.push(message); return true; });
+  const inspection = { model: "h2d", nozzleDiameters: [0.4, 0.4], materials: ["PLA"], maxNozzleTemperature: 220, maxBedTemperature: 60, maxChamberTemperature: 0, sha256: "0".repeat(64) };
+  const unchipped = { device: { nozzle: { info: [{ id: 0, diameter: 0.4, type: "HS01", stat: 1, sn: "N/A" }, { id: 1, diameter: 0.4, type: "HS01", stat: 1, sn: "N/A" }] } } };
+  await printer.confirmPrintPreflight("094TEST", { raw: { gcode_state: "IDLE", hms: [], ...unchipped } }, inspection);
+  assert.match(prompts[0], /Printer nozzles 0 and 1 report no identity chip, so their diameter and type are the printer's configured settings; confirm they match the installed hotends\./);
+  unchipped.device.nozzle.info[1].sn = "B01";
+  await printer.confirmPrintPreflight("094TEST", { raw: { gcode_state: "IDLE", hms: [], ...unchipped } }, inspection);
+  assert.match(prompts[1], /Printer nozzle 0 reports no identity chip, so its diameter and type are the printer's configured settings; confirm they match the installed hotend\./);
 });
 
 test("confirmation opt-out skips ordinary prompts but a finished bed still needs a human", async (t) => {
@@ -158,7 +185,12 @@ test("confirmation opt-out skips ordinary prompts but a finished bed still needs
       assert.equal((await print3mf(idle.printer, file)).status, "success", `${name}=0 opts out of ordinary prompts`);
       assert.equal(prompts, 0);
       const finished = isolatedPrinter(safetyStatus({ state: "FINISH" }), async () => { prompts++; return false; });
-      await assert.rejects(print3mf(finished.printer, file), /confirmation/i);
+      await assert.rejects(print3mf(finished.printer, file), (error) => {
+        assert.match(error.message, /confirmation was declined or cancelled/i);
+        assert.match(error.message, /always needs a person to accept it/);
+        assert.doesNotMatch(error.message, /REQUIRE_CONFIRMATION/, "the headless opt-out does not apply to physical checks");
+        return true;
+      });
       assert.equal(prompts, 1, "finished-bed clearance is a physical check");
       assertNoDispatch(finished.events);
     } finally {
