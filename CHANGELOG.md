@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.15 — 2026-10-26
+
+### Documentation
+- Link the upstream reports for FULU's Linux host: the missing `printer.cer` ([FULU #52](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/issues/52)), the segfault on printer-connection calls before a certificate folder is set ([FULU #53](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/issues/53)), the abort on a missing `create_agent` log folder ([FULU #54](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/issues/54)), and the abort when its input closes after an agent exists ([FULU #55](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/issues/55)). This server refuses the methods behind #52 and #53. `fulu_bambu_network_rpc` can reach #54 with a missing `log_dir`, and #55 after `net.create_agent` once every request is answered; that abort is the one 1.2.14's validation saw.
+- Link the proposed fixes for FULU's CLI crash, [FULU #56](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/56) and [FULU #57](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/57). With both, a patched macOS arm64 build answers `--help` and slices a P1S cube; FULU v1.0.0 crashes on both.
+- Credit OrcaSlicer's fix for the 2.4.2 `PartPlate::check_outside` CLI crash: [OrcaSlicer #14415](https://github.com/OrcaSlicer/OrcaSlicer/pull/14415) by packerlschupfer, released in 2.5.0-alpha. The STL transform workaround stays while 2.4.2 is the latest stable release; FULU's CLI has the same crash until it takes that fix.
+
 ## 1.2.14 — 2026-10-25
 
 Ported from [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) 1.1.34. Its evidence came from real P1S runs and an x86-64 Linux FULU container; this repository's validation is noted in each entry.
