@@ -424,7 +424,7 @@ const mode = process.argv[2] || "ok";
 // Like FULU's host: answer each frame as it arrives, a little later, and exit
 // on stdin EOF, dropping any request not yet answered.
 let buffer = Buffer.alloc(0);
-process.stdin.on("end", () => process.exit(0));
+process.stdin.on("end", () => { if (mode !== "hang-after-handshake") process.exit(0); });
 process.stdin.on("data", chunk => {
   buffer = Buffer.concat([buffer, chunk]);
   let offset = 0;
@@ -451,6 +451,11 @@ process.stdin.on("data", chunk => {
         env_network_so: process.env.PJARCZAK_BAMBU_NETWORK_SO ?? null, env_source_so: process.env.PJARCZAK_BAMBU_SOURCE_SO ?? null };
     } else if (request.method === "bridge.ping") {
       response = { ok: true, value: "pong" };
+    }
+    if (mode === "hang-after-handshake" && request.method !== "bridge.handshake") {
+      if (request.method === "bridge.capabilities") process.stderr.write("host stuck in capabilities\\n");
+      offset = payloadEnd;
+      continue;
     }
     setTimeout(() => writeFrame(id, response), 50);
     offset = payloadEnd;
@@ -839,6 +844,17 @@ test("FULU Linux host: plug-in library paths, exit 101 and file-open failures ar
   const ready = await inspectFuluOrcaSetup({ platform: "linux", slicerPath: process.execPath, bridgeCommand, runBridgeProbe: true });
   assert.equal(ready.bridgeProbe.ok, true);
   assert.equal(ready.status, "ready");
+
+  // A host that stops answering is bounded by the timeout and still diagnosed from what it said.
+  await assert.rejects(
+    inspectFuluOrcaSetup({ platform: "linux", slicerPath: process.execPath, bridgeCommand: `${bridgeCommand} hang-after-handshake`, runBridgeProbe: true, probeTimeoutMs: 1500 }),
+    /timed out after 1500ms with 2 of 3 request\(s\) unanswered\. Host stderr: host stuck in capabilities/
+  );
+
+  // Library paths the user set are reported as they reach the host.
+  process.env.PJARCZAK_BAMBU_NETWORK_SO = "/custom/net.so";
+  const explicit = await inspectFuluOrcaSetup({ platform: "linux", slicerPath: process.execPath, bridgeCommand });
+  assert.equal(explicit.pluginLibraries.PJARCZAK_BAMBU_NETWORK_SO, "/custom/net.so");
 });
 
 test("FULU setup suggests platform-specific bridge commands only where they apply", async (t) => {

@@ -127,10 +127,8 @@ const STDOUT_SOCKET_HINT =
 function bridgeHints(exitCode: number | null, responses: Record<string, unknown>): string[] {
   const hints: string[] = [];
   if (exitCode === 101) hints.push(STDOUT_SOCKET_HINT);
-  const fileOpenFailure = Object.values(responses).find((response) => {
-    const value = response as { network_status?: unknown; error?: unknown } | null;
-    return [value?.network_status, value?.error].some((text) => typeof text === "string" && /file open failed/i.test(text));
-  }) as { network_status?: unknown; error?: unknown } | undefined;
+  const fileOpenFailure = (Object.values(responses) as Array<{ network_status?: unknown; error?: unknown } | null>)
+    .find((value) => [value?.network_status, value?.error].some((text) => typeof text === "string" && /file open failed/i.test(text)));
   if (fileOpenFailure) {
     hints.push(
       `FULU BambuNetwork bridge could not open its networking library (${String(fileOpenFailure.network_status ?? fileOpenFailure.error)}). ` +
@@ -488,14 +486,24 @@ async function runBridgeRequests(
       callback();
     };
 
+    const unanswered = new Set(requests.map((request) => request.id));
     const timer = setTimeout(() => {
+      child.stdin?.end();
       child.kill("SIGKILL");
-      settle(() => reject(new Error(`FULU bridge request timed out after ${timeoutMs}ms.`)));
+      // Keep what the host did say: a hung host is diagnosed from its stderr and partial answers.
+      const responses = Object.fromEntries(parseBridgeFrames(Buffer.concat(stdoutChunks))
+        .filter((frame) => frame.type === FRAME_TYPE_JSON_RESPONSE)
+        .map((frame) => [String(frame.id), (() => { try { return JSON.parse(frame.payload.toString("utf8")); } catch { return null; } })()]));
+      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim().slice(-1000);
+      const hints = bridgeHints(null, responses);
+      settle(() => reject(new Error(
+        `FULU bridge request timed out after ${timeoutMs}ms with ${unanswered.size} of ${requests.length} request(s) unanswered.` +
+        (stderr ? ` Host stderr: ${stderr}` : "") + (hints.length ? ` ${hints.join(" ")}` : "")
+      )));
     }, timeoutMs);
 
     // FULU's host exits on stdin EOF without answering requests still in
     // flight, so stdin closes only once every request has a response.
-    const unanswered = new Set(requests.map((request) => request.id));
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
       if (!unanswered.size) return;
@@ -675,7 +683,11 @@ export async function inspectFuluOrcaSetup(options: FuluOrcaSetupOptions): Promi
     runtimeDir: runtimeDir || null,
     bridgeCommand: bridgeCommand || null,
     // Linux only: absolute plug-in library paths passed to FULU's host (FULU #51).
-    ...(platform === "linux" ? { pluginLibraries: linuxPluginLibraryEnv(process.env, process.platform) } : {}),
+    ...(platform === "linux" ? { pluginLibraries: {
+      ...Object.fromEntries(["PJARCZAK_BAMBU_NETWORK_SO", "PJARCZAK_BAMBU_SOURCE_SO"]
+        .filter((name) => process.env[name]?.trim()).map((name) => [name, process.env[name]!.trim()])),
+      ...linuxPluginLibraryEnv(process.env, process.platform),
+    } } : {}),
     fileChecks,
     missingRequiredFiles,
     optionalMissingFiles,

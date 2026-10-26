@@ -170,7 +170,7 @@ export function unchippedNozzles(raw: unknown): number[] {
     const index = finiteNumber(entry?.id);
     const stat = finiteNumber(entry?.stat);
     return index !== undefined && Number.isInteger(index) && index >= 0 && index < 16 &&
-      stat !== undefined && Number.isInteger(stat) && unreliableWithoutChip(entry, stat) ? [index] : [];
+      stat !== undefined && Number.isInteger(stat) && stat >= 0 && unreliableWithoutChip(entry, stat) ? [index] : [];
   });
 }
 

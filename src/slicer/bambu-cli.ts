@@ -576,14 +576,15 @@ export interface BambuCliInput {
 }
 
 /**
- * OrcaSlicer's CLI (upstream and FULU) crashes with SIGSEGV in
- * PartPlate::check_outside, which needs the GUI's Plater, when --scale or
- * --rotate-x/-y move an object below the bed while it arranges, the default
- * for STL input. Returns true when an STL's transforms must be applied to a
- * mesh copy instead, after refusing the combinations the CLI cannot handle.
+ * Decide how the CLI receives the model. OrcaSlicer's CLI (upstream and FULU)
+ * crashes with SIGSEGV in PartPlate::check_outside, which needs the GUI's
+ * Plater, when --scale or --rotate-x/-y move an object below the bed while it
+ * arranges, the default for STL input. An Orca STL's transforms are therefore
+ * applied to a mesh copy; combinations the CLI cannot handle are refused.
  */
-export function orcaCliNeedsMeshTransform(slicerType: BambuCliSlicerType, is3mf: boolean, options: BambuSliceOptions): boolean {
-  if (slicerType === "bambustudio") return false;
+export function planBambuCliInput(slicerType: BambuCliSlicerType, is3mf: boolean, options: BambuSliceOptions): BambuCliInput {
+  const input = { slicerType, is3mf, meshTransformed: false };
+  if (slicerType === "bambustudio") return input;
   const tilts = !!options.rotateX || !!options.rotateY;
   if (is3mf) {
     if (options.arrange === true && ((options.scale ?? 1) > 1 || tilts)) {
@@ -592,12 +593,12 @@ export function orcaCliNeedsMeshTransform(slicerType: BambuCliSlicerType, is3mf:
         "Set arrange to false, or apply the transform in the slicer and export the project."
       );
     }
-    return false;
+    return input;
   }
   if (options.repetitions !== undefined && options.cloneObjects) {
     throw new Error("Use either repetitions or clone_objects for an STL with OrcaSlicer, not both.");
   }
-  return options.scale !== undefined || tilts;
+  return { ...input, meshTransformed: options.scale !== undefined || tilts };
 }
 
 /**
@@ -634,7 +635,7 @@ export function bambuCliFailureReason(exitCode: number | null, outputDir: string
   try {
     const result = JSON.parse(fs.readFileSync(path.join(outputDir, "result.json"), "utf8"));
     if (typeof result?.error_string === "string" && result.error_string.trim()) {
-      return `${result.error_string.trim()} [${result.return_code}]`;
+      return `${result.error_string.trim()}${result.return_code !== undefined ? ` [${result.return_code}]` : ""}`;
     }
   } catch {
     // result.json is written only on Linux and only for handled errors.
@@ -650,7 +651,7 @@ export function buildBambuCliArgs(
   outputDir: string,
   exportName: string,
   options: BambuSliceOptions,
-  input: BambuCliInput = { slicerType: "bambustudio", is3mf: false, meshTransformed: false }
+  input: BambuCliInput
 ): string[] {
   const args = [
     "--slice", String(options.slicePlate ?? 0),

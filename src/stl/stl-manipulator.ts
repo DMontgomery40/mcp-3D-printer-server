@@ -13,7 +13,7 @@ import {
   assertSlicedProjectOutput,
   bambuCliFailureReason,
   buildBambuCliArgs,
-  orcaCliNeedsMeshTransform,
+  planBambuCliInput,
   type BambuCliSlicerType,
   type BambuSliceOptions,
 } from '../slicer/bambu-cli.js';
@@ -1083,7 +1083,7 @@ export class STLManipulator extends EventEmitter {
             }
             options.loadFilaments = legacyFilaments;
           }
-          const meshTransformed = orcaCliNeedsMeshTransform(cliType, is3mf, options);
+          const cliInput = planBambuCliInput(cliType, is3mf, options);
           const profilesRoot = detectProfilesRoot(slicerPath, cliType);
           const preparer = new BambuCliProfilePreparer(path.join(this.tempDir, 'slicer-profiles'));
           const bundle = await preparer.prepare(
@@ -1097,8 +1097,8 @@ export class STLManipulator extends EventEmitter {
           );
           bambuOutputDir = fs.mkdtempSync(path.join(this.tempDir, `${operationId}-bambu-output-`));
           // The transformed copy lives in the run's output directory, which is removed afterwards.
-          const inputPath = meshTransformed ? await this.transformMeshForCli(stlFilePath, options, bambuOutputDir) : stlFilePath;
-          args = [...buildBambuCliArgs(bundle, bambuOutputDir, exportName, options, { slicerType: cliType, is3mf, meshTransformed }), inputPath];
+          const inputPath = cliInput.meshTransformed ? await this.transformMeshForCli(stlFilePath, options, bambuOutputDir) : stlFilePath;
+          args = [...buildBambuCliArgs(bundle, bambuOutputDir, exportName, options, cliInput), inputPath];
           bambuExport = {
             producedPath: path.join(bambuOutputDir, exportName),
             // One folder per operation: concurrent slices of same-named inputs
