@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.14 — 2026-10-25
 
 Ported from [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) 1.1.34. Its evidence came from real P1S runs and an x86-64 Linux FULU container; this repository's validation is noted in each entry.
 
