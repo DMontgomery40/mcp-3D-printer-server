@@ -1,5 +1,7 @@
 # MCP 3D Printer Server
 
+[![MCP 3D Printer Server — Print from a conversation. Browse the documentation site.](https://dmontgomery40.github.io/mcp-3D-printer-server/social-card.png)](https://dmontgomery40.github.io/mcp-3D-printer-server/)
+
 > **Thank you, [FULU Foundation](https://www.fulu.org/), [Louis Rossmann](https://www.youtube.com/@rossmanngroup), and the [OrcaSlicer-bambulab contributors](https://github.com/FULU-Foundation/OrcaSlicer-bambulab).** Thank you for standing up for consumer ownership, open-source developers, repair rights, and owners whose working hardware should not be made worse by locked-down software.
 >
 > This server treats the FULU OrcaSlicer-bambulab fork as a first-class slicer for Bambu Lab projects. See the [FULU guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md) for setup and current status.

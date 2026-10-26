@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.16 — 2026-10-26
+
+### Documentation
+- Show the documentation site's social card directly below the README title and link it to the site.
+
 ## 1.2.15 — 2026-10-26
 
 ### Documentation
