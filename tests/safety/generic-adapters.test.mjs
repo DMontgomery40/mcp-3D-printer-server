@@ -209,7 +209,13 @@ for (const [name, adapter] of Object.entries(ADAPTERS)) {
     const printer = await mockPrinter(t, adapter);
     const { impl } = adapterWith(adapter, async () => false);
     await assert.rejects(impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {}), /declined/);
-    await assert.rejects(impl.setTemperature("127.0.0.1", printer.port, "KEY", "bed", 60, {}), /declined/);
+    await assert.rejects(impl.setTemperature("127.0.0.1", printer.port, "KEY", "bed", 60, {}), (error) => {
+      assert.match(error.message, /declined or cancelled/);
+      // The Bambu-only opt-out does nothing for this printer type.
+      assert.match(error.message, /set PRINT_REQUIRE_CONFIRMATION=0 to skip/);
+      assert.doesNotMatch(error.message, /BAMBU_REQUIRE_CONFIRMATION/);
+      return true;
+    });
     assert.deepEqual(mutations(adapter, printer.requests), []);
   });
 
