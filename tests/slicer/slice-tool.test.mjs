@@ -67,12 +67,15 @@ async function createFakeInstall(t) {
   // Mimics the real CLI: an unflattened system preset is "not compatible" (exit 239, stdout only).
   const executable = path.join(app, "MacOS", "BambuStudio");
   const capture = path.join(root, "args.json");
+  const inputCapture = path.join(root, "input-model");
   const modeFile = path.join(root, "mode.txt");
   await fs.mkdir(path.dirname(executable), { recursive: true });
   await fs.writeFile(executable, `#!${process.execPath}
 const fs = require("fs"); const path = require("path");
 const args = process.argv.slice(2);
 fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args));
+// The server deletes a transformed mesh after slicing; keep the model the CLI received.
+if (fs.existsSync(args.at(-1))) fs.copyFileSync(args.at(-1), ${JSON.stringify(inputCapture)});
 const mode = fs.existsSync(${JSON.stringify(modeFile)}) ? fs.readFileSync(${JSON.stringify(modeFile)}, "utf8").trim() : "ok";
 const [machinePath] = (args[args.indexOf("--load-settings") + 1] || "").split(";");
 const machine = JSON.parse(fs.readFileSync(machinePath, "utf8"));
@@ -84,14 +87,20 @@ if (machine.from === "system" || machine.include || !machine.printer_settings_id
 const out = path.join(args[args.indexOf("--outputdir") + 1], args[args.indexOf("--export-3mf") + 1]);
 if (mode === "exit239") { console.log("[error] plate 1: Nothing to be sliced"); console.error("fatal: slicing failed"); process.exit(239); }
 if (mode === "segv") process.kill(process.pid, "SIGSEGV");
+// Linux CLIs record handled errors in result.json; the process exits with the code's low byte.
+if (mode === "resultjson") {
+  fs.writeFileSync(path.join(path.dirname(out), "result.json"), JSON.stringify({ error_string: "Some objects are outside the plate boundary.", return_code: -52 }));
+  process.exit(204);
+}
+if (mode === "exit206") process.exit(206);
 if (mode === "nooutput") process.exit(0);
 fs.copyFileSync(path.join(${JSON.stringify(fixtures)}, mode === "md5only" ? "md5only.3mf" : "ok.3mf"), out);
 `, { mode: 0o755 });
 
-  return { root, bbl, write, leaf, executable, capture, modeFile,
+  return { root, bbl, write, leaf, executable, capture, inputCapture, modeFile,
     setMode: (mode) => fs.writeFile(modeFile, mode),
     args: async () => JSON.parse(await fs.readFile(capture, "utf8")),
-    resetCapture: () => fs.rm(capture, { force: true }) };
+    resetCapture: () => Promise.all([fs.rm(capture, { force: true }), fs.rm(inputCapture, { force: true })]) };
 }
 
 async function startServer(t, install, extraEnv = {}) {
@@ -276,6 +285,17 @@ test("slice_stl surfaces exit code, signal, and slicer output, and never returns
   assert.match(text(result), /terminated by signal SIGSEGV/);
   assert.equal(result.structuredContent?.slicer?.signal, "SIGSEGV");
 
+  // The CLI's own reason: result.json from this run's output directory, else the exit-code table.
+  await install.setMode("resultjson");
+  result = await slice();
+  assert.equal(result.isError, true);
+  assert.match(text(result), /exited with code 204 \(bambustudio: [^)]*\): Some objects are outside the plate boundary\. \[-52\]\./);
+  await install.setMode("exit206");
+  result = await slice();
+  assert.equal(result.isError, true);
+  assert.match(text(result), /exited with code 206 \(bambustudio: [^)]*\): a plate is empty or has no object fully inside it; arrange the model or place it on the plate \[-50\]/);
+  assert.doesNotMatch(text(result), /outside the plate boundary/, "an earlier run's result.json never explains this one");
+
   // A checksum entry is not printable G-code.
   await install.setMode("md5only");
   result = await slice();
@@ -343,6 +363,85 @@ test("slice_stl maps Bambu CLI options and routes generic OrcaSlicer only with a
   assert.equal(orcaMachine.printer_settings_id, P1S);
   const orcaProcess = JSON.parse(await fs.readFile(args[args.indexOf("--load-settings") + 1].split(";")[1], "utf8"));
   assert.equal(orcaProcess.use_relative_e_distances, "0", "Orca process normalization still applies");
+});
+
+/** An axis-aligned box as ASCII STL, so rotation order shows in the received dimensions. */
+function boxStl(x, y, z) {
+  const v = (i) => [i & 1 ? x : 0, i & 2 ? y : 0, i & 4 ? z : 0];
+  const faces = [[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]];
+  return `solid box\n${faces.map((face) => `facet normal 0 0 0\nouter loop\n${face.map((i) => `vertex ${v(i).join(" ")}`).join("\n")}\nendloop\nendfacet`).join("\n")}\nendsolid box\n`;
+}
+
+async function stlSize(file) {
+  const vertices = (await fs.readFile(file, "utf8")).match(/vertex\s+\S+\s+\S+\s+\S+/g).map((line) => line.split(/\s+/).slice(1).map(Number));
+  return [0, 1, 2].map((axis) => Math.round((Math.max(...vertices.map((p) => p[axis])) - Math.min(...vertices.map((p) => p[axis]))) * 1000) / 1000);
+}
+
+// OrcaSlicer 2.4.2's CLI segfaults in PartPlate::check_outside when --scale or
+// --rotate-x/-y move an object below the bed while arranging (bambu-printer-mcp 1.1.34).
+test("Orca STL transforms are applied to a mesh copy in Orca's order; BambuStudio keeps its flags", async (t) => {
+  const install = await createFakeInstall(t);
+  const { call, tempDir } = await startServer(t, install);
+  const box = path.join(install.root, "box.stl");
+  await fs.writeFile(box, boxStl(10, 20, 30));
+  const transformFlags = ["--scale", "--rotate", "--rotate-x", "--rotate-y"];
+
+  for (const slicerType of ["orcaslicer-bambulab", "orcaslicer"]) {
+    await install.resetCapture();
+    // Orca composes Rz*Ry*Rx after scaling, whatever the argument order: Z then X would leave it 10 mm tall.
+    let result = await call("slice_stl", { stl_path: box, slicer_type: slicerType, slicer_path: install.executable, bambu_model: "p1s", rotate: 90, rotate_x: 90 });
+    assert.equal(result.isError, undefined, text(result));
+    let args = await install.args();
+    assert.deepEqual(args.filter((arg) => transformFlags.includes(arg)), [], `${slicerType} must not receive transform flags`);
+    assert.notEqual(args.at(-1), box, "the CLI receives a transformed copy");
+    assert.deepEqual(await stlSize(install.inputCapture), [30, 10, 20]);
+    assert.equal(existsSync(args.at(-1)), false, "the transformed copy is deleted after slicing");
+
+    await install.resetCapture();
+    result = await call("slice_stl", { stl_path: box, slicer_type: slicerType, slicer_path: install.executable, bambu_model: "p1s", scale: 2, rotate_y: 90 });
+    assert.equal(result.isError, undefined, text(result));
+    assert.deepEqual(await stlSize(install.inputCapture), [60, 40, 20]);
+
+    // A Z rotation alone cannot move the object below the bed, so the flag is kept.
+    await install.resetCapture();
+    result = await call("slice_stl", { stl_path: box, slicer_type: slicerType, slicer_path: install.executable, bambu_model: "p1s", rotate: 45, repetitions: 3 });
+    assert.equal(result.isError, undefined, text(result));
+    args = await install.args();
+    assert.equal(args.at(-1), box);
+    assert.equal(args[args.indexOf("--rotate") + 1], "45");
+    // Orca rejects --repetitions for one STL and copies the loaded model with --clone-objects.
+    assert.equal(args[args.indexOf("--clone-objects") + 1], "3");
+    assert.equal(args.includes("--repetitions"), false);
+
+    await install.resetCapture();
+    result = await call("slice_stl", { stl_path: box, slicer_type: slicerType, slicer_path: install.executable, bambu_model: "p1s", repetitions: 2, clone_objects: "2" });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /either repetitions or clone_objects/);
+    await assertNotExecuted(install);
+  }
+  assert.deepEqual((await fs.readdir(tempDir, { recursive: true })).filter((entry) => entry.includes("_transformed")), [], "no transformed mesh is left behind");
+
+  // A 3MF keeps its objects, so the crashing combination is refused before the slicer runs.
+  const project = path.join(install.root, "plate.3mf");
+  await fs.writeFile(project, await zipBytes({ "3D/3dmodel.model": '<?xml version="1.0"?><model unit="millimeter"><resources/><build/></model>' }));
+  for (const transform of [{ scale: 1.5 }, { rotate_x: 30 }, { rotate_y: 30 }]) {
+    await install.resetCapture();
+    const result = await call("slice_stl", { stl_path: project, slicer_type: "orcaslicer-bambulab", slicer_path: install.executable, bambu_model: "p1s", arrange: true, ...transform });
+    assert.equal(result.isError, true, JSON.stringify(transform));
+    assert.match(text(result), /crashes when scale above 1, rotate_x or rotate_y moves a 3MF object below the bed while arranging\. Set arrange to false/);
+    await assertNotExecuted(install);
+  }
+
+  // BambuStudio routes keep every flag, including on the same STL.
+  await install.resetCapture();
+  const result = await call("slice_stl", { stl_path: box, bambu_model: "p1s", scale: 2, rotate: 90, rotate_x: 90, rotate_y: 45, repetitions: 2 });
+  assert.equal(result.isError, undefined, text(result));
+  const args = await install.args();
+  assert.equal(args.at(-1), box);
+  for (const [flag, value] of [["--scale", "2"], ["--rotate", "90"], ["--rotate-x", "90"], ["--rotate-y", "45"], ["--repetitions", "2"]]) {
+    assert.equal(args[args.indexOf(flag) + 1], value, `${flag} must be ${value}`);
+  }
+  assert.equal(args.includes("--clone-objects"), false);
 });
 
 test("template tools save, list, inspect, and slice with a process template", async (t) => {

@@ -33,7 +33,7 @@ export interface BambuSliceOptions {
   orient?: boolean;            // --orient 1: auto-orient for printability
   arrange?: boolean;           // --arrange 1: auto-arrange objects on plate
   ensureOnBed?: boolean;       // --ensure-on-bed: lift floating models onto bed
-  cloneObjects?: string;       // --clone-objects "1,3,1,10": clone counts per object
+  cloneObjects?: string;       // --clone-objects N: total copies of the loaded model
   skipObjects?: string;        // --skip-objects "3,5,10": skip specific objects
   loadFilaments?: string;      // "f1.json;f2.json": positional filament profiles
   loadFilamentIds?: string;    // --load-filament-ids "1,2,3,1": filament-to-object mapping
@@ -567,12 +567,90 @@ const PROFILE_METADATA_KEYS = new Set([
   "compatible_printers", "compatible_printers_condition", "compatible_prints", "compatible_prints_condition",
 ]);
 
+/** How the CLI receives the model: Orca STL transforms are applied to a mesh copy first. */
+export interface BambuCliInput {
+  slicerType: BambuCliSlicerType;
+  is3mf: boolean;
+  /** scale and rotations are already applied to the mesh passed to the CLI. */
+  meshTransformed: boolean;
+}
+
+/**
+ * OrcaSlicer's CLI (upstream and FULU) crashes with SIGSEGV in
+ * PartPlate::check_outside, which needs the GUI's Plater, when --scale or
+ * --rotate-x/-y move an object below the bed while it arranges, the default
+ * for STL input. Returns true when an STL's transforms must be applied to a
+ * mesh copy instead, after refusing the combinations the CLI cannot handle.
+ */
+export function orcaCliNeedsMeshTransform(slicerType: BambuCliSlicerType, is3mf: boolean, options: BambuSliceOptions): boolean {
+  if (slicerType === "bambustudio") return false;
+  const tilts = !!options.rotateX || !!options.rotateY;
+  if (is3mf) {
+    if (options.arrange === true && ((options.scale ?? 1) > 1 || tilts)) {
+      throw new Error(
+        "OrcaSlicer's CLI crashes when scale above 1, rotate_x or rotate_y moves a 3MF object below the bed while arranging. " +
+        "Set arrange to false, or apply the transform in the slicer and export the project."
+      );
+    }
+    return false;
+  }
+  if (options.repetitions !== undefined && options.cloneObjects) {
+    throw new Error("Use either repetitions or clone_objects for an STL with OrcaSlicer, not both.");
+  }
+  return options.scale !== undefined || tilts;
+}
+
+/**
+ * Bambu Studio and OrcaSlicer CLI errors (libslic3r/Utils.hpp). The process
+ * exits with the low byte of the code; on Linux result.json names the error.
+ */
+const BAMBU_CLI_ERRORS: Record<number, string> = {
+  [-2]: "invalid parameters to the slicer",
+  [-3]: "input files not found",
+  [-5]: "preset file cannot be parsed",
+  [-6]: "model file cannot be parsed",
+  [-9]: "copying objects failed",
+  [-17]: "printer is not compatible with the process preset",
+  [-21]: "auto-arranging objects failed",
+  [-22]: "auto-orienting objects failed",
+  [-50]: "a plate is empty or has no object fully inside it; arrange the model or place it on the plate",
+  [-51]: "incorrect slicing parameters",
+  [-52]: "objects extend over the bed boundary",
+  [-60]: "no printable objects remain after skipping",
+  [-61]: "filaments are not compatible with the plate type",
+  [-62]: "the filaments' temperatures differ too much",
+  [-63]: "objects collide in print-by-object mode",
+  [-64]: "objects collide",
+  [-100]: "slicing the model failed",
+  [-101]: "G-code conflicts after slicing",
+  [-102]: "G-code in an unprintable area",
+};
+
+/**
+ * The CLI's own reason for a failed run: result.json in the run's fresh output
+ * directory (written on Linux for handled errors), else the exit-code table.
+ */
+export function bambuCliFailureReason(exitCode: number | null, outputDir: string): string | undefined {
+  try {
+    const result = JSON.parse(fs.readFileSync(path.join(outputDir, "result.json"), "utf8"));
+    if (typeof result?.error_string === "string" && result.error_string.trim()) {
+      return `${result.error_string.trim()} [${result.return_code}]`;
+    }
+  } catch {
+    // result.json is written only on Linux and only for handled errors.
+  }
+  if (exitCode === null) return undefined;
+  const code = Object.keys(BAMBU_CLI_ERRORS).map(Number).find((value) => value === exitCode || (value & 0xff) === exitCode);
+  return code === undefined ? undefined : `${BAMBU_CLI_ERRORS[code]} [${code}]`;
+}
+
 /** CLI flags for the prepared bundle and caller options (input path appended by the caller). */
 export function buildBambuCliArgs(
   bundle: BambuSettingsBundle,
   outputDir: string,
   exportName: string,
-  options: BambuSliceOptions
+  options: BambuSliceOptions,
+  input: BambuCliInput = { slicerType: "bambustudio", is3mf: false, meshTransformed: false }
 ): string[] {
   const args = [
     "--slice", String(options.slicePlate ?? 0),
@@ -590,11 +668,17 @@ export function buildBambuCliArgs(
   if (options.skipModifiedGcodes) args.push("--skip-modified-gcodes");
   if (options.orient !== undefined) args.push("--orient", options.orient ? "1" : "0");
   if (options.arrange !== undefined) args.push("--arrange", options.arrange ? "1" : "0");
-  if (options.repetitions !== undefined) args.push("--repetitions", String(options.repetitions));
-  if (options.scale !== undefined) args.push("--scale", String(options.scale));
-  if (options.rotate !== undefined) args.push("--rotate", String(options.rotate));
-  if (options.rotateX !== undefined) args.push("--rotate-x", String(options.rotateX));
-  if (options.rotateY !== undefined) args.push("--rotate-y", String(options.rotateY));
+  if (options.repetitions !== undefined) {
+    // OrcaSlicer rejects --repetitions for one STL; it copies the loaded model with --clone-objects.
+    if (input.slicerType !== "bambustudio" && !input.is3mf) args.push("--clone-objects", String(options.repetitions));
+    else args.push("--repetitions", String(options.repetitions));
+  }
+  if (!input.meshTransformed) {
+    if (options.scale !== undefined) args.push("--scale", String(options.scale));
+    if (options.rotate !== undefined) args.push("--rotate", String(options.rotate));
+    if (options.rotateX !== undefined) args.push("--rotate-x", String(options.rotateX));
+    if (options.rotateY !== undefined) args.push("--rotate-y", String(options.rotateY));
+  }
   if (options.cloneObjects) args.push("--clone-objects", options.cloneObjects);
   if (options.skipObjects) args.push("--skip-objects", options.skipObjects);
   if (bundle.filamentPaths.length > 0) {
