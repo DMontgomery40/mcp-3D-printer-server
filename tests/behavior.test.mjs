@@ -13,6 +13,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import JSZip from "jszip";
 import { PrusaImplementation } from "../dist/printers/prusa.js";
+import { inspectFuluOrcaSetup, invokeFuluBridgeRpc, linuxPluginLibraryEnv } from "../dist/fulu-orca.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -419,6 +420,7 @@ function writeFrame(id, payload) {
   header.writeUInt32LE(body.length, 12);
   process.stdout.write(Buffer.concat([header, body]));
 }
+const mode = process.argv[2] || "ok";
 const chunks = [];
 process.stdin.on("data", chunk => chunks.push(chunk));
 process.stdin.on("end", () => {
@@ -435,11 +437,15 @@ process.stdin.on("end", () => {
     const request = JSON.parse(buffer.subarray(payloadStart, payloadEnd).toString("utf8"));
     let response = { ok: true, value: 0, method: request.method, payload: request.payload };
     if (request.method === "bridge.handshake") {
-      response = { ok: true, protocol_version: 1, bridge_version: "fake-fulu-bridge", network_loaded: true, source_loaded: true };
+      response = mode === "file-open-failed"
+        // FULU v1.0.0 opens the libraries from its working directory (FULU #51).
+        ? { ok: true, protocol_version: 1, bridge_version: "fake-fulu-bridge", network_loaded: false, network_status: "validate failed: file open failed", source_loaded: false }
+        : { ok: true, protocol_version: 1, bridge_version: "fake-fulu-bridge", network_loaded: true, source_loaded: true };
     } else if (request.method === "bridge.capabilities") {
       response = { ok: true, agent_count: 1, auth_capabilities: ["fake"] };
     } else if (request.method === "bridge.runtime_info") {
-      response = { ok: true, plugin_dir: "/fake/plugin", network_so: "/fake/libbambu_networking.so", source_so: "/fake/libBambuSource.so" };
+      response = { ok: true, plugin_dir: "/fake/plugin", network_so: "/fake/libbambu_networking.so", source_so: "/fake/libBambuSource.so",
+        env_network_so: process.env.PJARCZAK_BAMBU_NETWORK_SO ?? null, env_source_so: process.env.PJARCZAK_BAMBU_SOURCE_SO ?? null };
     } else if (request.method === "bridge.ping") {
       response = { ok: true, value: "pong" };
     }
@@ -793,6 +799,67 @@ test("FULU setup check validates macOS runtime payload and probes bridge", async
     "macOS setup check should return the concrete bridge command shape"
   );
   assert.equal(payload.mcpEnv.SLICER_TYPE, "orcaslicer-bambulab");
+});
+
+// bambu-printer-mcp 1.1.34 / #68: FULU's v1.0.0 Linux host bugs (FULU #50, #51).
+test("FULU Linux host: plug-in library paths, exit 101 and file-open failures are explained", async (t) => {
+  const pluginDir = "/opt/OrcaSlicer/plugins";
+  assert.deepEqual(linuxPluginLibraryEnv({ PJARCZAK_BAMBU_PLUGIN_DIR: pluginDir }, "linux"), {
+    PJARCZAK_BAMBU_NETWORK_SO: "/opt/OrcaSlicer/plugins/libbambu_networking.so",
+    PJARCZAK_BAMBU_SOURCE_SO: "/opt/OrcaSlicer/plugins/libBambuSource.so",
+  });
+  assert.deepEqual(linuxPluginLibraryEnv({ PJARCZAK_BAMBU_PLUGIN_DIR: pluginDir, PJARCZAK_BAMBU_NETWORK_SO: "/custom/net.so" }, "linux"),
+    { PJARCZAK_BAMBU_SOURCE_SO: "/opt/OrcaSlicer/plugins/libBambuSource.so" }, "explicit library paths are kept");
+  assert.deepEqual(linuxPluginLibraryEnv({ PJARCZAK_BAMBU_PLUGIN_DIR: pluginDir }, "darwin"), {}, "macOS wrappers run the host in a Linux guest");
+  assert.deepEqual(linuxPluginLibraryEnv({}, "linux"), {});
+
+  const bridgeCommand = await createFakeFuluBridge(t);
+  const saved = Object.fromEntries(["PJARCZAK_BAMBU_PLUGIN_DIR", "PJARCZAK_BAMBU_NETWORK_SO", "PJARCZAK_BAMBU_SOURCE_SO"].map((name) => [name, process.env[name]]));
+  t.after(() => { for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; } });
+  process.env.PJARCZAK_BAMBU_PLUGIN_DIR = pluginDir;
+  delete process.env.PJARCZAK_BAMBU_NETWORK_SO;
+  delete process.env.PJARCZAK_BAMBU_SOURCE_SO;
+  const info = await invokeFuluBridgeRpc({ bridgeCommand, method: "bridge.runtime_info" });
+  assert.equal(info.response.env_network_so, process.platform === "linux" ? "/opt/OrcaSlicer/plugins/libbambu_networking.so" : null);
+  assert.equal(info.response.env_source_so, process.platform === "linux" ? "/opt/OrcaSlicer/plugins/libBambuSource.so" : null);
+  assert.equal(info.hints, undefined);
+
+  const exited = await invokeFuluBridgeRpc({ bridgeCommand: "exit 101", method: "bridge.handshake" });
+  assert.equal(exited.ok, false);
+  assert.match(exited.hints.join(" "), /Exit code 101.*FULU-Foundation\/OrcaSlicer-bambulab\/issues\/50.*through cat/);
+
+  const probe = await inspectFuluOrcaSetup({ platform: "linux", slicerPath: process.execPath, bridgeCommand: `${bridgeCommand} file-open-failed`, runBridgeProbe: true });
+  assert.equal(probe.bridgeProbe.ok, false, "a host that cannot load the plug-in is not a ready bridge");
+  assert.equal(probe.status, "needs_setup");
+  assert.match(probe.bridgeProbe.hints.join(" "), /could not open its networking library \(validate failed: file open failed\)\. Set PJARCZAK_BAMBU_PLUGIN_DIR/);
+  const ready = await inspectFuluOrcaSetup({ platform: "linux", slicerPath: process.execPath, bridgeCommand, runBridgeProbe: true });
+  assert.equal(ready.bridgeProbe.ok, true);
+  assert.equal(ready.status, "ready");
+});
+
+test("FULU setup suggests platform-specific bridge commands only where they apply", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-linux-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const slicerPath = path.join(dir, "orca-slicer");
+  await fs.writeFile(slicerPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await fs.writeFile(path.join(dir, "pjarczak_bambu_linux_host"), "", { mode: 0o755 });
+  const savedCommand = process.env.FULU_BAMBU_BRIDGE_COMMAND;
+  delete process.env.FULU_BAMBU_BRIDGE_COMMAND;
+  t.after(() => { if (savedCommand !== undefined) process.env.FULU_BAMBU_BRIDGE_COMMAND = savedCommand; });
+
+  const linux = await inspectFuluOrcaSetup({ platform: "linux", slicerPath, pluginDir: dir });
+  assert.equal(linux.bridgeCommand, `'${path.join(dir, "pjarczak_bambu_linux_host")}' | cat`, "the default Linux host avoids FULU #50 through cat");
+  assert.ok(linux.pluginLibraries, "Linux setup reports the library paths passed to the host");
+  assert.ok(linux.commands.some((command) => /\| cat.*PJARCZAK_BAMBU_PLUGIN_DIR/.test(command.command)));
+  assert.equal(linux.notes.some((note) => /macOS release bundles/.test(note)), false);
+  assert.ok(linux.notes.some((note) => /FULU #50.*FULU #51/.test(note)));
+
+  // A macOS bundle without FULU's wrapper gets no wrapper command.
+  const darwin = await inspectFuluOrcaSetup({ platform: "darwin", slicerPath, pluginDir: dir, runtimeDir: dir });
+  assert.equal(darwin.bridgeCommand, null);
+  assert.equal(darwin.commands.some((command) => /pjarczak-bambu-linux-host-wrapper/.test(command.command)), false);
+  assert.equal("pluginLibraries" in darwin, false);
+  assert.ok(darwin.notes.some((note) => /macOS release bundles/.test(note)));
 });
 
 test("FULU bridge RPC allows read-only methods and gates mutating print methods", async (t) => {
