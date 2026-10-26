@@ -88,7 +88,7 @@
         "jszip": "^3.10.2",
         "three": "^0.173.0",
         "xml2js": "^0.6.2",
-        "zod": "^3.25.76"
+        "zod": "^4.6.7"
     },
     "devDependencies": {
         "@types/jszip": "^3.4.0",

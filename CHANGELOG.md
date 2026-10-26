@@ -17,6 +17,10 @@ Ported from [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-m
 
 - Add the FULU guide's Linux host setup and an "Upstream bugs and workarounds" table naming FULU #50 and #51, the FULU runtime's missing `printer.cer`, the FULU v1.0.0 CLI crash, the OrcaSlicer 2.4.2 `check_outside` crash (related to the closed [OrcaSlicer #13328](https://github.com/OrcaSlicer/OrcaSlicer/issues/13328)), and the Bambu plug-in's `-4030` design, with what this server does about each.
 
+### Dependencies
+
+- Move the direct `zod` dependency to 4.6.7 for [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5), memory exhaustion when validating oversized constrained collections; every zod 3 release is affected. The MCP SDK and zod-to-json-schema both accept zod 4, and this server does not import zod itself. Update body-parser to 2.4.0 ([GHSA-27r3-jxmh-p828](https://github.com/advisories/GHSA-27r3-jxmh-p828)), fast-uri to 3.1.9, follow-redirects to 1.16.2, hono to 4.13.14 and ip-address to 10.7.5 for their new advisories. `npm audit` now reports no vulnerabilities. The documentation site's VitePress development server still pulls vite 6.4.3 and esbuild with advisories that have no VitePress 1.x fix; they affect only `vitepress dev`, not the published static site.
+
 ## 1.2.13 — 2026-10-20
 
 ### Dependencies
