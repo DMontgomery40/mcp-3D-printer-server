@@ -421,10 +421,12 @@ function writeFrame(id, payload) {
   process.stdout.write(Buffer.concat([header, body]));
 }
 const mode = process.argv[2] || "ok";
-const chunks = [];
-process.stdin.on("data", chunk => chunks.push(chunk));
-process.stdin.on("end", () => {
-  const buffer = Buffer.concat(chunks);
+// Like FULU's host: answer each frame as it arrives, a little later, and exit
+// on stdin EOF, dropping any request not yet answered.
+let buffer = Buffer.alloc(0);
+process.stdin.on("end", () => process.exit(0));
+process.stdin.on("data", chunk => {
+  buffer = Buffer.concat([buffer, chunk]);
   let offset = 0;
   while (offset + 16 <= buffer.length) {
     const magic = buffer.readUInt32LE(offset);
@@ -433,7 +435,8 @@ process.stdin.on("end", () => {
     const size = buffer.readUInt32LE(offset + 12);
     const payloadStart = offset + 16;
     const payloadEnd = payloadStart + size;
-    if (magic !== MAGIC || type !== 1 || payloadEnd > buffer.length) process.exit(12);
+    if (payloadEnd > buffer.length) break;
+    if (magic !== MAGIC || type !== 1) process.exit(12);
     const request = JSON.parse(buffer.subarray(payloadStart, payloadEnd).toString("utf8"));
     let response = { ok: true, value: 0, method: request.method, payload: request.payload };
     if (request.method === "bridge.handshake") {
@@ -449,9 +452,10 @@ process.stdin.on("end", () => {
     } else if (request.method === "bridge.ping") {
       response = { ok: true, value: "pong" };
     }
-    writeFrame(id, response);
+    setTimeout(() => writeFrame(id, response), 50);
     offset = payloadEnd;
   }
+  buffer = buffer.subarray(offset);
 });
 `,
     { mode: 0o755 }

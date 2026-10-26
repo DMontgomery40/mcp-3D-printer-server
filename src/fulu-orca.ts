@@ -493,8 +493,20 @@ async function runBridgeRequests(
       settle(() => reject(new Error(`FULU bridge request timed out after ${timeoutMs}ms.`)));
     }, timeoutMs);
 
-    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    // FULU's host exits on stdin EOF without answering requests still in
+    // flight, so stdin closes only once every request has a response.
+    const unanswered = new Set(requests.map((request) => request.id));
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      if (!unanswered.size) return;
+      for (const frame of parseBridgeFrames(Buffer.concat(stdoutChunks))) {
+        if (frame.type === FRAME_TYPE_JSON_RESPONSE) unanswered.delete(frame.id);
+      }
+      if (!unanswered.size) child.stdin?.end();
+    });
     child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    // A host that exits early (exit code 101) closes the pipe; close reports the result.
+    child.stdin?.on("error", () => {});
     child.on("error", (error) => {
       settle(() => reject(error));
     });
@@ -533,7 +545,7 @@ async function runBridgeRequests(
     for (const request of requests) {
       child.stdin?.write(writeJsonRequestFrame(request.id, request.method, request.payload));
     }
-    child.stdin?.end();
+    if (!unanswered.size) child.stdin?.end();
   });
 }
 
