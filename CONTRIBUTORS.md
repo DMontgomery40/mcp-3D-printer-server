@@ -21,6 +21,7 @@ Thank you to everyone who builds, tests, reports problems, and shares real print
 
 | Contributor | Contribution |
 | --- | --- |
+| [ZombieLurker](https://github.com/ZombieLurker) | Supplies the exact OrcaSlicer 2.4.2 H2D startup commands and unused-nozzle diagnosis in [fork #73](https://github.com/DMontgomery40/bambu-printer-mcp/issues/73). The X2D/H2D/H2D Pro preheat correction is ported here with independent offline safety regressions; no physical printing is claimed. |
 | [MorganFreeeman](https://github.com/MorganFreeeman) | Reports in the Bambu fork's [#67](https://github.com/DMontgomery40/bambu-printer-mcp/issues/67) that every H2D print stopped on stock nozzles, with idle and mid-print H2D firmware 01.04.00.00 reports, and that a declined confirmation pointed to the wrong cause. The nozzle-information and confirmation-wording fixes are ported here with that report as a mocked-status regression; no H2D print is claimed. |
 | [Aaron Roberts (aaroberts)](https://github.com/aaroberts) | Diagnoses FULU's Linux host failures under Node.js in the Bambu fork's [#68](https://github.com/DMontgomery40/bambu-printer-mcp/issues/68), with the upstream issues ([FULU #50](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/issues/50), [FULU #51](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/issues/51)) and a working configuration. The Linux library paths, exit-101 explanation and `cat` wrapper are ported here and checked against FULU's real Linux host without contacting a printer. |
 | [Steavie](https://github.com/Steavie) | Reports reversed A1/A1 mini serial identity in the Bambu fork's [#39](https://github.com/DMontgomery40/bambu-printer-mcp/issues/39). This repository now uses the corrected prefixes for fresh safety identity, with mocked MQTT regressions. |
@@ -58,3 +59,7 @@ Thanks to [Henk Kraal (hkraal)](https://github.com/hkraal) and the [MQTT.js main
 ## Open-source community and interoperability
 
 Special thanks to the [FULU Foundation](https://www.fulu.org/), [Louis Rossmann](https://www.youtube.com/@rossmanngroup), and the [OrcaSlicer-bambulab contributors](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) for their work supporting user control and interoperable tools. This is community recognition, separate from code authorship in this repository. The Bambu-only fork, [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp), credits its own contributors in its [CONTRIBUTORS.md](https://github.com/DMontgomery40/bambu-printer-mcp/blob/main/CONTRIBUTORS.md).
+
+## Dependency maintenance
+
+Thank you to the [MCP TypeScript SDK contributors](https://github.com/modelcontextprotocol/typescript-sdk/graphs/contributors) and [Axios contributors](https://github.com/axios/axios/graphs/contributors) for the compatible 1.32.2 and 1.21.0 releases validated in this project.

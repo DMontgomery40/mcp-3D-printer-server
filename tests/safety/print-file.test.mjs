@@ -490,3 +490,30 @@ test('H2C all-hotend preheat checks unused declared materials without adding AMS
 test('unrecognized G383 U targets cannot bypass other models thermal checks',async t=>{
   for(const model of ['P1S','H2D','X2D']) await assert.rejects(inspect(t,header(model)+'G383 O2 U400 L0\n',{model:model.toLowerCase()}),/unsupported|temperature/i);
 });
+
+for(const model of ['X2D','H2D','H2D Pro']) test(`${model} Orca single-filament startup preheats the unused nozzle without claiming a filament`, async t => {
+  const result=await inspect(t,header(model,'PLA','0.4;0.4')+'M620.17 T0 S220 L0\nM620.17 T1 S220 L-1\nG1 X10 Y10 E1\n',{model:model.toLowerCase()});
+  assert.deepEqual(result.usedFilamentPositions,[0]);
+  assert.equal(result.maxNozzleTemperature,220);
+  assert.deepEqual(result.nozzleDiameters,[0.4,0.4]);
+});
+for(const model of ['X2D','H2D','H2D Pro']) test(`${model} L-1 preheat keeps every declared material and hardware limit wherever it appears`, async t => {
+  for(const [materials,command,pattern] of [
+    ['PLA;PLA','M620.17 T0 S270 L-1',/PLA nozzle temperature 270/],
+    ['PETG;PLA','M620.17 T1 S270 L-1',/PLA nozzle temperature 270/],
+    ['PLA;PLA','; CHANGE_LAYER\nG1 X5 Y5 E1\nM620.17 T0 S270 L-1',/PLA nozzle temperature 270/],
+    ['PETG;PETG','M620.17 T0 S360 L-1',/hardware limit/],
+    ['PETG;PETG','M620.17 T2 S230 L-1',/nozzle\/material temperature mapping/],
+    ['PETG;PETG','M620.17 T0 S230 L-2',/position -2 has no declared material/],
+    ['PETG;PETG','M620.17 T0 L-1',/nozzle\/material temperature mapping/],
+    ['PETG;PETG','M620.17 T0 S230 L-1 P1',/unsupported M620.17 parameter P/],
+  ]) await assert.rejects(inspect(t,header(model,materials,'0.4;0.4')+command+'\n',{model:model.toLowerCase()}),pattern,command);
+  // A file declaring more nozzles cannot widen T beyond the two physical nozzles.
+  await assert.rejects(inspect(t,header(model,'PETG;PETG;PETG','0.4;0.4;0.4')+'M620.17 T2 S230 L-1\n',{model:model.toLowerCase()}),/nozzle\/material temperature mapping/,'T2 with three declared nozzles');
+  // The all-material bound is never looser than an accepted L<position>, so a later idle preheat is checked, not refused.
+  const later=await inspect(t,header(model,'PETG;PETG','0.4;0.4')+'; CHANGE_LAYER\nG1 X5 Y5 E1\nM620.17 T0 S240 L-1\n',{model:model.toLowerCase()});
+  assert.equal(later.maxNozzleTemperature,240);
+});
+test('H2C still rejects unassigned-nozzle preheat without a verified vendor form', async t => {
+  await assert.rejects(inspect(t,header('H2C','PETG;PETG','0.4;0.4')+'M620.17 T0 S230 L-1\n',{model:'h2c'}),/position -1 has no declared material/);
+});
