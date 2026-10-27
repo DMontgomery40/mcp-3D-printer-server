@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.17 — 2026-10-27
+
+### Fixed
+
+- Accept the official OrcaSlicer `M620.17 T<nozzle> S<target> L-1` preheat for an unused nozzle on X2D, H2D and H2D Pro. Keep the target bounded by the hardware limit and every declared material, restrict the physical nozzle to 0 or 1, and do not invent a filament/AMS position. Ported from bambu-printer-mcp 1.1.38 following [ZombieLurker's H2D report](https://github.com/DMontgomery40/bambu-printer-mcp/issues/73). Reproduced and validated here with offline file-inspection regressions; no physical print was run.
+
+### Dependencies
+
+- Update the MCP SDK to 1.32.2 and Axios to 1.21.0 within their supported major versions. Verify MCP startup and HTTP header/body handling alongside the adapter and package tests. Thank you to the [MCP TypeScript SDK contributors](https://github.com/modelcontextprotocol/typescript-sdk) and [Axios contributors](https://github.com/axios/axios/releases/tag/v1.21.0).
+
 ## 1.2.16 — 2026-10-26
 
 ### Documentation
