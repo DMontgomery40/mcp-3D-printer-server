@@ -1371,6 +1371,24 @@ test("streamable-http transport: initialize, list tools, call success + origin r
   const successPayload = parseJsonResult(success);
   assert.equal(successPayload.fileName, "sample_cube.stl");
 
+  await t.test("malformed JSON returns 400 without breaking the active MCP session", async () => {
+    for (const body of ["{", '{"jsonrpc":"2.0",}']) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost",
+        },
+        body,
+        signal: AbortSignal.timeout(5000),
+      });
+      assert.equal(response.status, 400);
+      assert.match(response.headers.get("content-type") ?? "", /application\/json/);
+      assert.deepEqual(await response.json(), { error: "Invalid JSON body" });
+      assertCommonToolPresence(await client.listTools());
+    }
+  });
+
   const forbiddenOriginResponse = await fetch(endpoint, {
     method: "POST",
     headers: {
