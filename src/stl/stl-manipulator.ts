@@ -1503,16 +1503,14 @@ export class STLManipulator extends EventEmitter {
       if (!this.activeOperations.get(operationId)) throw new Error("Operation cancelled");
       if (progressCallback) progressCallback(75, "Finding largest flat surface...");
 
-      // Find the group with the largest total area (excluding near-vertical faces)
+      // Include already-horizontal faces: excluding Z-aligned normals can
+      // stand a flat model on its edge, including on a repeated layFlat call.
       let largestArea = 0;
       let targetNormal: THREE.Vector3 | null = null;
-      const upVector = new THREE.Vector3(0, 1, 0); // Assuming Y is up for most models initially?
       const downVector = new THREE.Vector3(0, 0, -1); // Target normal (pointing down)
 
       for (const group of normalGroups.values()) {
-          // Check if the normal is reasonably horizontal (not too close to vertical Z)
-          // Angle threshold could be adjusted (e.g., > 5 degrees from Z axis)
-          if (Math.abs(group.representativeNormal.z) < 0.99 && group.totalArea > largestArea) {
+          if (group.totalArea > largestArea) {
               largestArea = group.totalArea;
               targetNormal = group.representativeNormal;
           }

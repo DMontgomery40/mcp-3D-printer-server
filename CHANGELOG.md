@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep already-horizontal faces eligible when `lay_flat` chooses the largest flat face. Thin plates now rest on their broad face at Z=0 instead of standing on an edge, including after repeated calls. Validate with generated STL geometry in horizontal, upside-down, edge-on, and tilted orientations; no printer or live Blender scene is used.
+
 ## 1.2.17 — 2026-10-27
 
 ### Fixed
