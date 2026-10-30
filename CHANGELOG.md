@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep already-horizontal faces eligible when `lay_flat` chooses the largest flat face. Thin plates now rest on their broad face at Z=0 instead of standing on an edge, including after repeated calls. Validate with generated STL geometry in horizontal, upside-down, edge-on, and tilted orientations; no printer or live Blender scene is used.
+
 ## 1.2.19 — 2026-10-30
 
 ### Tests
@@ -15,6 +21,7 @@
 ### Dependencies
 
 - Refresh the installation lock to `@hono/node-server` 2.1.5 for GHSA-rmxm-3fg6-px4f using `npm audit fix` without forcing dependency ranges. The MCP SDK already accepts this version. The updated dependency declares Node 20 or newer; no patched 1.x release is available. This lock controls reproducible installs, not existing consumers’ locks. Validation uses offline tests and mocked transports; no printer is contacted.
+
 
 ## 1.2.17 — 2026-10-27
 
