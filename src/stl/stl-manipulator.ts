@@ -1509,16 +1509,19 @@ export class STLManipulator extends EventEmitter {
       let targetNormal: THREE.Vector3 | null = null;
       const downVector = new THREE.Vector3(0, 0, -1); // Target normal (pointing down)
 
+      // Faces are grouped by direction, so a part whose flat faces are all
+      // horizontal has equal up- and down-facing areas. On a tie, keep the
+      // face that already points down so a seated part is not flipped.
       for (const group of normalGroups.values()) {
-          if (group.totalArea > largestArea) {
+          const tied = targetNormal !== null && Math.abs(group.totalArea - largestArea) <= largestArea * 1e-6;
+          if (tied ? group.representativeNormal.z < targetNormal!.z : group.totalArea > largestArea) {
               largestArea = group.totalArea;
               targetNormal = group.representativeNormal;
           }
       }
 
       if (!targetNormal) {
-          // If no suitable horizontal face found, maybe pick the lowest Z face?
-          // For now, throw an error or return unchanged.
+          // Only a mesh without any face area reaches this.
           console.warn("Could not find a suitable large flat face to lay down. No changes made.");
           this.emit('operationComplete', { operationId, type: 'layFlat', success: true, output: stlFilePath, message: "No suitable flat face found." });
           return stlFilePath;
