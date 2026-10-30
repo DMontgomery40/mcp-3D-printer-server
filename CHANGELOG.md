@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.19 — 2026-10-30
+
+### Tests
+
+- Verify malformed HTTP JSON returns a structured 400 response while the active MCP session remains usable. Exercise loopback HTTP only; no real printer or live Blender scene is used.
+
 ## 1.2.18 — 2026-10-30
 
 ### Changed
