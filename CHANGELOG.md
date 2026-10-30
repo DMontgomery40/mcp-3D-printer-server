@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.19 — 2026-10-30
 
 ### Fixed
 
