@@ -8,7 +8,7 @@ The README provides the copy-and-paste setup request. Use this reference for exa
 
 ### Prerequisites
 
-- Node.js 24, recommended (the package supports Node.js 18 or later, CI tests 18 through 24, and the Docker image uses 24)
+- Node.js 24, recommended (the package supports Node.js 20 or later, CI tests 20 through 24, and the Docker image uses 24)
 - npm
 - **A slicer** *(only needed to slice)*: PrusaSlicer, OrcaSlicer, [FULU OrcaSlicer-bambulab](https://github.com/FULU-Foundation/OrcaSlicer-bambulab), Bambu Studio, Slic3r, or CuraEngine. A file that is already sliced can be uploaded and printed without a slicer on the MCP host. See the [slicing guide](./SLICING.md).
 - **Blender with a Blender MCP server** *(optional)*: only for the `blender_mcp_*` tools. See [Blender MCP](#blender-mcp-optional).
