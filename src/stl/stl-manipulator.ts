@@ -1503,24 +1503,25 @@ export class STLManipulator extends EventEmitter {
       if (!this.activeOperations.get(operationId)) throw new Error("Operation cancelled");
       if (progressCallback) progressCallback(75, "Finding largest flat surface...");
 
-      // Find the group with the largest total area (excluding near-vertical faces)
+      // Include already-horizontal faces: excluding Z-aligned normals can
+      // stand a flat model on its edge, including on a repeated layFlat call.
       let largestArea = 0;
       let targetNormal: THREE.Vector3 | null = null;
-      const upVector = new THREE.Vector3(0, 1, 0); // Assuming Y is up for most models initially?
       const downVector = new THREE.Vector3(0, 0, -1); // Target normal (pointing down)
 
+      // Faces are grouped by direction, so a part whose flat faces are all
+      // horizontal has equal up- and down-facing areas. On a tie, keep the
+      // face that already points down so a seated part is not flipped.
       for (const group of normalGroups.values()) {
-          // Check if the normal is reasonably horizontal (not too close to vertical Z)
-          // Angle threshold could be adjusted (e.g., > 5 degrees from Z axis)
-          if (Math.abs(group.representativeNormal.z) < 0.99 && group.totalArea > largestArea) {
+          const tied = targetNormal !== null && Math.abs(group.totalArea - largestArea) <= largestArea * 1e-6;
+          if (tied ? group.representativeNormal.z < targetNormal!.z : group.totalArea > largestArea) {
               largestArea = group.totalArea;
               targetNormal = group.representativeNormal;
           }
       }
 
       if (!targetNormal) {
-          // If no suitable horizontal face found, maybe pick the lowest Z face?
-          // For now, throw an error or return unchanged.
+          // Only a mesh without any face area reaches this.
           console.warn("Could not find a suitable large flat face to lay down. No changes made.");
           this.emit('operationComplete', { operationId, type: 'layFlat', success: true, output: stlFilePath, message: "No suitable flat face found." });
           return stlFilePath;

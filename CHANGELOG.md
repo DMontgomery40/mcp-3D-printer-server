@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.20 — 2026-10-30
+
+### Fixed
+
+- Keep already-horizontal faces eligible when `lay_flat` chooses the largest flat face. Thin plates now rest on their broad face at Z=0 instead of standing on an edge, including after repeated calls. When up- and down-facing areas tie exactly, as for a plate with a raised block or lettering, keep the face that already points down so a seated part is not flipped. Validate with generated STL geometry in horizontal, upside-down, edge-on, and tilted orientations and with a raised block in either face order; no printer or live Blender scene is used.
+
+### Tests
+
+- Verify malformed HTTP JSON returns a structured 400 response while the active MCP session remains usable. Exercise loopback HTTP only; no real printer or live Blender scene is used.
+
 ## 1.2.19 — 2026-10-30
 
 ### Fixed
