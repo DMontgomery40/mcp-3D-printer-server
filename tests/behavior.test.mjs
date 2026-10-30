@@ -113,7 +113,7 @@ async function terminateChildProcess(childProcess) {
   ]);
 }
 
-async function assertStreamableHttpEntrypoint(t, entryFile, portEnvName) {
+async function assertStreamableHttpEntrypoint(t, entryFile, portEnvName, execArgv = []) {
   const port = await getFreePort();
   const endpoint = `http://127.0.0.1:${port}/mcp`;
   const env = {
@@ -125,7 +125,7 @@ async function assertStreamableHttpEntrypoint(t, entryFile, portEnvName) {
   delete env.MCP_HTTP_PORT;
   env[portEnvName] = String(port);
 
-  const childProcess = spawn(process.execPath, [entryFile], {
+  const childProcess = spawn(process.execPath, [...execArgv, entryFile], {
     cwd: REPO_ROOT,
     env,
     stdio: ["ignore", "ignore", "pipe"],
@@ -1407,4 +1407,12 @@ test("streamable-http transport: initialize, list tools, call success + origin r
 test("legacy HTTP and SSE entrypoints delegate to maintained streamable HTTP runtime", async (t) => {
   await assertStreamableHttpEntrypoint(t, path.join(REPO_ROOT, "dist", "http-server.js"), "HTTP_PORT");
   await assertStreamableHttpEntrypoint(t, path.join(REPO_ROOT, "dist", "sse-server.js"), "SSE_PORT");
+});
+
+test("streamable HTTP entrypoints work without a global Web Crypto API, as on Node.js 18", async (t) => {
+  // Node.js 18 exposes Web Crypto only as node:crypto's webcrypto. The SDK's
+  // HTTP transport calls the global, which @hono/node-server 2.x no longer installs.
+  const withoutWebCrypto = ["--import", "data:text/javascript,delete globalThis.crypto"];
+  await assertStreamableHttpEntrypoint(t, path.join(REPO_ROOT, "dist", "http-server.js"), "HTTP_PORT", withoutWebCrypto);
+  await assertStreamableHttpEntrypoint(t, path.join(REPO_ROOT, "dist", "sse-server.js"), "SSE_PORT", withoutWebCrypto);
 });

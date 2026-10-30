@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// Must stay first: Node.js 18 needs the global crypto before any SDK transport code runs.
+import "./ensure-web-crypto.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";

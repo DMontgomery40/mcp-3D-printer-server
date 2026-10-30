@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Restore Node.js 18 support removed in 1.2.18. The MCP SDK's streamable HTTP transport calls the global `crypto`, which Node.js 18 lacks and `@hono/node-server` 2.x no longer installs; the server now provides it from `node:crypto` when missing. The package again declares Node.js 18 or newer and CI tests 18 through 24. Fresh npm installs on Node.js 18 resolve `@hono/node-server` 1.19.17, as they did for 1.2.18 apart from an engine warning. That version is inside GHSA-rmxm-3fg6-px4f's range, which affects only `serveStatic`; this server does not use it. Node.js 20 or newer installs the patched 2.1.5, which the repository lock keeps, so Node.js 18 CI and clones run it outside its declared Node.js 20 range. A regression starts the HTTP and SSE entrypoints without the global; the full suite and packed-install test pass on Node.js 18.20.8 and 24. Offline tests only; no printer is contacted.
+
 ## 1.2.18 — 2026-10-30
 
 ### Changed
