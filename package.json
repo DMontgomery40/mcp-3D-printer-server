@@ -1,7 +1,7 @@
 {
     "name": "mcp-3d-printer-server",
     "mcpName": "io.github.DMontgomery40/mcp-3d-printer-server",
-    "version": "1.2.18",
+    "version": "1.2.19",
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "main": "dist/index.js",
     "repository": "https://github.com/DMontgomery40/mcp-3D-printer-server",
@@ -41,6 +41,8 @@
         "dist/test",
         "dist/types.d.ts",
         "dist/types.js",
+        "dist/ensure-web-crypto.d.ts",
+        "dist/ensure-web-crypto.js",
         "src/3mf_parser.ts",
         "src/fulu-orca.ts",
         "src/http-server.ts",
@@ -55,6 +57,7 @@
         "src/test/stl-manipulator-test.ts",
         "src/test/tsconfig.json",
         "src/types.ts",
+        "src/ensure-web-crypto.ts",
         "README.md",
         "LICENSE",
         "dist/blender-mcp-bridge.js",
@@ -99,6 +102,6 @@
         "typescript": "~5.9.3"
     },
     "engines": {
-        "node": ">=20"
+        "node": ">=18"
     }
 }
