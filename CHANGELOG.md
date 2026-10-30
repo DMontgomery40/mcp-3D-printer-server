@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.18 — 2026-10-30
+
+### Dependencies
+
+- Refresh the installation lock to `@hono/node-server` 2.1.5 for GHSA-rmxm-3fg6-px4f using `npm audit fix` without forcing dependency ranges. The MCP SDK already accepts this version. The updated dependency declares Node 20 or newer; no patched 1.x release is available. This lock controls reproducible installs, not existing consumers’ locks. Validation uses offline tests and mocked transports; no printer is contacted.
+
 ## 1.2.17 — 2026-10-27
 
 ### Fixed
