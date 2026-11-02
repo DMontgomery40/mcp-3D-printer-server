@@ -18,6 +18,8 @@ An MCP server that connects Claude, Codex, and other MCP clients to 3D printers 
 
 **Only print on Bambu Lab printers?** [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) is a Bambu-focused fork of this project with more Bambu features, including AMS inventory and matching, camera snapshots, X2D support, and a Claude Desktop extension.
 
+Camera tools also include `camera_stream_start`, `camera_frame`, and `camera_stream_stop` from version 1.2.26. They reuse configured MJPEG or snapshot sources, send only changed frames, and close when idle. See [camera stream configuration and limits](docs/CAMERA-STREAM.md).
+
 Built with help from our [contributors](./CONTRIBUTORS.md). Thank you to everyone sharing fixes, careful bug reports, and real printer testing!
 
 ---

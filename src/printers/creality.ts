@@ -1,5 +1,5 @@
 import type { AxiosInstance } from "axios";
-import { GenericPrinterImplementation, type GenericPrinterState, type SnapshotCandidate } from "./generic-base.js";
+import { GenericPrinterImplementation, type GenericPrinterState, type SnapshotCandidate, type CameraCandidate } from "./generic-base.js";
 import { KlipperImplementation, MACRO_TIMEOUT_MS } from "./klipper.js";
 import type { ConfirmHardware } from "../safety/confirmation.js";
 import type { CounterpartProgress, FilamentSlot, PrinterIdentity } from "../counterpart/contract.js";
@@ -71,6 +71,11 @@ export class CrealityImplementation extends GenericPrinterImplementation {
   async snapshotCandidates(host: string): Promise<SnapshotCandidate[]> {
     const moonraker = await this.moonrakerPort(host);
     return moonraker ? this.moonraker.snapshotCandidates(host, moonraker, "") : [];
+  }
+
+  async cameraCandidates(host: string): Promise<CameraCandidate[]> {
+    const moonraker = await this.moonrakerPort(host);
+    return moonraker ? this.moonraker.cameraCandidates(host, moonraker, "") : [];
   }
 
   async counterpartFilaments(host: string, port: string, apiKey: string): Promise<FilamentSlot[]> {
@@ -217,4 +222,4 @@ export class CrealityImplementation extends GenericPrinterImplementation {
     
     return response.data;
   }
-} 
+}

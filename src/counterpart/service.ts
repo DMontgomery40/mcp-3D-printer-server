@@ -7,7 +7,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isAxiosError, type AxiosInstance } from "axios";
 import type { PrinterImplementation } from "../types.js";
-import { GenericPrinterImplementation, type SnapshotCandidate } from "../printers/generic-base.js";
+import { GenericPrinterImplementation, type SnapshotCandidate, type CameraCandidate } from "../printers/generic-base.js";
+import {CameraStreams, cameraNativeAvailable, type FrameOptions} from "./camera-stream.js";
+import {openHttpCameraSource} from "./camera-sources.js";
+import {cameraNumber} from "./camera-tools.js";
 import { BambuImplementation } from "../printers/bambu.js";
 import {
   COUNTERPART_CONTRACT,
@@ -57,6 +60,9 @@ function overrideSnapshotUrl(): string | undefined {
 }
 
 export class CounterpartService {
+  private readonly streams = new CameraStreams();
+  private readonly generations = new Map<string, number>();
+  private closed = false;
   constructor(
     private readonly implementation: (type: string) => PrinterImplementation,
     private readonly http: AxiosInstance,
@@ -117,6 +123,9 @@ export class CounterpartService {
         pause: pauseResume, resume: pauseResume, cancel: true, print3mf: false, gcode: true,
       };
     }
+    const streamCandidates = await this.cameraCandidates(target).catch(() => []);
+    capabilities.cameraStream = await cameraNativeAvailable() && streamCandidates.length > 0 &&
+      (capabilities.camera !== "none" || streamCandidates.some(candidate => candidate.configured));
     return compact({
       contract: COUNTERPART_CONTRACT,
       server: this.server,
@@ -172,6 +181,14 @@ export class CounterpartService {
     if (options.savePath !== undefined && (!path.isAbsolute(options.savePath) || options.savePath.includes("\0"))) {
       throw new Error("Invalid save_path: expected an absolute file path.");
     }
+    const active = this.streams.get(this.cameraKey(target));
+    if (active && !active.stopped) {
+      const jpeg = await active.latest(Math.min(timeoutMs, 10000));
+      if (!jpeg) throw new Error("The active camera stream has not produced a frame.");
+      if (options.savePath) await fs.writeFile(options.savePath, jpeg);
+      return compact({status: "success", format: "image/jpeg", sizeBytes: jpeg.length, base64: jpeg.toString("base64"),
+        savedTo: options.savePath, capturedAt: new Date().toISOString(), source: active.transport}) as CameraSnapshotResult;
+    }
     const deadline = Date.now() + timeoutMs;
     const override = overrideSnapshotUrl();
     let candidates: SnapshotCandidate[];
@@ -207,6 +224,78 @@ export class CounterpartService {
     throw new Error(`No camera snapshot within ${timeoutMs} ms. Tried ${failures.length ? failures.join("; ") : "no URL before the deadline"}.`);
   }
 
+  private cameraKey(target: PrinterTarget): string {
+    return JSON.stringify([kindOf(target.type), target.host, target.port, target.type.toLowerCase() === "bambu" ? target.apiKey.split(":")[0] : ""]);
+  }
+
+  private async cameraCandidates(target: PrinterTarget): Promise<CameraCandidate[]> {
+    const override = overrideSnapshotUrl();
+    const candidates: CameraCandidate[] = override ? [{url: override, source: "env-override", configured: true, transport: "http-snapshot"}]
+      : await this.generic(target)?.cameraCandidates(target.host, target.port, target.apiKey) ?? [];
+    // Choose one configured camera; unsupported formats cannot select another camera.
+    const candidate = candidates[0];
+    if (!candidate) return [];
+    try {
+      let supportedURL = true;
+      try { this.resolve(candidate.url, target); } catch { supportedURL = false; }
+      if (!supportedURL || candidate.unsupportedStream || /\.m3u8(?:[?#]|$)/i.test(candidate.url)) {
+        if (!candidate.snapshotUrl) return [];
+        this.resolve(candidate.snapshotUrl, target);
+        return [{...candidate, url: candidate.snapshotUrl, transport: "http-snapshot"}];
+      }
+      this.resolve(candidate.url, target);
+      if (candidate.snapshotUrl) this.resolve(candidate.snapshotUrl, target);
+      return [candidate];
+    } catch { return []; }
+  }
+
+  async cameraStreamStart(target: PrinterTarget, options: {fps?: number; idleTimeoutMs?: number} = {}) {
+    const fps = cameraNumber(options.fps, 1, 0.2, 2, "fps");
+    const idleTimeoutMs = cameraNumber(options.idleTimeoutMs, 30000, 5000, 120000, "idle_timeout_ms", true);
+    const key = this.cameraKey(target), generation = this.generations.get(key) ?? 0;
+    if (!await cameraNativeAvailable()) return {status: "not-supported", reason: "runtime"};
+    if (this.closed || generation !== (this.generations.get(key) ?? 0)) throw new Error("Camera stream start was cancelled.");
+    const existing = this.streams.get(key);
+    if (existing && !existing.stopped) {
+      existing.touch(idleTimeoutMs);
+      return {status: "running", transport: existing.transport, fps: existing.fps, startedAt: existing.startedAt};
+    }
+    const candidates = await this.cameraCandidates(target);
+    if (this.closed || generation !== (this.generations.get(key) ?? 0)) throw new Error("Camera stream start was cancelled.");
+    if (!candidates.length) throw new Error("No camera is configured for this printer. Existing snapshot configuration is used for streaming.");
+    const candidate = candidates[0];
+    const urls = (raw: string) => this.resolve(raw, target).map(url => ({url, headers: this.cameraHeaders(url, target)}));
+    const plan = {urls: urls(candidate.url), snapshots: candidate.snapshotUrl ? urls(candidate.snapshotUrl) : undefined, mode: candidate.transport};
+    const {stream, status} = this.streams.start(key, {transport: "http", fps, idleTimeoutMs, skipFirstFrame: false,
+      open: handlers => openHttpCameraSource(this.http, plan, fps, handlers)});
+    return {status, transport: stream.transport, fps: stream.fps, startedAt: stream.startedAt};
+  }
+
+  async cameraStreamFrame(target: PrinterTarget, options: FrameOptions = {}) {
+    const sinceSeq = cameraNumber(options.sinceSeq, 0, 0, Number.MAX_SAFE_INTEGER, "since_seq", true);
+    const waitMs = cameraNumber(options.waitMs, 0, 0, 10000, "wait_ms", true);
+    const minChange = cameraNumber(options.minChange, 0.02, 0, 1, "min_change");
+    const maxWidth = options.maxWidth === undefined ? undefined : cameraNumber(options.maxWidth, 300, 1, 4096, "max_width", true);
+    const maxBytes = options.maxBytes === undefined ? undefined : cameraNumber(options.maxBytes, 42000, 4096, 5000000, "max_bytes", true);
+    if (options.changedOnly !== undefined && typeof options.changedOnly !== "boolean") throw new Error("changed_only must be a boolean");
+    return this.streams.get(this.cameraKey(target))?.frame({...options, sinceSeq, waitMs, minChange, maxWidth, maxBytes}) ?? {status: "stopped", seq: 0};
+  }
+
+  cameraStreamStop(target: PrinterTarget) {
+    const key = this.cameraKey(target);
+    this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+    this.streams.stop(key);
+    return {status: "stopped"};
+  }
+
+  close(): void { this.closed = true; this.streams.stopAll(); }
+
+  private cameraHeaders(url: string, target: PrinterTarget): Record<string, string> {
+    const host = target.host.includes(":") && !target.host.startsWith("[") ? `[${target.host}]` : target.host;
+    const sameOrigin = new URL(url).origin === new URL(`http://${host}:${target.port}`).origin;
+    return sameOrigin && target.apiKey && target.type.toLowerCase() !== "bambu" ? {"X-Api-Key": target.apiKey} : {};
+  }
+
   /**
    * Snapshot URLs are written from the printer host's point of view: relative
    * paths and loopback hosts mean the printer itself.
@@ -233,10 +322,8 @@ export class CounterpartService {
   }
 
   private async fetchJpeg(url: string, target: PrinterTarget, timeout: number): Promise<Buffer> {
-    const parsed = new URL(url);
     // The API key goes only to the printer's own API origin, never to another host.
-    const sameOrigin = parsed.origin === new URL(`http://${target.host}:${target.port}`).origin;
-    const headers: Record<string, string> = sameOrigin && target.apiKey && target.type.toLowerCase() !== "bambu" ? { "X-Api-Key": target.apiKey } : {};
+    const headers = this.cameraHeaders(url, target);
     const response = await this.http.get(url, {
       headers,
       responseType: "arraybuffer",

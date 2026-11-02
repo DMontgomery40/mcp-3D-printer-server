@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import axios from "axios";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { cameraNativeAvailable } from "../dist/counterpart/camera-stream.js";
 import { CounterpartService } from "../dist/counterpart/service.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -94,7 +95,7 @@ test("OctoPrint over MCP: info, progress, filaments and a Classic Webcam snapsho
   assert.equal(info.contract, "counterpart/1");
   assert.equal(info.server.name, "mcp-3d-printer-server");
   assert.deepEqual(info.printer, { kind: "octoprint", host: "127.0.0.1", model: "Prusa i3", name: "Default" });
-  assert.deepEqual(info.capabilities, { progress: true, layers: false, camera: "http-snapshot", filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true });
+  assert.deepEqual(info.capabilities, { progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true });
   const progress = (await call(client, "counterpart_print_progress")).structuredContent;
   assert.equal(progress.state, "printing");
   assert.equal(progress.job.name, "kan216-long.gcode");
@@ -124,9 +125,11 @@ test("errors from schema tools carry no structuredContent, so clients return the
 });
 
 test("an unreachable printer reports offline, and PrusaLink without an override has no camera", async (t) => {
-  const closed = await mock(t, []);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const unusedPort = String(Number(closed.port) + 1);
+  // Own the failing endpoint: guessing an adjacent unused port can hit another parallel fixture.
+  const closed = createServer(request => request.socket.destroy());
+  closed.listen(0, "127.0.0.1"); await once(closed, "listening");
+  t.after(() => new Promise(resolve => closed.close(resolve)));
+  const unusedPort = String(closed.address().port);
   const { client } = await server(t, { PRINTER_TYPE: "klipper", PRINTER_PORT: unusedPort });
   const offline = (await call(client, "counterpart_print_progress", { port: unusedPort })).structuredContent;
   assert.equal(offline.state, "offline");

@@ -34,6 +34,7 @@ import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { CounterpartService, type PrinterTarget } from "./counterpart/service.js";
+import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
 import {
   CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
   CONTROL_OUTPUT_SCHEMA,
@@ -347,6 +348,7 @@ const PRINTER_TARGET_PROPERTIES = {
 /** Tools that declare an outputSchema: their errors carry no structuredContent, which clients would validate. */
 const OUTPUT_SCHEMA_TOOLS = new Set([
   "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
+  "camera_stream_start", "camera_frame", "camera_stream_stop",
   "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
 ]);
 
@@ -1217,6 +1219,7 @@ class ThreeDPrinterMCPServer {
               }
             }
           },
+          ...CAMERA_STREAM_TOOLS,
           {
             name: "counterpart_printer_info",
             description: "Describe this printer for the counterpart/1 contract: server name and version, printer kind and identity, and which features work (progress, layers, camera, filaments, pause, resume, cancel, print_3mf, G-code), detected from the firmware. Read-only.",
@@ -2090,6 +2093,19 @@ class ThreeDPrinterMCPServer {
         });
 
         switch (name) {
+          case "camera_stream_start":
+            return structured(await this.counterpart.cameraStreamStart(target, {fps: args?.fps as number | undefined, idleTimeoutMs: args?.idle_timeout_ms as number | undefined}));
+          case "camera_frame": {
+            const frame = await this.counterpart.cameraStreamFrame(target, {
+              sinceSeq: args?.since_seq as number | undefined, waitMs: args?.wait_ms as number | undefined,
+              maxWidth: args?.max_width as number | undefined, maxBytes: args?.max_bytes as number | undefined,
+              changedOnly: args?.changed_only as boolean | undefined, minChange: args?.min_change as number | undefined, signal: extra.signal,
+            });
+            // The JPEG appears only once in the MCP payload; text is useful metadata.
+            return {content: [{type: "text" as const, text: JSON.stringify(Object.fromEntries(Object.entries(frame).filter(([key]) => key !== "base64")))}], structuredContent: frame};
+          }
+          case "camera_stream_stop":
+            return structured(this.counterpart.cameraStreamStop(target));
           case "counterpart_printer_info":
             return structured(await this.counterpart.printerInfo(target));
 
@@ -3265,6 +3281,7 @@ class ThreeDPrinterMCPServer {
   }
 
   private async closeOnce(): Promise<void> {
+    this.counterpart.close();
     await this.printerFactory.disconnectAll();
     await this.fusion.close();
 

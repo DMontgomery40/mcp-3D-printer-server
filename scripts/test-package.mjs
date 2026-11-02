@@ -3,6 +3,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import net from "node:net";
+import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,9 +14,11 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), "printer-package-test-"));
+let camera;
 try {
   const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", directory], { cwd: root, encoding: "utf8" }))[0];
-  for (const file of ["dist/index.js", "dist/http-server.js", "dist/sse-server.js", "dist/blender-mcp-bridge.js", "dist/3mf_parser.js"]) {
+  for (const file of ["dist/index.js", "dist/http-server.js", "dist/sse-server.js", "dist/blender-mcp-bridge.js", "dist/3mf_parser.js",
+    "dist/counterpart/camera-stream.js", "dist/counterpart/camera-sources.js", "dist/counterpart/camera-tools.js"]) {
     assert.ok(packed.files.some((entry) => entry.path === file), `Package must contain ${file}`);
   }
   assert.equal(packed.files.some((entry) => /(^|\/)\.env($|\.)|fixtures\/ftps/.test(entry.path)), false);
@@ -23,11 +27,36 @@ try {
   const installed = path.join(directory, "node_modules", "mcp-3d-printer-server");
   const pkg = JSON.parse(await fs.readFile(path.join(installed, "package.json"), "utf8"));
   for (const target of Object.values(pkg.bin)) await fs.access(path.join(installed, target));
-  const env = { ...process.env, MCP_TRANSPORT: "stdio", PRINTER_TYPE: "octoprint", PRINTER_HOST: "127.0.0.1", BLENDER_MCP_COMMAND: "", BLENDER_MCP_BRIDGE_COMMAND: "", TEMP_DIR: path.join(directory, "scratch") };
+  // Resolve the optional native processor from the installed tarball, not this checkout.
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  const nativeSupported = major > 20 || (major === 20 && minor >= 9);
+  const sharp = nativeSupported ? createRequire(path.join(installed, "package.json"))("sharp") : undefined;
+  const jpeg = sharp ? await sharp({create: {width: 320, height: 180, channels: 3, background: "#888"}}).jpeg().toBuffer()
+    : Buffer.from("/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAT/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKwAf//Z", "base64");
+  camera = createServer((_request, response) => { response.writeHead(200, {"Content-Type": "image/jpeg"}); response.end(jpeg); });
+  camera.listen(0, "127.0.0.1"); await once(camera, "listening");
+  const env = { ...process.env, PRINTER_CAMERA_SNAPSHOT_URL: `http://127.0.0.1:${camera.address().port}/still`, MCP_TRANSPORT: "stdio", PRINTER_TYPE: "octoprint", PRINTER_HOST: "127.0.0.1", BLENDER_MCP_COMMAND: "", BLENDER_MCP_BRIDGE_COMMAND: "", TEMP_DIR: path.join(directory, "scratch") };
   async function check(client) {
     assert.equal(client.getServerVersion().version, pkg.version);
     const names = (await client.listTools()).tools.map((tool) => tool.name);
     for (const name of ["get_printer_status", "print_3mf", "blender_mcp_status", "blender_mcp_call", "blender_mcp_edit_model"]) assert.ok(names.includes(name));
+    for (const name of ["camera_stream_start", "camera_frame", "camera_stream_stop"]) assert.ok(names.includes(name));
+    const frame = await client.callTool({name: "camera_frame", arguments: {}});
+    assert.equal(frame.structuredContent.status, "stopped");
+    if (!nativeSupported) {
+      const info = await client.callTool({name: "counterpart_printer_info", arguments: {}});
+      assert.equal(info.structuredContent.capabilities.cameraStream, false);
+      assert.deepEqual((await client.callTool({name: "camera_stream_start", arguments: {}})).structuredContent, {status: "not-supported", reason: "runtime"});
+      assert.equal((await client.callTool({name: "camera_snapshot", arguments: {}})).structuredContent.base64, jpeg.toString("base64"));
+    } else {
+      assert.equal((await client.callTool({name: "camera_stream_start", arguments: {}})).structuredContent.status, "started");
+      const live = (await client.callTool({name: "camera_frame", arguments: {wait_ms: 2000, max_bytes: 42000}})).structuredContent;
+      assert.equal(live.status, "frame");
+      const image = Buffer.from(live.base64, "base64");
+      assert.ok(image.length <= 42000);
+      assert.equal((await sharp(image).metadata()).format, "jpeg");
+      await client.callTool({name: "camera_stream_stop", arguments: {}});
+    }
     const status = await client.callTool({ name: "blender_mcp_status", arguments: {} });
     assert.notEqual(status.isError, true);
     assert.equal(JSON.parse(status.content[0].text).configured, false);
@@ -67,7 +96,8 @@ try {
       clearTimeout(timer);
     }
   }
-  console.log(`Installed ${pkg.name}@${pkg.version} from its npm tarball: all three entrypoints, MCP version, and Blender discovery passed.`);
+  console.log(`Installed ${pkg.name}@${pkg.version} from its npm tarball: all three entrypoints, MCP version, ${nativeSupported ? "native camera frames" : "snapshot fallback without native processing"}, and Blender discovery passed.`);
 } finally {
+  if (camera) { camera.closeAllConnections(); await new Promise(resolve => camera.close(resolve)); }
   await fs.rm(directory, { recursive: true, force: true });
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.26] – 2026-11-02
+
+- Add camera stream tools that share one MJPEG connection, or serialize existing snapshot requests while a viewer watches. Reuse the latest frame for camera snapshots and stop all camera traffic after idle or shutdown.
+- Bound native thumbnail processing and viewer JPEG sizes with the same `max_bytes` contract as bambu-printer-mcp. Keep snapshots and other tools available when optional native image processing cannot load.
+- Validate generic camera discovery, credential isolation, cancellation, and packaging with loopback servers. No generic printer camera hardware or physical print is used in these checks.
+
 ## [1.2.25] – 2026-11-02
 
 ### Fixed
