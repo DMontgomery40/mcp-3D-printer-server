@@ -258,53 +258,49 @@ export class FusionMcpBridge {
    * for the add-in port.
    */
   async status(args: Arguments, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    allowedArguments(args, ["launch", "timeout_ms", "tool_names"]);
+    allowedArguments(args, ["launch", "timeout_ms"]);
     const launch = booleanArgument(args.launch, "launch");
     const timeout = timeoutMilliseconds(args.timeout_ms);
-    const requested = args.tool_names;
-    if (requested !== undefined && (!Array.isArray(requested) || requested.length > 64 || requested.some((name) => typeof name !== "string" || !name.trim()))) {
-      throw new FusionError("tool_names must be an array of up to 64 tool names.");
-    }
     const configured = Boolean(process.env.FUSION_MCP_COMMAND?.trim());
     const { host, port } = addinAddress();
     const local = LOCAL_HOSTS.has(host.toLowerCase());
     let addinReachable = await addinAnswers(host, port, 2_000);
     let processRunning = local ? await fusionProcessRunning() : undefined;
     let launched = false;
-    if (launch && !addinReachable && local && process.platform === "darwin" && processRunning !== true) {
+    if (launch && !addinReachable && processRunning !== true) {
+      if (process.platform !== "darwin" || !local) throw new FusionError("launch is supported only for Fusion on this Mac; start Fusion yourself.");
       try {
         await execFileAsync("open", ["-a", "Autodesk Fusion"], { timeout: 15_000 });
         launched = true;
       } catch {
-        throw new FusionError("Could not open Autodesk Fusion with `open -a \"Autodesk Fusion\"`. Install Fusion, or open it yourself and start the Fusion360MCP add-in.");
+        throw new FusionError("Could not start Autodesk Fusion with open -a \"Autodesk Fusion\". Is it installed?");
       }
     }
     if (launch && !addinReachable) {
       const until = Date.now() + Math.min(LAUNCH_WAIT_MS, timeout);
       while (!addinReachable && Date.now() < until) {
-        if (signal?.aborted) throw new FusionError("fusion_mcp_status cancelled while waiting for Fusion.");
+        if (signal?.aborted) throw new FusionError("Fusion MCP request cancelled while waiting for Fusion to start.");
         await sleep(1_000);
         addinReachable = await addinAnswers(host, port, 1_500);
       }
       if (local) processRunning = await fusionProcessRunning();
     }
     // Off macOS, or with Fusion on another computer, the add-in answering is the evidence that Fusion runs.
-    const fusionRunning = processRunning ?? addinReachable;
-    const base = { configured, addinReachable, fusionRunning, ...(launched ? { launched } : {}), addin: `${host}:${port}`, pinnedCommit: FUSION_MCP_PINNED_COMMIT };
-    if (!configured) return { ...base, connected: false, tools: [] };
-    const session = await this.connect(timeout, signal);
-    let connected = false;
-    if (addinReachable && session.tools.some((tool) => tool.name === "ping")) {
-      connected = !(await this.invoke("ping", {}, Math.min(timeout, 15_000), signal).catch(() => ({ isError: true } as CallToolResult))).isError;
+    const fusionRunning = processRunning === true || addinReachable;
+    const result: Record<string, unknown> = { configured, connected: false, addinReachable, fusionRunning, tools: [], launched, transport: "stdio", pin: FUSION_MCP_PINNED_COMMIT };
+    if (!configured) return result;
+    try {
+      const session = await this.connect(timeout, signal);
+      result.tools = session.tools;
+      result.server = session.client.getServerVersion();
+      // faust's ping answers through the add-in without touching Fusion's API.
+      if (addinReachable && session.tools.some((tool) => tool.name === "ping")) {
+        result.connected = !(await this.invoke("ping", {}, Math.min(timeout, 15_000), signal)).isError;
+      }
+    } catch (error) {
+      result.error = error instanceof Error ? error.message : String(error);
     }
-    const wanted = new Set(requested as string[] | undefined);
-    const summary = (tool: Tool) => ({ name: tool.name, description: tool.description?.trim().split(/\n\s*\n/)[0].replace(/\s+/g, " ").slice(0, 300) });
-    return {
-      ...base,
-      connected,
-      server: session.client.getServerVersion(),
-      tools: session.tools.map((tool) => wanted.has(tool.name) ? tool : summary(tool)),
-    };
+    return result;
   }
 
   /** Pass a call through to a discovered faust tool with its full content and errors (the blender_mcp_call contract). */
@@ -314,15 +310,8 @@ export class FusionMcpBridge {
     const toolArgs = args.arguments ?? {};
     if (!toolArgs || typeof toolArgs !== "object" || Array.isArray(toolArgs)) throw new FusionError("arguments must be an object.");
     const result = await this.invoke(name, toolArgs as Arguments, timeoutMilliseconds(args.timeout_ms), signal);
-    return {
-      ...result,
-      structuredContent: {
-        tool_name: name,
-        isError: result.isError === true,
-        text: resultText(result),
-        ...(result.structuredContent ? { structured: result.structuredContent } : {}),
-      },
-    };
+    // The remote result passes through unchanged; its structuredContent satisfies the open schema.
+    return { ...result, structuredContent: result.structuredContent ?? {} };
   }
 
   /** A new parametric design document, so faust tools have an active design. */
@@ -334,7 +323,7 @@ export class FusionMcpBridge {
       "doc = app.documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)",
       "new_design = adsk.fusion.Design.cast(doc.products.itemByProductType('DesignProductType'))",
       "new_design.designType = adsk.fusion.DesignTypes.ParametricDesignType",
-      "json.dumps({'mcp3d_new_design': True, 'name': doc.name, 'parametric': new_design.designType == adsk.fusion.DesignTypes.ParametricDesignType})",
+      "json.dumps({'mcp3d_new_design': True, 'document': doc.name, 'parametric': new_design.designType == adsk.fusion.DesignTypes.ParametricDesignType})",
     ].join("\n");
     const result = await this.invoke("execute_code", { code }, timeout, signal);
     if (result.isError) {
@@ -342,7 +331,8 @@ export class FusionMcpBridge {
       throw new FusionError(`Fusion could not create a design: ${resultText(result).slice(0, 600) || "no details"}`);
     }
     const created = executeCodeJson(result, "mcp3d_new_design");
-    return { status: "success", design: String(created.name ?? ""), parametric: created.parametric === true };
+    if (typeof created.document !== "string") throw new FusionError("Fusion did not report the new design document.");
+    return { status: "created", document: created.document, parametric: created.parametric === true };
   }
 
   /**
@@ -433,14 +423,15 @@ export class FusionMcpBridge {
         .catch(() => { throw new FusionError(`Cannot publish ${targets.parameters}; it may already exist.`); });
       published.push(targets.parameters);
       return {
-        status: "success",
-        files: targets,
+        status: "exported",
+        ...targets,
         body: body.name,
         triangles: metadata.triangles,
-        bounding_box: metadata.bounding_box,
-        stl_units: stlUnits,
-        fusion_size_mm: body.size_cm.map((value) => Math.round(value * 10 * 1e4) / 1e4),
-        parameter_count: Number(parameters.count ?? 0),
+        bytes: metadata.bytes,
+        parameterCount: Array.isArray(parameters.parameters) ? parameters.parameters.length : 0,
+        boundingBox: metadata.bounding_box,
+        stlUnits,
+        fusionSizeMm: body.size_cm.map((value) => Math.round(value * 10 * 1e4) / 1e4),
         ...(warnings.length ? { warnings } : {}),
       };
     } catch (error) {
@@ -454,57 +445,53 @@ export class FusionMcpBridge {
   }
 }
 
-// ---- outputSchemas for the four Fusion tools ----
+// ---- outputSchemas: the same shapes as bambu-printer-mcp's Fusion bridge ----
 
 export const FUSION_STATUS_OUTPUT_SCHEMA = {
-  type: "object",
-  required: ["configured", "connected", "addinReachable", "fusionRunning", "tools"],
+  type: "object" as const,
   properties: {
-    configured: { type: "boolean" },
-    connected: { type: "boolean" },
-    addinReachable: { type: "boolean" },
+    configured: { type: "boolean", description: "FUSION_MCP_COMMAND is set." },
+    connected: { type: "boolean", description: "The Fusion MCP server started and the add-in answered its ping." },
+    addinReachable: { type: "boolean", description: "The Fusion360MCP add-in answers its ping on FUSION_MCP_HOST:FUSION_MCP_PORT (default localhost:9876)." },
     fusionRunning: { type: "boolean" },
-    launched: { type: "boolean" },
-    addin: { type: "string" },
-    pinnedCommit: { type: "string" },
+    tools: { type: "array", items: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
+    launched: { type: "boolean", description: "This call started Fusion." },
+    transport: { type: "string" },
+    pin: { type: "string", description: "The faust-machines/fusion360-mcp-server commit this bridge is set up for." },
     server: { type: "object" },
-    tools: { type: "array", items: { type: "object", required: ["name"], properties: { name: { type: "string" } } } },
+    error: { type: "string" },
   },
-} as const;
+  required: ["configured", "connected", "addinReachable", "fusionRunning", "tools"],
+};
 
-export const FUSION_CALL_OUTPUT_SCHEMA = {
-  type: "object",
-  required: ["tool_name", "isError", "text"],
-  properties: {
-    tool_name: { type: "string" },
-    isError: { type: "boolean" },
-    text: { type: "string" },
-    structured: { type: "object" },
-  },
-} as const;
+/** fusion_mcp_call passes the remote result through: its structuredContent, else an empty object. */
+export const FUSION_CALL_OUTPUT_SCHEMA = { type: "object" as const };
 
 export const FUSION_NEW_DESIGN_OUTPUT_SCHEMA = {
-  type: "object",
-  required: ["status", "design", "parametric"],
-  properties: { status: { type: "string" }, design: { type: "string" }, parametric: { type: "boolean" } },
-} as const;
+  type: "object" as const,
+  properties: {
+    status: { type: "string", const: "created" },
+    document: { type: "string" },
+    parametric: { type: "boolean" },
+  },
+  required: ["status", "document", "parametric"],
+};
 
 export const FUSION_EXPORT_OUTPUT_SCHEMA = {
-  type: "object",
-  required: ["status", "files", "body", "triangles", "bounding_box", "stl_units"],
+  type: "object" as const,
   properties: {
-    status: { type: "string" },
-    files: {
-      type: "object",
-      required: ["stl", "f3d", "parameters"],
-      properties: { stl: { type: "string" }, f3d: { type: "string" }, parameters: { type: "string" } },
-    },
+    status: { type: "string", const: "exported" },
+    stl: { type: "string", description: "Absolute path of <name>.stl." },
+    f3d: { type: "string", description: "Absolute path of <name>.f3d." },
+    parameters: { type: "string", description: "Absolute path of <name>.parameters.json." },
     body: { type: "string" },
-    triangles: { type: "number" },
-    bounding_box: { type: "object" },
-    stl_units: { type: "string", enum: ["mm", "cm", "unknown"] },
-    fusion_size_mm: { type: "array", items: { type: "number" } },
-    parameter_count: { type: "number" },
+    triangles: { type: "integer", minimum: 1 },
+    bytes: { type: "integer", minimum: 1 },
+    parameterCount: { type: "integer", minimum: 0 },
+    boundingBox: { type: "object", description: "Measured from the written STL, in its own units." },
+    stlUnits: { type: "string", enum: ["mm", "cm", "unknown"], description: "The STL's units, from its size against the Fusion body's." },
+    fusionSizeMm: { type: "array", items: { type: "number" }, description: "The Fusion body's bounding-box size in mm." },
     warnings: { type: "array", items: { type: "string" } },
   },
-} as const;
+  required: ["status", "stl", "f3d", "parameters", "body", "triangles", "parameterCount"],
+};

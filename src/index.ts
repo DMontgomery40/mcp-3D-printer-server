@@ -1974,12 +1974,11 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "fusion_mcp_status",
-            description: `Check the Autodesk Fusion bridge: whether the Fusion MCP server is configured (faust-machines/fusion360-mcp-server@${FUSION_MCP_PINNED_COMMIT}), whether Fusion is running, whether its Fusion360MCP add-in answers on its port, and the server's tools. connected is true only when the add-in answered. With launch: true and Fusion not running on this Mac, opens Autodesk Fusion and waits up to 90 s for the add-in.`,
+            description: `Check the Autodesk Fusion bridge: whether the Fusion MCP server is configured (faust-machines/fusion360-mcp-server@${FUSION_MCP_PINNED_COMMIT}), whether Fusion is running, whether its Fusion360MCP add-in answers on its port, and the server's tools and schemas. connected is true only when the add-in answered. With launch: true and Fusion not running on this Mac, opens Autodesk Fusion and waits up to 90 s for the add-in.`,
             inputSchema: {
               type: "object",
               properties: {
                 launch: { type: "boolean", description: "Open Autodesk Fusion when it is not running (macOS), then wait up to 90 s for the add-in (default false)." },
-                tool_names: { type: "array", items: { type: "string" }, maxItems: 64, description: "Return full input schemas for these discovered tools, such as [\"create_sketch\", \"extrude\"]." },
                 timeout_ms: { type: "integer", minimum: 100, maximum: 600000, description: "Deadline in milliseconds; defaults to FUSION_MCP_TIMEOUT_MS or 180000. The first start downloads the pinned server with uvx." }
               },
               additionalProperties: false

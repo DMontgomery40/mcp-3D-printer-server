@@ -61,6 +61,8 @@ test("fusion_mcp_status without configuration reports it and starts nothing", as
   assert.equal(result.structuredContent.connected, false);
   assert.equal(result.structuredContent.addinReachable, false);
   assert.deepEqual(result.structuredContent.tools, []);
+  assert.equal(result.structuredContent.launched, false);
+  assert.equal(result.structuredContent.pin, "19b9f1e95192");
   const failed = await call("fusion_mcp_call", { tool_name: "ping" });
   assert.equal(failed.isError, true);
   assert.match(text(failed), /FUSION_MCP_COMMAND/);
@@ -70,19 +72,20 @@ test("fusion_mcp_status without configuration reports it and starts nothing", as
 test("one persistent Fusion session serves status, calls, a new design and an export", async (t) => {
   const port = await addinPort(t);
   const { call, temp, requests } = await start(t, { port });
-  const status = (await call("fusion_mcp_status", { tool_names: ["export_stl"] })).structuredContent;
+  const status = (await call("fusion_mcp_status")).structuredContent;
   assert.equal(status.configured, true);
   assert.equal(status.addinReachable, true);
   assert.equal(status.connected, true, "the add-in answered ping");
-  assert.equal(status.pinnedCommit, "19b9f1e95192");
+  assert.equal(status.fusionRunning, true);
+  assert.deepEqual([status.launched, status.transport, status.pin], [false, "stdio", "19b9f1e95192"]);
   assert.equal(status.server.name, "fusion360-mcp-server");
-  assert.deepEqual(status.tools.find((tool) => tool.name === "export_stl").inputSchema.required, ["body_name"]);
-  assert.equal(status.tools.find((tool) => tool.name === "ping").inputSchema, undefined, "other tools are summaries");
+  assert.deepEqual(status.tools.find((tool) => tool.name === "export_stl").inputSchema.required, ["body_name"], "tools carry their schemas");
+  assert.equal((await call("fusion_mcp_status", { tool_names: ["ping"] })).isError, true, "arguments match bambu-printer-mcp's");
 
   const sketch = await call("fusion_mcp_call", { tool_name: "create_sketch", arguments: { plane: "xy" } });
   assert.notEqual(sketch.isError, true, text(sketch));
   assert.match(text(sketch), /^\*\*create_sketch\*\* OK/);
-  assert.equal(sketch.structuredContent.tool_name, "create_sketch");
+  assert.deepEqual(sketch.structuredContent, {}, "the remote structuredContent, else an empty object");
   const mismatch = await call("fusion_mcp_call", { tool_name: "create_sketch", arguments: { plane: "diagonal" } });
   assert.equal(mismatch.isError, true);
   assert.match(text(mismatch), /do not match its advertised input schema/);
@@ -90,17 +93,17 @@ test("one persistent Fusion session serves status, calls, a new design and an ex
   assert.equal(unknown.isError, true);
 
   const design = await call("fusion_mcp_new_design");
-  assert.deepEqual(design.structuredContent, { status: "success", design: "Untitled", parametric: true });
+  assert.deepEqual(design.structuredContent, { status: "created", document: "Untitled", parametric: true });
 
   const exported = await call("fusion_mcp_export", { output_dir: temp, name: "bracket" });
   assert.notEqual(exported.isError, true, text(exported));
-  const files = exported.structuredContent.files;
+  const files = exported.structuredContent;
   const real = await fs.realpath(temp);
-  assert.deepEqual(files, { stl: path.join(real, "bracket.stl"), f3d: path.join(real, "bracket.f3d"), parameters: path.join(real, "bracket.parameters.json") });
-  assert.equal(exported.structuredContent.body, "Bracket");
-  assert.equal(exported.structuredContent.stl_units, "mm");
-  assert.deepEqual(exported.structuredContent.bounding_box.dimensions, [20, 10, 5]);
-  assert.deepEqual(exported.structuredContent.fusion_size_mm, [20, 10, 5]);
+  assert.deepEqual([files.status, files.stl, files.f3d, files.parameters], ["exported", path.join(real, "bracket.stl"), path.join(real, "bracket.f3d"), path.join(real, "bracket.parameters.json")]);
+  assert.deepEqual([files.body, files.triangles, files.bytes, files.parameterCount], ["Bracket", 1, 134, 1]);
+  assert.equal(files.stlUnits, "mm");
+  assert.deepEqual(files.boundingBox.dimensions, [20, 10, 5]);
+  assert.deepEqual(files.fusionSizeMm, [20, 10, 5]);
   assert.deepEqual(JSON.parse(await fs.readFile(files.parameters, "utf8")).parameters[0].expression, "20 mm");
   assert.ok((await fs.stat(files.f3d)).size > 0);
   assert.deepEqual((await fs.readdir(real)).filter((name) => name.startsWith(".mcp3d-")), [], "staged files are removed");
@@ -132,7 +135,7 @@ test("without an open design, Fusion tools explain the faust-machines bootstrap 
   const passthrough = await call("fusion_mcp_call", { tool_name: "create_sketch", arguments: {} });
   assert.equal(passthrough.isError, true, "remote errors pass through as errors");
   assert.match(text(passthrough), /NO_ACTIVE_DESIGN/);
-  assert.equal(passthrough.structuredContent.isError, true);
+  assert.deepEqual(passthrough.structuredContent, {});
 });
 
 test("fusion_mcp_export needs body_name for several bodies, warns on centimetre STLs, and checks the files arrived", async (t) => {
@@ -149,7 +152,7 @@ test("fusion_mcp_export needs body_name for several bodies, warns on centimetre 
   const cm = await start(t, { port, mode: "stl-cm" });
   result = await cm.call("fusion_mcp_export", { output_dir: cm.temp, name: "part" });
   assert.notEqual(result.isError, true, text(result));
-  assert.equal(result.structuredContent.stl_units, "cm");
+  assert.equal(result.structuredContent.stlUnits, "cm");
   assert.match(result.structuredContent.warnings[0], /centimetres/);
 
   const missing = await start(t, { port, mode: "no-files" });

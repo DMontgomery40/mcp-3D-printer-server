@@ -51,10 +51,10 @@ the Fusion server started and the add-in answered.
 
 | Step | Tool | What it does |
 |---|---|---|
-| Check Fusion | `fusion_mcp_status` | `{configured, connected, addinReachable, fusionRunning, tools[]}`. `launch: true` opens Fusion on this Mac when it isn't running and waits up to 90 s for the add-in |
+| Check Fusion | `fusion_mcp_status` | `{configured, connected, addinReachable, fusionRunning, tools[], launched, pin, server, error}`. `launch: true` opens Fusion on this Mac when it isn't running and waits up to 90 s for the add-in |
 | Start a design | `fusion_mcp_new_design` | Opens a new parametric design document through `execute_code` |
 | Model | `fusion_mcp_call` | Forwards any of the server's 93 tools: `create_sketch`, `extrude`, `revolve`, `create_hole`, `create_thread`, `fillet`, `shell`, `boolean_operation`, `create_parameter`, `set_parameter`, `check_interference`, `execute_code`, … |
-| Export | `fusion_mcp_export` | Writes `<name>.stl`, `<name>.f3d` and `<name>.parameters.json` into `output_dir` and returns their absolute paths |
+| Export | `fusion_mcp_export` | Writes `<name>.stl`, `<name>.f3d` and `<name>.parameters.json` into `output_dir` and returns their absolute paths as `stl`, `f3d` and `parameters` |
 | Check and print | `get_stl_info`, `lay_flat`, `slice_stl`, … | The usual path, with every print safety check |
 
 `fusion_mcp_status` checks the add-in by sending it the protocol's `ping`
@@ -76,9 +76,9 @@ local for exports.
 **Units.** Fusion works in centimetres internally, and most tools take
 lengths in centimetres. STL files carry no units and slicers read them as
 millimetres. `fusion_mcp_export` compares the STL's size with the Fusion
-body's size and reports `stl_units` (`mm`, `cm`, or `unknown`) and the body's
-`fusion_size_mm`. If the STL came out in centimetres, the result warns you to
-scale it by 10 before slicing. Compare `bounding_box.dimensions` with what you
+body's size and reports `stlUnits` (`mm`, `cm`, or `unknown`) and the body's
+`fusionSizeMm`. If the STL came out in centimetres, the result warns you to
+scale it by 10 before slicing. Compare `boundingBox.dimensions` with what you
 asked for before printing.
 
 ## The bootstrap gap (issue #12)

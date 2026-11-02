@@ -43,7 +43,7 @@ function call(name, args) {
   if (name === "execute_code") {
     const code = String(args.code);
     let result = "None";
-    if (code.includes("'mcp3d_new_design'")) result = JSON.stringify({ mcp3d_new_design: true, name: "Untitled", parametric: true });
+    if (code.includes("'mcp3d_new_design'")) result = JSON.stringify({ mcp3d_new_design: true, document: "Untitled", parametric: true });
     if (code.includes("'mcp3d_bodies'")) {
       const bodies = [{ name: "Bracket", size_cm: [2, 1, 0.5] }];
       if (mode === "two-bodies") bodies.push({ name: "Lid", size_cm: [2, 1, 0.2] });

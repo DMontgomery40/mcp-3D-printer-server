@@ -815,7 +815,7 @@ Design parts from scratch in Autodesk Fusion through [faust-machines/fusion360-m
 
 #### fusion_mcp_status
 
-Report `configured`, `connected`, `addinReachable`, `fusionRunning`, and the Fusion server's `tools` (names and summaries; `tool_names` returns full schemas). `connected` is true only when the add-in answered its ping. With `launch: true` and Fusion not running on this Mac, it runs `open -a "Autodesk Fusion"` and waits up to 90 s for the add-in.
+Report `configured`, `connected`, `addinReachable`, `fusionRunning`, the Fusion server's `tools` with their schemas, `launched`, `pin` (the faust-machines commit), and `error` when the server could not start. `connected` is true only when the add-in answered its ping. With `launch: true` and Fusion not running on this Mac, it runs `open -a "Autodesk Fusion"` and waits up to 90 s for the add-in.
 
 ```json
 { "launch": true }
@@ -835,7 +835,7 @@ Open a new parametric design document, so the Fusion tools have an active design
 
 #### fusion_mcp_export
 
-Write `<name>.stl` (from `export_stl`), `<name>.f3d` (from `export_f3d`), and `<name>.parameters.json` (the design's user parameters) into `output_dir`, and return their absolute paths. The STL is one body: the only visible solid body, or `body_name`. It is checked as a finite triangle mesh, and `stl_units` reports whether its numbers are millimetres. Existing files are never overwritten, and a failed export publishes nothing.
+Write `<name>.stl` (from `export_stl`), `<name>.f3d` (from `export_f3d`), and `<name>.parameters.json` (the design's user parameters) into `output_dir`, and return their absolute paths as `stl`, `f3d`, and `parameters`. The STL is one body: the only visible solid body, or `body_name`. It is checked as a finite triangle mesh, and `stlUnits` reports whether its numbers are millimetres. Existing files are never overwritten, and a failed export publishes nothing.
 
 ```json
 { "output_dir": "/path/to/project", "name": "bracket" }
