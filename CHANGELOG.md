@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `lay_flat` rests a model on a face that is its real bottom. Before, it turned the face-normal group with the largest area to face down and moved the lowest point to Z=0, without checking that those faces were the lowest. The stove gap filler from Scan to Make (six T strips) printed upside down: its cap undersides' 23,838 mm² face down but sit 12 mm above the fin tips, so it stood on its fins.
+  - A pose qualifies only when some face, turned down, lies on the rotated model's lowest plane, within 0.5% of its height and at most 0.2 mm. The candidate poses are the 64 largest face groups and the model's six axes, so a domed part can flip exactly.
+  - Among qualifying poses, `lay_flat` picks the one with the least part and support volume per mm² of bed contact. Support is the overhang more than 45° from vertical, times its height above the bed. Ties go to the larger contact, then to the face that already points down.
+  - When no pose qualifies, the model is unchanged. The text result is still the STL path, and the new `structuredContent` `{path, laid_flat, message}` says why.
+  - The gap filler now comes out cap-down, fin tips 14.4 mm up. This is checked from the output vertices only. The same rule in bambu-printer-mcp was also checked by slicing with Bambu Studio 02.08.02.61 for a P1S, which gave no warning; that slice was not repeated here.
+
 ## [1.2.24] – 2026-11-02
 
 ### Fixed
