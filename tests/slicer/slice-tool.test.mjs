@@ -721,6 +721,9 @@ test("optional: installed BambuStudio slices P1S 0.4 into a 3MF with P1S plate G
   assert.ok(gcode, "real slice must contain Metadata/plate_1.gcode");
   assert.match(gcode, /; printer_model = Bambu Lab P1S/);
   assert.match(gcode, /;===== machine: P1S/);
+  // Studio's own result.json for this run, verbatim: a cube slices cleanly.
+  assert.equal(result.structuredContent.slicer_result.return_code, 0);
+  assert.deepEqual(result.structuredContent.slicer_result.sliced_plates.map((plate) => plate.warning_message), [""]);
 });
 
 // Bambu Studio's own checks: its result.json, verbatim, from the Scan to Make

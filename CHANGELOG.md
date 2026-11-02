@@ -4,12 +4,12 @@
 
 ### Fixed
 
-- `slice_stl` returns Bambu Studio's and OrcaSlicer's own checks on the Bambu-compatible CLI route. When the CLI writes `result.json` (Bambu Studio 02.08.02.61 writes it on macOS on success too), `structuredContent.slicer_result` carries it parsed and unchanged: `error_string`, `return_code` and each `sliced_plates[].warning_message`. Before, the run's output directory was deleted with `result.json` in it, and warnings such as "It seems object … has floating cantilever. Please re-orient the object or enable support generation." were lost.
+- `slice_stl` returns Bambu Studio's own checks on the Bambu-compatible CLI route, and OrcaSlicer's where it writes the same `result.json`. When the CLI writes `result.json` (Bambu Studio 02.08.02.61 writes it on macOS on success too), `structuredContent.slicer_result` carries it parsed and unchanged: `error_string`, `return_code` and each `sliced_plates[].warning_message`. Before, the run's output directory was deleted with `result.json` in it, and warnings such as "It seems object … has floating cantilever. Please re-orient the object or enable support generation." were lost.
   - The text result stays the sliced file's path.
-  - A failed slice is an error result whose text starts with Studio's `error_string`, then each plate's `warning_message`, then the exit code, slicer output and suggestion, with no `Error: ` prefix. Its `structuredContent` carries `slicer_result` beside the existing `slicer` details.
+  - A failed slice is an error result whose text starts with Studio's `error_string` (unless it reports success), then each plate's `warning_message`, then the exit code, slicer output and suggestion, with no `Error: ` prefix. Its `structuredContent` carries `slicer_result` beside the existing `slicer` details.
   - A `result.json` reporting a nonzero `return_code` fails the slice even when the CLI exits 0.
   - The G-code slicers (PrusaSlicer, Cura, Slic3r, generic OrcaSlicer without a Bambu preset) write no `result.json` and return `structuredContent` `{path}` only.
-  - Tested with real `result.json` files from Bambu Studio 02.08.02.61 slicing the Scan to Make stove gap filler for a P1S on macOS, replayed by a fake CLI. The live CLI run that produced them was on bambu-printer-mcp's identical route; this repository's tests do not run Studio.
+  - Tested with real `result.json` files from Bambu Studio 02.08.02.61 slicing the Scan to Make stove gap filler for a P1S on macOS, replayed by a fake CLI. The optional installed-Studio test also checks `slicer_result` on macOS; CI skips it. OrcaSlicer's `result.json` follows the same libslic3r format but was not run here.
 
 ## [1.2.24] – 2026-11-02
 
