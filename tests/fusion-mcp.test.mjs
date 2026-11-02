@@ -19,7 +19,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE = path.join(ROOT, "tests", "fixtures", "fusion-mcp-server.mjs");
 
 /** A TCP listener answering ping like the Fusion360MCP add-in, or like Blender's addon on the same default port. */
-async function addinPort(t, reply = { status: "success", result: { pong: true, ok: true } }) {
+async function addinPort(t, reply = { status: "success", result: { ok: true, status: "pong" } }) {
   const server = net.createServer((socket) => socket.once("data", () => socket.end(`${JSON.stringify(reply)}\n`)));
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -184,6 +184,15 @@ test("fusion_mcp_status reports an unreachable add-in as not connected", async (
   assert.equal(status.addinReachable, false);
   assert.equal(status.connected, false);
   assert.ok(status.tools.length > 0, "the server itself still lists its tools");
+});
+
+test("the add-in probe accepts both pongs the pinned add-in sends, and nothing else", async (t) => {
+  for (const [result, reachable] of [[{ ok: true, status: "pong" }, true], [{ pong: true }, true], [{ ok: true, status: "busy" }, false], [{ ok: true }, false]]) {
+    const port = await addinPort(t, { status: "success", result });
+    const { call } = await start(t, { port });
+    const status = (await call("fusion_mcp_status")).structuredContent;
+    assert.equal(status.addinReachable, reachable, JSON.stringify(result));
+  }
 });
 
 test("Blender's addon on the shared default port is not mistaken for the Fusion add-in", async (t) => {

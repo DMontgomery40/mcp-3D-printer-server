@@ -136,8 +136,10 @@ const NO_ACTIVE_DESIGN_HELP =
  * True only when the Fusion360MCP add-in answers its ping. A bare TCP connect
  * is not enough: Blender's MCP addon listens on the same default port (9876)
  * and answers "unknown command" to this harmless request.
- * Protocol: newline-delimited JSON, {"type","params"} in and
- * {"status":"success","result":{"pong":true}} out (add-in server/socket_server.py).
+ * Protocol: newline-delimited JSON, {"type","params"} in (add-in server/socket_server.py).
+ * The pinned add-in answers ping on its fast path (event_bridge.py) with
+ * {"status":"success","result":{"ok":true,"status":"pong"}}, and through its
+ * command handler with {"pong":true}.
  */
 function addinAnswers(host: string, port: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -154,7 +156,7 @@ function addinAnswers(host: string, port: number, timeoutMs: number): Promise<bo
       const line = buffer.includes("\n") ? buffer.slice(0, buffer.indexOf("\n")) : buffer;
       try {
         const reply = JSON.parse(line);
-        done(reply?.status === "success" && reply?.result?.pong === true);
+        done(reply?.status === "success" && (reply?.result?.status === "pong" || reply?.result?.pong === true));
       } catch {
         if (buffer.includes("\n")) done(false);
       }
