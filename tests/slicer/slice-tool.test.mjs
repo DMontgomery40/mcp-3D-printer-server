@@ -630,13 +630,16 @@ fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args));
 if (args.includes("--outputdir")) {
   const settings = args.flatMap((arg, i) => args[i - 1] === "--load-settings" ? [arg] : []);
   fs.writeFileSync(${JSON.stringify(capture)} + ".process", fs.readFileSync(settings.at(-1), "utf8"));
+  const filaments = args.flatMap((arg, i) => args[i - 1] === "--load-filaments" ? [fs.readFileSync(arg, "utf8")] : []);
+  fs.writeFileSync(${JSON.stringify(capture)} + ".filaments", JSON.stringify(filaments));
   fs.writeFileSync(path.join(args[args.indexOf("--outputdir") + 1], "plate_1.gcode"), "; orca\\n");
 } else {
   const flag = args.includes("--output") ? "--output" : "-o";
   fs.writeFileSync(args[args.indexOf(flag) + 1], "; generic gcode\\n");
 }
 `, { mode: 0o755 });
-  const generic = await startServer(t, { root, executable }, { SLICER_TYPE: "prusaslicer" });
+  // HOME is the test root, so only this fake slicer's bundled profiles are installed.
+  const generic = await startServer(t, { root, executable }, { SLICER_TYPE: "prusaslicer", HOME: root });
   const overrides = { layer_height: 0.12, wall_loops: 2, sparse_infill_density: "15%" };
   for (const slicerType of ["prusaslicer", "slic3r"]) {
     result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: slicerType, ...overrides });
@@ -664,6 +667,20 @@ if (args.includes("--outputdir")) {
   assert.equal(args[args.indexOf("--load-filaments") + 1], orcaFilament);
   result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: `${machine};${processProfile}`, load_filaments: orcaFilament, filament_profile: machine });
   assert.match(text(result), /either load_filaments or filament_profile/);
+  // A bundled preset inherits its settings; the CLI gets them merged in, and the bundled file is untouched.
+  const bundle = path.join(root, "resources", "profiles", "OrcaFilamentLibrary", "filament");
+  await fs.mkdir(bundle, { recursive: true });
+  await fs.writeFile(path.join(bundle, "fdm_filament_petg.json"), JSON.stringify({ name: "fdm_filament_petg", instantiation: "false", filament_type: ["PETG"], nozzle_temperature: ["240"], hot_plate_temp: ["70"] }));
+  const petg = path.join(bundle, "Generic PETG @System.json");
+  await fs.writeFile(petg, JSON.stringify({ name: "Generic PETG @System", inherits: "fdm_filament_petg", from: "system", instantiation: "true", hot_plate_temp: ["80"], compatible_printers: [] }));
+  // An explicit filament also replaces the "|filament" default in the profile setting.
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: `${machine};${processProfile}|${orcaFilament}`, load_filaments: petg });
+  assert.equal(result.isError, undefined, text(result));
+  const loaded = JSON.parse(await fs.readFile(`${capture}.filaments`, "utf8")).map((content) => JSON.parse(content));
+  assert.equal(loaded.length, 1, "the chosen filament is the only slot");
+  assert.deepEqual([loaded[0].name, loaded[0].filament_type, loaded[0].nozzle_temperature, loaded[0].hot_plate_temp, loaded[0].inherits, loaded[0].from],
+    ["Generic PETG @System", ["PETG"], ["240"], ["80"], "", "User"], "inherited temperatures reach the CLI; the leaf's own values win");
+  assert.equal(JSON.parse(await fs.readFile(petg, "utf8")).inherits, "fdm_filament_petg");
   result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: machine, ...overrides });
   assert.equal(result.isError, true);
   assert.match(text(result), /need a readable process profile/);

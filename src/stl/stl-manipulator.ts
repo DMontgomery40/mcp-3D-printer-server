@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import { EventEmitter } from 'events';
 import * as crypto from 'crypto';
 import { detectProfilesRoot } from '../slicer/profile-flatten.js';
+import { flattenOrcaFilament } from '../slicer/filament-profiles.js';
 import {
   BambuCliProfilePreparer,
   assertSlicedProjectOutput,
@@ -191,6 +192,20 @@ export class STLManipulator extends EventEmitter {
     const settingsProfiles = [...profiles.settingsProfiles];
     settingsProfiles[index] = merged;
     return { ...profiles, settingsProfiles };
+  }
+
+  /** Bundled and user Orca filament presets inherit their settings; the CLI needs them merged in. */
+  private async withFlattenedOrcaFilaments<T extends { settingsProfiles: string[]; filamentProfiles: string[] }>(
+    profiles: T, slicerPath: string, outputDir: string
+  ): Promise<T> {
+    const filamentProfiles = await Promise.all(profiles.filamentProfiles.map(async (profile, index) => {
+      const flat = await flattenOrcaFilament(profile, { slicerPath }).catch(() => undefined);
+      if (!flat) return profile;
+      const merged = path.join(outputDir, `filament-${index + 1}-${path.basename(profile)}`);
+      fs.writeFileSync(merged, JSON.stringify(flat, null, 2));
+      return merged;
+    }));
+    return { ...profiles, filamentProfiles };
   }
 
   private appendOrcaProfileArgs(
@@ -1203,7 +1218,8 @@ export class STLManipulator extends EventEmitter {
               '--slice', '0',
               '--outputdir', orcaOutputDir,
             ];
-            this.appendOrcaProfileArgs(args, this.withOrcaProcessOverrides(orcaProfiles, processOverrides, orcaOutputDir));
+            this.appendOrcaProfileArgs(args, await this.withFlattenedOrcaFilaments(
+              this.withOrcaProcessOverrides(orcaProfiles, processOverrides, orcaOutputDir), slicerPath, orcaOutputDir));
             args.push(stlFilePath);
             break;
 

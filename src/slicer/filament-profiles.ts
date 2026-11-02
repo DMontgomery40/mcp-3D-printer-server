@@ -210,6 +210,39 @@ export async function resolveFilamentProfile(material: string | undefined, conte
   }
 }
 
+/**
+ * A generic OrcaSlicer filament preset with its `inherits` chain merged in,
+ * parent first, for --load-filaments: the CLI does not resolve inheritance,
+ * so a bundled preset such as "Generic PETG @System" would otherwise slice
+ * without its own temperatures. Undefined when the file inherits nothing, or
+ * when a parent is not installed (the file is then passed as it is).
+ */
+export async function flattenOrcaFilament(file: string, context: Pick<FilamentProfileContext, "slicerPath" | "roots">): Promise<Record<string, unknown> | undefined> {
+  const leaf = await readConfig(file);
+  const parentName = leaf?.inherits;
+  if (!leaf || typeof parentName !== "string" || !parentName.trim()) return undefined;
+  const index = await profileIndex({ slicerType: "orcaslicer", ...context });
+  const chain: Record<string, unknown>[] = [leaf];
+  const seen = new Set<string>();
+  for (let name = parentName.trim(); name; ) {
+    const parent = index.byName.get(name);
+    if (!parent || seen.has(name) || chain.length > 12) return undefined;
+    seen.add(name);
+    chain.push(parent.config);
+    name = typeof parent.config.inherits === "string" ? parent.config.inherits.trim() : "";
+  }
+  const merged: Record<string, unknown> = Object.assign({}, ...chain.reverse());
+  const name = typeof leaf.name === "string" && leaf.name.trim() ? leaf.name.trim() : path.basename(file, path.extname(file));
+  // As the Bambu CLI flattener does: a user-owned, self-contained preset.
+  merged.name = name;
+  merged.inherits = "";
+  merged.from = "User";
+  merged.filament_settings_id = [name];
+  delete merged.instantiation;
+  delete merged.setting_id;
+  return merged;
+}
+
 /** Tests only: forget cached profile indexes. */
 export function clearFilamentProfileCache(): void {
   indexes.clear();

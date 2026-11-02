@@ -839,6 +839,11 @@ class ThreeDPrinterMCPServer {
       throw new Error("Provide either load_filaments or filament_profile, not conflicting values.");
     }
     const filamentProfile = options?.loadFilaments ?? explicitLoad ?? explicitFilament ?? (DEFAULT_FILAMENT_PROFILE || undefined);
+    // A filament chosen for this call replaces the default riding in "machine;process|filament",
+    // or Orca would keep that default as slot 1 and add the chosen one as slot 2.
+    if (!bambuCli && (explicitLoad ?? explicitFilament) && slicerProfile?.includes("|")) {
+      slicerProfile = slicerProfile.split("|", 1)[0];
+    }
     const slicerPath =
       this.resolveExecutableSelectorArg(args.slicer_path, toolName, "slicer_path") ?? defaultSlicerPathFor(slicerType);
 

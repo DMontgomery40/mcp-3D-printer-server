@@ -59,7 +59,9 @@ A per-call `slicer_path` is refused unless `MCP_ALLOW_EXECUTABLE_ARG=1`; see [ex
 | CuraEngine | A Cura definition JSON | Not used |
 | Bambu Studio, FULU OrcaSlicer-bambulab, or OrcaSlicer with `bambu_model` | **One process profile only.** The machine preset always comes from the printer model and nozzle; a `machine;process` list is rejected with instructions | `;`-separated, in slot order, loaded with `--load-filaments` |
 
-For generic OrcaSlicer, a filament file can ride along in the profile setting after a pipe character:
+For generic OrcaSlicer, a filament preset that `inherits` other installed presets (as bundled ones such as `Generic PETG @System` do) is passed to `--load-filaments` with its inheritance chain merged in, because the CLI does not resolve `inherits`. Your files are not modified.
+
+A filament file can also ride along in the profile setting after a pipe character; a `load_filaments` or `filament_profile` given to the call replaces it:
 
 ```env
 SLICER_PROFILE=/path/to/machine.json;/path/to/process.json|/path/to/filament.json
