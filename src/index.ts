@@ -1921,7 +1921,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "lay_flat",
-            description: "Attempt to rotate the model so its largest flat face lies on the XY plane (Z=0).",
+            description: "Rotate the model so a face rests on the bed (Z=0), choosing the orientation with the least part and support volume per mm² of bed contact. A face counts only if nothing hangs below it. Returns the new STL path; structuredContent.laid_flat is false, with the input path, when no orientation qualifies.",
             inputSchema: {
               type: "object",
               properties: {
@@ -2799,12 +2799,14 @@ class ThreeDPrinterMCPServer {
             result = await this.stlManipulator.centerModel(String(args.stl_path));
             break;
 
-          case "lay_flat":
+          case "lay_flat": {
             if (!args?.stl_path) {
                 throw new Error("Missing required parameter: stl_path");
             }
-            result = await this.stlManipulator.layFlat(String(args.stl_path));
-            break;
+            const layFlatResult = await this.stlManipulator.layFlatWithResult(String(args.stl_path));
+            // The text stays the STL path clients read; structuredContent says whether it was laid flat.
+            return { content: [{ type: "text", text: layFlatResult.path }], structuredContent: layFlatResult };
+          }
 
           case "fusion_mcp_status":
             return structured(await this.fusion.status(args ?? {}, extra.signal));
