@@ -41,16 +41,32 @@ export function slicerSuggestion(phase: SlicerFailurePhase, slicerType?: string)
   }
 }
 
+/** Bambu Studio's or OrcaSlicer's own result.json, parsed verbatim. */
+export type SlicerResult = Record<string, unknown>;
+
+/** The slicer's own words: error_string, then each plate's warning_message. */
+export function slicerResultText(result: SlicerResult): string {
+  const plates = Array.isArray(result.sliced_plates) ? result.sliced_plates : [];
+  return [
+    result.error_string,
+    ...plates.map((plate) => plate && typeof plate === "object" ? (plate as Record<string, unknown>).warning_message : undefined),
+  ].filter((text): text is string => typeof text === "string" && text.trim() !== "").map((text) => text.trim()).join("\n");
+}
+
 export class SlicerError extends Error {
   readonly phase: SlicerFailurePhase;
   readonly suggestion: string;
   readonly details: SlicerFailureDetails;
+  /** The slicer's own words from `slicerResult`; the message starts with them. */
+  readonly slicerText: string;
 
-  constructor(phase: SlicerFailurePhase, message: string, details: SlicerFailureDetails = {}) {
-    super(message);
+  constructor(phase: SlicerFailurePhase, message: string, details: SlicerFailureDetails = {}, readonly slicerResult?: SlicerResult) {
+    const slicerText = slicerResult ? slicerResultText(slicerResult) : "";
+    super(slicerText ? `${slicerText}\n${message}` : message);
     this.name = "SlicerError";
     this.phase = phase;
     this.details = details;
+    this.slicerText = slicerText;
     this.suggestion = slicerSuggestion(phase, details.slicerType);
   }
 }

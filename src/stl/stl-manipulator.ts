@@ -13,6 +13,7 @@ import {
   BambuCliProfilePreparer,
   assertSlicedProjectOutput,
   bambuCliFailureReason,
+  readCliResult,
   buildBambuCliArgs,
   planBambuCliInput,
   type BambuCliSlicerType,
@@ -22,6 +23,9 @@ import { runSlicerProcess } from '../slicer/run-slicer.js';
 import { SlicerError, asPreparationError } from '../slicer/slicer-error.js';
 
 export type { BambuSliceOptions } from '../slicer/bambu-cli.js';
+
+/** A sliced file, with the slicer's own result.json when it wrote one. */
+export type SliceOutput = { path: string; slicer_result?: Record<string, unknown> };
 
 /** Print-sheet slicing overrides (PRD §8.4), applied on top of the selected profile. */
 export interface ProcessOverrides {
@@ -1097,6 +1101,26 @@ export class STLManipulator extends EventEmitter {
     bambuOptions?: BambuSliceOptions,
     processOverrides?: ProcessOverrides
   ): Promise<string> {
+    return (await this.sliceSTLWithResult(stlFilePath, slicerType, slicerPath, slicerProfile, progressCallback,
+      printerPreset, filamentProfile, bambuOptions, processOverrides)).path;
+  }
+
+  /**
+   * sliceSTL with the Bambu-compatible CLI's own result.json, parsed verbatim.
+   * A failure's SlicerError carries it too, and its message starts with the
+   * slicer's error_string and plate warnings.
+   */
+  async sliceSTLWithResult(
+    stlFilePath: string,
+    slicerType: SlicerType,
+    slicerPath: string,
+    slicerProfile?: string,
+    progressCallback?: ProgressCallback,
+    printerPreset?: string,
+    filamentProfile?: string,
+    bambuOptions?: BambuSliceOptions,
+    processOverrides?: ProcessOverrides
+  ): Promise<SliceOutput> {
     const operationId = this.generateOperationId();
     this.activeOperations.set(operationId, true);
     const bambuCli = STLManipulator.usesBambuCliPreparation(slicerType, printerPreset);
@@ -1256,14 +1280,30 @@ export class STLManipulator extends EventEmitter {
       console.error(`Executing: ${slicerPath} ${args.join(' ')}`);
 
       const cliOutputDir = bambuOutputDir;
-      await runSlicerProcess({
-        command: slicerPath,
-        args,
-        timeoutMs: this.resolveSlicerTimeoutMs(),
-        slicerType,
-        isCancelled: () => !this.activeOperations.get(operationId),
-        failureReason: cliOutputDir ? (exitCode) => bambuCliFailureReason(exitCode, cliOutputDir) : undefined,
-      });
+      try {
+        await runSlicerProcess({
+          command: slicerPath,
+          args,
+          timeoutMs: this.resolveSlicerTimeoutMs(),
+          slicerType,
+          isCancelled: () => !this.activeOperations.get(operationId),
+          failureReason: cliOutputDir ? (exitCode) => bambuCliFailureReason(exitCode, cliOutputDir) : undefined,
+        });
+      } catch (error) {
+        // Keep the CLI's own result.json before the output directory is removed.
+        const failedResult = cliOutputDir ? readCliResult(cliOutputDir) : undefined;
+        if (failedResult && error instanceof SlicerError) throw new SlicerError(error.phase, error.message, error.details, failedResult);
+        throw error;
+      }
+      const slicerResult = cliOutputDir ? readCliResult(cliOutputDir) : undefined;
+      if (cliOutputDir && !slicerResult) {
+        // Older or Linux CLIs may write result.json only for handled errors.
+        console.error(`${slicerType} wrote no result.json for this slice, so its own checks are not available.`);
+      }
+      if (typeof slicerResult?.return_code === "number" && slicerResult.return_code !== 0) {
+        throw new SlicerError('execution', `Slicer exited with code 0, but its result.json reports return_code ${slicerResult.return_code}.`,
+          { slicerType, slicerPath, exitCode: 0 }, slicerResult);
+      }
 
       if (!this.activeOperations.get(operationId)) {
         throw new SlicerError('execution', 'Slicing operation cancelled after process finished', { slicerType, slicerPath });
@@ -1290,7 +1330,7 @@ export class STLManipulator extends EventEmitter {
         }
       } catch (error) {
         if (error instanceof SlicerError) throw error;
-        throw new SlicerError('output', error instanceof Error ? error.message : String(error), { slicerType, slicerPath });
+        throw new SlicerError('output', error instanceof Error ? error.message : String(error), { slicerType, slicerPath }, slicerResult);
       }
 
       if (progressCallback) progressCallback(100, "Slicing completed successfully");
@@ -1302,7 +1342,7 @@ export class STLManipulator extends EventEmitter {
         output: outputFilePath
       });
 
-      return outputFilePath;
+      return slicerResult ? { path: outputFilePath, slicer_result: slicerResult } : { path: outputFilePath };
     } catch (error) {
       console.error(`Slicing failed for ${stlFilePath}:`, error instanceof Error ? error.message : error);
       this.emit('operationError', {
