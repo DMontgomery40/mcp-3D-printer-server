@@ -223,6 +223,12 @@ export class CounterpartService {
     }
     if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(`Unsupported snapshot URL scheme: ${parsed.protocol}`);
     if (LOOPBACK.has(parsed.hostname) && !LOOPBACK.has(target.host)) parsed.hostname = target.host;
+    // "localhost" can resolve to ::1 first, and Node 18 has no IPv4 fallback for it: try both loopbacks.
+    if (parsed.hostname === "localhost") {
+      const v4 = new URL(parsed.toString()); v4.hostname = "127.0.0.1";
+      const v6 = new URL(parsed.toString()); v6.hostname = "[::1]";
+      return [v4.toString(), v6.toString()];
+    }
     return [parsed.toString()];
   }
 
