@@ -65,7 +65,9 @@
         "src/blender-mcp-bridge.ts",
         "CHANGELOG.md",
         "CONTRIBUTORS.md",
-        "server.json"
+        "server.json",
+        "dist/counterpart",
+        "src/counterpart"
     ],
     "keywords": [
         "mcp",

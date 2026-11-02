@@ -1,0 +1,25 @@
+{
+  "job": {
+    "averagePrintTime": null,
+    "estimatedPrintTime": null,
+    "filament": null,
+    "file": {
+      "date": 1793577213,
+      "display": "kan216-long.gcode",
+      "name": "kan216-long.gcode",
+      "origin": "local",
+      "path": "kan216-long.gcode",
+      "size": 1407
+    },
+    "lastPrintTime": null,
+    "user": "_api"
+  },
+  "progress": {
+    "completion": 24.093816631130064,
+    "filepos": 339,
+    "printTime": 2,
+    "printTimeLeft": null,
+    "printTimeLeftOrigin": "linear"
+  },
+  "state": "Printing"
+}

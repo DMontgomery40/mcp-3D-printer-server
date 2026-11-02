@@ -1,0 +1,48 @@
+{
+  "result": {
+    "eventtime": 199536.329850654,
+    "status": {
+      "print_stats": {
+        "filename": "kan216-long.gcode",
+        "total_duration": 31.203641942993272,
+        "print_duration": 0.0,
+        "filament_used": 0.0,
+        "state": "printing",
+        "message": "",
+        "info": {
+          "total_layer": null,
+          "current_layer": null
+        }
+      },
+      "virtual_sdcard": {
+        "file_path": "/home/printer/printer_data/gcodes/kan216-long.gcode",
+        "progress": 0.08173418621179815,
+        "is_active": true,
+        "file_position": 115,
+        "file_size": 1407
+      },
+      "display_status": {
+        "progress": 0.08173418621179815,
+        "message": "Runout sensor reports: Insert G-Code"
+      },
+      "extruder": {
+        "temperature": 103.26,
+        "target": 0.0,
+        "power": 0.0,
+        "can_extrude": true,
+        "pressure_advance": 0.1,
+        "smooth_time": 0.01,
+        "motion_queue": null
+      },
+      "heater_bed": {
+        "temperature": 103.26,
+        "target": 0.0,
+        "power": 0.0
+      },
+      "webhooks": {
+        "state": "ready",
+        "state_message": "Printer is ready"
+      }
+    }
+  }
+}

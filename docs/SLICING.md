@@ -67,6 +67,19 @@ SLICER_PROFILE=/path/to/machine.json;/path/to/process.json|/path/to/filament.jso
 
 Generic OrcaSlicer writes `plate_1.gcode`; the server renames it after the input model and returns that path. Do not use this form for Bambu Lab slicing: pass `bambu_model` (or use Bambu Studio or FULU OrcaSlicer-bambulab) and give only a process profile.
 
+### Layer height, walls and infill
+
+`slice_stl` and `slice_with_template` accept `layer_height` (mm), `wall_loops` (a whole number of walls), and `sparse_infill_density` (a percentage such as `"15%"`; a bare number is read as a percentage). They are written over the profile the slice would otherwise use, so they win over the preset, `SLICER_PROFILE`, and a template:
+
+| Slicer | How they are applied |
+|---|---|
+| Bambu Studio, FULU OrcaSlicer-bambulab, OrcaSlicer with `bambu_model` | Process keys `layer_height`, `wall_loops`, `sparse_infill_density`, written into the resolved process profile the CLI loads |
+| Generic OrcaSlicer | The same keys, written into a copy of the process profile (the settings file whose `type` is `process`, else the last of two or more). A machine-only `slicer_profile` is refused |
+| PrusaSlicer, Slic3r | `--layer-height`, `--perimeters`, `--fill-density`, which override the loaded config |
+| CuraEngine | Refused; set them in the Cura definition |
+
+Your profile files are never modified. The slicer still validates the values against the machine, for example a layer height larger than the nozzle allows.
+
 ## Bambu-compatible slicing
 
 Bambu Studio, FULU OrcaSlicer-bambulab, and OrcaSlicer with `bambu_model` produce a sliced Bambu `.3mf`. Before the slicer runs, the server prepares the profiles itself:

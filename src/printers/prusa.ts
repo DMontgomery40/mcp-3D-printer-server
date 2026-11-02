@@ -1,5 +1,8 @@
 import { isAxiosError, type AxiosRequestConfig, type AxiosResponse } from "axios";
 import { GenericPrinterImplementation, type GenericPrinterState, type HeaterComponent } from "./generic-base.js";
+import type { CounterpartProgress, PrinterIdentity } from "../counterpart/contract.js";
+import { finiteNumber, nonEmptyText } from "../counterpart/contract.js";
+import { mapOctoPrint, mapPrusaLink } from "../counterpart/progress.js";
 import fs from "fs";
 import FormData from "form-data";
 
@@ -122,6 +125,63 @@ export class PrusaImplementation extends GenericPrinterImplementation {
     }
 
     throw lastError ?? new Error("No compatible Prusa POST endpoint found.");
+  }
+
+  /**
+   * PrusaLink GET /api/v1/status, plus GET /api/v1/job for the file name
+   * (204 when there is no job). Older firmware without /api/v1 uses the
+   * OctoPrint-compatible /api/job and /api/printer.
+   * https://github.com/prusa3d/Prusa-Link-Web/blob/master/spec/openapi.yaml
+   */
+  async counterpartProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress> {
+    const baseUrl = this.buildBaseUrl(host, port);
+    const headers = this.buildAuthHeaders(apiKey);
+    let status: any;
+    try {
+      status = (await this.apiClient.get(`${baseUrl}/api/v1/status`, { headers })).data;
+    } catch (error) {
+      if (!this.isFallbackStatus(error)) throw error;
+      const job = (await this.apiClient.get(`${baseUrl}/api/job`, { headers })).data;
+      const printer = await this.apiClient.get(`${baseUrl}/api/printer`, { headers }).then((r) => r.data).catch(() => undefined);
+      return mapOctoPrint({ job, printer }, new Date().toISOString());
+    }
+    const observedAt = new Date().toISOString();
+    let job: any;
+    if (status?.job && finiteNumber(status.job.id) !== undefined) {
+      const response = await this.apiClient.get(`${baseUrl}/api/v1/job`, { headers }).catch(() => undefined);
+      job = response?.status === 200 ? response.data : undefined;
+    }
+    return mapPrusaLink(status, job, observedAt);
+  }
+
+  async counterpartIdentity(host: string, port: string, apiKey: string): Promise<PrinterIdentity> {
+    const info = (await this.apiClient.get(`${this.buildBaseUrl(host, port)}/api/v1/info`, { headers: this.buildAuthHeaders(apiKey) })).data;
+    return { name: nonEmptyText(info?.name) ?? nonEmptyText(info?.hostname), serial: nonEmptyText(info?.serial) };
+  }
+
+  /** PUT /api/v1/job/{id}/pause; the OctoPrint-compatible POST /api/job on older firmware. */
+  protected async rawPauseJob(host: string, port: string, apiKey: string) {
+    return this.jobControl(host, port, apiKey, "pause");
+  }
+
+  protected async rawResumeJob(host: string, port: string, apiKey: string) {
+    return this.jobControl(host, port, apiKey, "resume");
+  }
+
+  private async jobControl(host: string, port: string, apiKey: string, action: "pause" | "resume") {
+    const baseUrl = this.buildBaseUrl(host, port);
+    const headers = this.buildAuthHeaders(apiKey);
+    let id: number | undefined;
+    try {
+      id = finiteNumber((await this.apiClient.get(`${baseUrl}/api/v1/status`, { headers })).data?.job?.id);
+    } catch (error) {
+      if (!this.isFallbackStatus(error)) throw error;
+      const response = await this.apiClient.post(`${baseUrl}/api/job`, { command: "pause", action } as any, { headers });
+      return response.data;
+    }
+    if (id === undefined) throw new Error(`PrusaLink reports no current job to ${action}; nothing was sent.`);
+    const response = await this.apiClient.put(`${baseUrl}/api/v1/job/${id}/${action}`, undefined, { headers });
+    return response.data;
   }
 
   async getStatus(host: string, port: string, apiKey: string) {

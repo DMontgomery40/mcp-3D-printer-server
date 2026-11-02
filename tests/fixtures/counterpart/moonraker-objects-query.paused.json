@@ -1,0 +1,37 @@
+{
+  "result": {
+    "eventtime": 199560.654867641,
+    "status": {
+      "print_stats": {
+        "filename": "kan216-long.gcode",
+        "total_duration": 55.52865892997943,
+        "print_duration": 0.0,
+        "filament_used": 0.0,
+        "state": "paused",
+        "message": "",
+        "info": {
+          "total_layer": null,
+          "current_layer": null
+        }
+      },
+      "virtual_sdcard": {
+        "file_path": "/home/printer/printer_data/gcodes/kan216-long.gcode",
+        "progress": 0.09310589907604833,
+        "is_active": false,
+        "file_position": 131,
+        "file_size": 1407
+      },
+      "display_status": {
+        "progress": 0.09310589907604833,
+        "message": "PAUSE called with"
+      },
+      "pause_resume": {
+        "is_paused": true
+      },
+      "webhooks": {
+        "state": "ready",
+        "state_message": "Printer is ready"
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "webcam": {
+    "bitrate": "10000k",
+    "cacheBuster": false,
+    "ffmpegCommandline": "{ffmpeg} -framerate {fps} -i \"{input}\" -vcodec {videocodec} -threads {threads} -b:v {bitrate} -f {containerformat} -y {filters} \"{output}\"",
+    "ffmpegPath": null,
+    "ffmpegThreads": 1,
+    "ffmpegVideoCodec": "libx264",
+    "flipH": false,
+    "flipV": false,
+    "rotate90": false,
+    "snapshotSslValidation": false,
+    "snapshotTimeout": 5,
+    "snapshotUrl": "http://192.0.2.10:8099/snapshot.jpg",
+    "streamRatio": "16:9",
+    "streamTimeout": 5,
+    "streamUrl": "http://192.0.2.10:8099/snapshot.jpg",
+    "streamWebrtcIceServers": [
+      "stun:stun.l.google.com:19302"
+    ],
+    "timelapseEnabled": true,
+    "watermark": true,
+    "webcamEnabled": true
+  },
+  "plugins": {}
+}

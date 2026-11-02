@@ -23,7 +23,15 @@ import { createServer as createHttpServer, type IncomingMessage, type Server as 
 import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
-import { STLManipulator, type BambuSliceOptions } from "./stl/stl-manipulator.js";
+import { STLManipulator, type BambuSliceOptions, type ProcessOverrides } from "./stl/stl-manipulator.js";
+import { CounterpartService, type PrinterTarget } from "./counterpart/service.js";
+import {
+  CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
+  CONTROL_OUTPUT_SCHEMA,
+  FILAMENTS_OUTPUT_SCHEMA,
+  PRINT_PROGRESS_OUTPUT_SCHEMA,
+  PRINTER_INFO_OUTPUT_SCHEMA,
+} from "./counterpart/contract.js";
 import { SlicerError } from "./slicer/slicer-error.js";
 import {
   inspectSliceSettings,
@@ -43,6 +51,9 @@ import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyO
 
 // Load environment variables from .env file
 dotenv.config();
+
+const SERVER_NAME = "mcp-3d-printer-server";
+const SERVER_VERSION: string = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 // Default values
 const DEFAULT_HOST = process.env.PRINTER_HOST || "localhost";
@@ -287,7 +298,77 @@ const SLICE_TOOL_PROPERTIES = {
   min_save: { type: "boolean", description: "Bambu-compatible slicing: write a smaller output 3MF (--min-save)." },
   skip_modified_gcodes: { type: "boolean", description: "Bambu-compatible slicing: ignore custom G-code embedded in an input 3MF (--skip-modified-gcodes)." },
   slice_plate: { type: "number", description: "Bambu-compatible slicing: plate number to slice; 0 slices all plates (default)." },
+  layer_height: {
+    type: "number", exclusiveMinimum: 0, maximum: 2,
+    description: "Layer height in mm, written over the selected process profile (Orca/Bambu Studio layer_height; PrusaSlicer --layer-height). Not mapped for Cura.",
+  },
+  wall_loops: {
+    type: "integer", minimum: 0, maximum: 100,
+    description: "Number of walls, written over the selected process profile (Orca/Bambu Studio wall_loops; PrusaSlicer --perimeters). Not mapped for Cura.",
+  },
+  sparse_infill_density: {
+    type: "string",
+    description: "Sparse infill density such as \"15%\" (0–100%), written over the selected process profile (Orca/Bambu Studio sparse_infill_density; PrusaSlicer --fill-density). Not mapped for Cura.",
+  },
 };
+
+/**
+ * upload_gcode / start_print results name the remote file that was stored or
+ * started (start_print starts a uniquely named checked copy), so a monitor can
+ * match counterpart_print_progress job.name to it.
+ */
+function withJobName(result: unknown, requested: string): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  if (typeof record.jobName === "string" && record.jobName) return result;
+  const remote = typeof record.remotePath === "string" && record.remotePath ? record.remotePath : requested;
+  return { ...record, jobName: path.posix.basename(remote.replace(/\\/g, "/")) };
+}
+
+/** Connection overrides shared by the counterpart/1 tools. */
+const PRINTER_TARGET_PROPERTIES = {
+  host: { type: "string", description: "Hostname or IP address of the printer (default: value from env)" },
+  port: { type: "string", description: "Port of the printer API (default: value from env)" },
+  type: { type: "string", description: "Type of printer management system (octoprint, klipper, duet, repetier, bambu, prusa, creality) (default: value from env)" },
+  api_key: { type: "string", description: "API key for authentication (default: value from env)" },
+  bambu_serial: { type: "string", description: "Serial number for Bambu Lab printers (default: value from env)" },
+  bambu_token: { type: "string", description: "Access token for Bambu Lab printers (default: value from env)" },
+};
+
+/** Tools that declare an outputSchema: their errors carry no structuredContent, which clients would validate. */
+const OUTPUT_SCHEMA_TOOLS = new Set([
+  "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
+]);
+
+/** layer_height / wall_loops / sparse_infill_density (PRD §8.4), validated before slicing. */
+function parseProcessOverrides(args: Record<string, unknown> | undefined): ProcessOverrides {
+  const overrides: ProcessOverrides = {};
+  if (args?.layer_height !== undefined) {
+    const value = args.layer_height;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 2) {
+      throw new Error("Invalid layer_height: expected a number of millimetres greater than 0 and at most 2.");
+    }
+    overrides.layerHeight = value;
+  }
+  if (args?.wall_loops !== undefined) {
+    const value = args.wall_loops;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) {
+      throw new Error("Invalid wall_loops: expected an integer from 0 to 100.");
+    }
+    overrides.wallLoops = value;
+  }
+  if (args?.sparse_infill_density !== undefined) {
+    const raw = args.sparse_infill_density;
+    const text = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw.trim() : "";
+    const match = text.match(/^(\d+(?:\.\d+)?)\s*%?$/);
+    const value = match ? Number(match[1]) : NaN;
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      throw new Error("Invalid sparse_infill_density: expected a percentage such as \"15%\" from 0% to 100%.");
+    }
+    overrides.sparseInfillDensity = `${value}%`;
+  }
+  return overrides;
+}
 
 function validateSliceBambuModel(model: string): string {
   const normalized = model.trim().toLowerCase();
@@ -546,6 +627,7 @@ class ThreeDPrinterMCPServer {
   private server: Server;
   private readonly blender = new BlenderMcpBridge();
   private printerFactory: PrinterFactory;
+  private readonly counterpart: CounterpartService;
   private stlManipulator: STLManipulator;
   private readonly runtimeConfig: RuntimeConfig;
   private httpRuntime?: { transport: StreamableHTTPServerTransport; httpServer: HttpServer };
@@ -554,8 +636,8 @@ class ThreeDPrinterMCPServer {
     this.runtimeConfig = readRuntimeConfig();
     this.server = new Server(
       {
-        name: "mcp-3d-printer-server",
-        version: JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version
+        name: SERVER_NAME,
+        version: SERVER_VERSION
       },
       {
         capabilities: {
@@ -566,6 +648,11 @@ class ThreeDPrinterMCPServer {
     );
 
     this.printerFactory = new PrinterFactory((message) => this.confirmHardware(message));
+    this.counterpart = new CounterpartService(
+      (printerType) => this.printerFactory.getImplementation(printerType),
+      axios.create({ timeout: 10000 }),
+      { name: SERVER_NAME, version: SERVER_VERSION }
+    );
     this.stlManipulator = new STLManipulator(TEMP_DIR);
 
     this.setupHandlers();
@@ -674,6 +761,7 @@ class ThreeDPrinterMCPServer {
     if (!args?.stl_path) {
       throw new Error("Missing required parameter: stl_path");
     }
+    const processOverrides = parseProcessOverrides(args);
     const slicerType = normalizeSlicerType(String(args.slicer_type || DEFAULT_SLICER_TYPE));
     const explicitModel =
       typeof args.bambu_model === "string" && args.bambu_model.trim() ? args.bambu_model : undefined;
@@ -729,7 +817,8 @@ class ThreeDPrinterMCPServer {
       undefined, // progressCallback
       printerPreset,
       filamentProfile,
-      options
+      options,
+      processOverrides
     );
   }
 
@@ -1087,6 +1176,55 @@ class ThreeDPrinterMCPServer {
                 }
               }
             }
+          },
+          {
+            name: "counterpart_printer_info",
+            description: "Describe this printer for the counterpart/1 contract: server name and version, printer kind and identity, and which features work (progress, layers, camera, filaments, pause, resume, cancel, print_3mf, G-code), detected from the firmware. Read-only.",
+            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
+            outputSchema: PRINTER_INFO_OUTPUT_SCHEMA,
+            annotations: { readOnlyHint: true, openWorldHint: true },
+          },
+          {
+            name: "counterpart_print_progress",
+            description: "Read the printer's state and current job in the counterpart/1 shape: state, job name, progress (0-100), elapsed and remaining seconds, layers when the firmware reports them, temperatures and problems. job.name matches the jobName that upload_gcode and start_print return. Read-only.",
+            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
+            outputSchema: PRINT_PROGRESS_OUTPUT_SCHEMA,
+            annotations: { readOnlyHint: true, openWorldHint: true },
+          },
+          {
+            name: "camera_snapshot",
+            description: "Capture one JPEG frame from the printer's camera: OctoPrint's configured snapshot URL (Classic Webcam on 1.9+, webcam.snapshotUrl on 1.8, then /webcam/?action=snapshot), Moonraker's first enabled webcam, or Repetier's webcam staticUrl. PrusaLink and Duet have no local snapshot API. PRINTER_CAMERA_SNAPSHOT_URL overrides the source for any printer. Returns the JPEG as base64; pass save_path to also write it to disk.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                ...PRINTER_TARGET_PROPERTIES,
+                save_path: { type: "string", description: "Optional absolute path to write the JPEG to disk. If omitted, only the base64 payload is returned." },
+                timeout_ms: { type: "number", description: "Max ms to wait for a frame (default 8000, 100 to 120000)." },
+              },
+            },
+            outputSchema: CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
+            annotations: { readOnlyHint: true, openWorldHint: true },
+          },
+          {
+            name: "get_printer_filaments",
+            description: "Report the loaded filament as one external slot (id \"ext\"). Moonraker printers with Spoolman report the active spool's material, colour and name; other printers report source \"unknown\". Read-only.",
+            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
+            outputSchema: FILAMENTS_OUTPUT_SCHEMA,
+            annotations: { readOnlyHint: true, openWorldHint: true },
+          },
+          {
+            name: "pause_print",
+            description: "Pause the current print (OctoPrint, Klipper/Moonraker, PrusaLink, Duet M25, Repetier, and Creality printers that run Moonraker). Pause is never gated.",
+            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
+            outputSchema: CONTROL_OUTPUT_SCHEMA,
+            annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+          },
+          {
+            name: "resume_print",
+            description: "Resume a paused print. Resume reheats and moves the printer, so it only resumes a job this server instance inspected and started, and only when the printer freshly reports that job paused. Resume other jobs at the printer.",
+            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
+            outputSchema: CONTROL_OUTPUT_SCHEMA,
+            annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
           },
           {
             name: "set_printer_temperature",
@@ -1846,7 +1984,40 @@ class ThreeDPrinterMCPServer {
       try {
         let result;
 
+        const target: PrinterTarget = {
+          type, host, port,
+          apiKey: type.toLowerCase() === "bambu" ? `${bambuSerial}:${bambuToken}` : apiKey,
+        };
+        const structured = (value: object) => ({
+          content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+          structuredContent: value as Record<string, unknown>,
+        });
+
         switch (name) {
+          case "counterpart_printer_info":
+            return structured(await this.counterpart.printerInfo(target));
+
+          case "counterpart_print_progress":
+            return structured(await this.counterpart.printProgress(target));
+
+          case "camera_snapshot": {
+            if (args?.save_path !== undefined && typeof args.save_path !== "string") throw new Error("Invalid save_path: expected a string.");
+            if (args?.timeout_ms !== undefined && typeof args.timeout_ms !== "number") throw new Error("Invalid timeout_ms: expected a number.");
+            return structured(await this.counterpart.cameraSnapshot(target, {
+              savePath: args?.save_path as string | undefined,
+              timeoutMs: args?.timeout_ms as number | undefined,
+            }));
+          }
+
+          case "get_printer_filaments":
+            return structured(await this.counterpart.filaments(target));
+
+          case "pause_print":
+            return structured(await this.counterpart.pause(target));
+
+          case "resume_print":
+            return structured(await this.counterpart.resume(target));
+
           case "get_printer_status":
             result = await this.getPrinterStatus(host, port, type, apiKey, bambuSerial, bambuToken);
             break;
@@ -1874,13 +2045,13 @@ class ThreeDPrinterMCPServer {
             }
             const uploadFilename = String(args?.filename || path.basename(String(args.gcode_path)));
             const uploadGcodeSource = String(args?.gcode_path || args.gcode);
-            result = await this.uploadGcode(
+            result = withJobName(await this.uploadGcode(
               host, port, type, apiKey, bambuSerial, bambuToken,
               uploadFilename,
               uploadGcodeSource,
               Boolean(args.print || false),
               uploadOptions
-            );
+            ), uploadFilename);
             break;
             
           case "start_print":
@@ -1891,7 +2062,10 @@ class ThreeDPrinterMCPServer {
             if (type.toLowerCase() === "bambu") {
               startOptions.bambuModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
             }
-            result = await this.startPrint(host, port, type, apiKey, bambuSerial, bambuToken, String(args.filename), startOptions);
+            result = withJobName(
+              await this.startPrint(host, port, type, apiKey, bambuSerial, bambuToken, String(args.filename), startOptions),
+              String(args.filename)
+            );
             break;
             
           case "cancel_print":
@@ -2584,7 +2758,8 @@ class ThreeDPrinterMCPServer {
               text: `Error: ${errorMessage}\nSuggestion: ${structuredError.suggestion}`
             }
           ],
-          structuredContent: structuredError,
+          // Clients validate structuredContent against a declared outputSchema even on errors.
+          ...(OUTPUT_SCHEMA_TOOLS.has(name) ? {} : { structuredContent: structuredError }),
           isError: true
         };
       }

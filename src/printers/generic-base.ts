@@ -17,6 +17,15 @@ import {
   type GenericPrintInspection,
   type Heater,
 } from "../safety/gcode-thermal.js";
+import type { CounterpartProgress, FilamentSlot, PrinterIdentity } from "../counterpart/contract.js";
+
+/** A camera snapshot URL as the firmware configures it, before resolution against the printer host. */
+export interface SnapshotCandidate {
+  url: string;
+  source: string;
+  /** True when the firmware's own settings name this URL; false for a conventional fallback. */
+  configured: boolean;
+}
 
 /** Normalized adapter state used by the print and heating preflight. */
 export interface GenericPrinterState {
@@ -50,8 +59,90 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
   /** True when rawUploadFile(print=true) starts the uploaded bytes atomically. */
   protected readonly uploadStartsPrint: boolean = false;
 
+  /** Remote name of the last job this server instance inspected and started, per printer. */
+  private readonly checkedJobs = new Map<string, string>();
+
   constructor(apiClient: AxiosInstance, private readonly confirm?: ConfirmHardware) {
     super(apiClient);
+  }
+
+  // ---- Counterpart contract (counterpart/1) ----
+
+  /** Normalized progress for counterpart_print_progress; throws when the printer cannot be read. */
+  abstract counterpartProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress>;
+
+  /** Optional identity fields; failures are ignored by the caller. */
+  async counterpartIdentity(_host: string, _port: string, _apiKey: string): Promise<PrinterIdentity> {
+    return {};
+  }
+
+  /** Snapshot URLs from the firmware's own settings, in preference order. */
+  async snapshotCandidates(_host: string, _port: string, _apiKey: string): Promise<SnapshotCandidate[]> {
+    return [];
+  }
+
+  /** The single extruder slot; adapters with a spool manager override this. */
+  async counterpartFilaments(_host: string, _port: string, _apiKey: string): Promise<FilamentSlot[]> {
+    return [{ id: "ext", source: "unknown" }];
+  }
+
+  /** Whether progress reports carry layer numbers on this firmware. */
+  async reportsLayers(_host: string, _port: string, _apiKey: string): Promise<boolean> {
+    return false;
+  }
+
+  async supportsPauseResume(_host: string, _port: string, _apiKey: string): Promise<boolean> {
+    return this.rawPauseJob !== undefined && this.rawResumeJob !== undefined;
+  }
+
+  protected rawPauseJob?(host: string, port: string, apiKey: string): Promise<unknown>;
+  protected rawResumeJob?(host: string, port: string, apiKey: string): Promise<unknown>;
+
+  /** Pause is never gated, like cancel and heater-off. */
+  async pauseJob(host: string, port: string, apiKey: string): Promise<{ status: string; action: "pause"; message: string }> {
+    if (!(await this.supportsPauseResume(host, port, apiKey)) || !this.rawPauseJob) {
+      throw new Error(`Unsupported: ${this.printerLabel} has no verified pause route in this server.`);
+    }
+    await this.rawPauseJob(host, port, apiKey);
+    return { status: "success", action: "pause", message: `Pause command sent to ${this.printerLabel} (${host}:${port}).` };
+  }
+
+  /**
+   * Resume reheats and moves the printer, so it is gated like a print start:
+   * only a job this server instance inspected and started, only when the
+   * printer freshly reports that same job paused, and a stop or heater-off
+   * request in the meantime cancels it.
+   */
+  async resumeJob(host: string, port: string, apiKey: string): Promise<{ status: string; action: "resume"; message: string; jobName: string }> {
+    if (!(await this.supportsPauseResume(host, port, apiKey)) || !this.rawResumeJob) {
+      throw new Error(`Unsupported: ${this.printerLabel} has no verified resume route in this server.`);
+    }
+    const key = this.operationKey(host, port);
+    return withPrinterOperation(host, key, async (assertActive) => {
+      const checked = this.checkedJobs.get(key);
+      if (!checked) {
+        throw new Error(
+          `Print safety: resume_print only resumes a job this server instance inspected and started on ${this.printerLabel}; nothing was sent. ` +
+          "Check the paused job at the printer and resume it there."
+        );
+      }
+      const progress = await this.counterpartProgress(host, port, apiKey);
+      if (progress.state === "paused" && progress.job?.stage === "Pausing") {
+        // OctoPrint accepts a resume while still pausing and then drops it.
+        throw new Error(`Print safety: ${this.printerLabel} is still pausing; nothing was sent. Resume once it reports paused.`);
+      }
+      if (progress.state !== "paused") {
+        throw new Error(`Print safety: ${this.printerLabel} reports '${progress.state}', not a paused job; nothing was sent.`);
+      }
+      if (progress.job?.name !== checked) {
+        throw new Error(
+          `Print safety: the paused job (${progress.job?.name ?? "unknown"}) does not match the job this server started (${checked}); nothing was sent.`
+        );
+      }
+      assertActive();
+      await this.rawResumeJob!(host, port, apiKey);
+      return { status: "success", action: "resume", message: `Resume command sent to ${this.printerLabel} (${host}:${port}) for ${checked}.`, jobName: checked };
+    });
   }
 
   protected abstract rawUploadFile(host: string, port: string, apiKey: string, filePath: string, filename: string, print: boolean): Promise<any>;
@@ -241,6 +332,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
       status: "success",
       printRequested: true,
       remotePath: remoteName,
+      jobName: remoteName,
       sha256: inspection.sha256,
       materials: inspection.materials,
       peakTemperatures: inspection.peaks,
@@ -258,6 +350,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
       if (!this.uploadStartedPrint(response)) {
         throw new Error(`${this.printerLabel} stored ${remoteName} but reports that it did not start printing it.`);
       }
+      this.checkedJobs.set(this.operationKey(host, port), remoteName);
       return { ...summary, response };
     }
     const upload = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, false);
@@ -270,6 +363,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     this.assertBedClearance(dispatch, initial.finishedJob);
     assertActive();
     const response = await this.rawStartJob(host, port, apiKey, remoteName);
+    this.checkedJobs.set(this.operationKey(host, port), remoteName);
     return { ...summary, upload, response };
   }
 

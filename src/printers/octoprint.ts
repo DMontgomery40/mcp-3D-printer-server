@@ -1,7 +1,10 @@
 import fs from "fs";
 import FormData from "form-data";
 import { isAxiosError } from "axios";
-import { GenericPrinterImplementation, type GenericPrinterState, type HeaterComponent } from "./generic-base.js";
+import { GenericPrinterImplementation, type GenericPrinterState, type HeaterComponent, type SnapshotCandidate } from "./generic-base.js";
+import type { CounterpartProgress, PrinterIdentity } from "../counterpart/contract.js";
+import { nonEmptyText } from "../counterpart/contract.js";
+import { mapOctoPrint } from "../counterpart/progress.js";
 
 const BLOCKING_FLAGS = ["printing", "paused", "pausing", "cancelling", "resuming", "finishing", "error", "closedOrError"];
 
@@ -13,6 +16,88 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
   protected readonly printerLabel = "OctoPrint";
   // POST /api/files/local with print=true uploads and starts the same bytes.
   protected readonly uploadStartsPrint = true;
+
+  /**
+   * GET /api/job plus GET /api/printer (temperatures; 409 when not
+   * operational). An Operational job with no progress reads the file's print
+   * history so a cancelled job is reported as cancelled.
+   * https://docs.octoprint.org/en/master/api/job.html
+   */
+  async counterpartProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress> {
+    const base = `http://${host}:${port}`;
+    const headers = { "X-Api-Key": apiKey };
+    const job = (await this.apiClient.get(`${base}/api/job`, { headers })).data;
+    let printer: any;
+    try {
+      printer = (await this.apiClient.get(`${base}/api/printer`, { headers })).data;
+    } catch (error) {
+      if (!(isAxiosError(error) && error.response?.status === 409)) throw error;
+    }
+    const observedAt = new Date().toISOString();
+    let lastPrint: { success?: unknown } | undefined;
+    const file = job?.job?.file;
+    if (String(job?.state ?? "").toLowerCase() === "operational" && typeof file?.path === "string" && file.path &&
+        (job?.progress?.completion === null || job?.progress?.completion === undefined)) {
+      const origin = file.origin === "sdcard" ? "sdcard" : "local";
+      lastPrint = await this.apiClient.get(`${base}/api/files/${origin}/${encodePath(file.path)}`, { headers })
+        .then((response) => response.data?.prints?.last)
+        .catch(() => undefined);
+    }
+    return mapOctoPrint({ job, printer, lastPrint }, observedAt);
+  }
+
+  /**
+   * Snapshot URL from GET /api/settings: the bundled Classic Webcam plugin's
+   * plugins.classicwebcam.snapshot on 1.9+, webcam.snapshotUrl on 1.8 and
+   * earlier (1.9+ still fills it through its compatibility layer), then the
+   * OctoPi convention http://host/webcam/?action=snapshot.
+   * Source: OctoPrint src/octoprint/server/api/settings.py and
+   * src/octoprint/plugins/classicwebcam/__init__.py; checked on 1.8.7 and 1.11.2.
+   */
+  async snapshotCandidates(host: string, port: string, apiKey: string): Promise<SnapshotCandidate[]> {
+    const settings = (await this.apiClient.get(`http://${host}:${port}/api/settings`, { headers: { "X-Api-Key": apiKey } })).data;
+    const candidates: SnapshotCandidate[] = [];
+    if (settings?.webcam?.webcamEnabled !== false) {
+      const configured = [
+        settings?.plugins?.classicwebcam?.snapshot,
+        settings?.webcam?.snapshotUrl,
+        ...(Array.isArray(settings?.webcam?.webcams) ? settings.webcam.webcams.map((webcam: any) => webcam?.compat?.snapshot) : []),
+      ];
+      for (const url of configured) {
+        const text = nonEmptyText(url);
+        if (text) candidates.push({ url: text, source: "octoprint-settings", configured: true });
+      }
+    }
+    candidates.push({ url: `http://${host}/webcam/?action=snapshot`, source: "octoprint-fallback", configured: false });
+    return candidates;
+  }
+
+  async counterpartIdentity(host: string, port: string, apiKey: string): Promise<PrinterIdentity> {
+    const headers = { "X-Api-Key": apiKey };
+    const [profiles, settings] = await Promise.all([
+      this.apiClient.get(`http://${host}:${port}/api/printerprofiles`, { headers }).then((r) => r.data).catch(() => undefined),
+      this.apiClient.get(`http://${host}:${port}/api/settings`, { headers }).then((r) => r.data).catch(() => undefined),
+    ]);
+    const all = Object.values(profiles?.profiles ?? {}) as any[];
+    const profile = all.find((entry) => entry?.current) ?? all.find((entry) => entry?.default);
+    return { model: nonEmptyText(profile?.model), name: nonEmptyText(settings?.appearance?.name) ?? nonEmptyText(profile?.name) };
+  }
+
+  /** POST /api/job {command:"pause", action:"pause"|"resume"}; 204 on success, 409 without an active job. */
+  protected async rawPauseJob(host: string, port: string, apiKey: string) {
+    return this.jobCommand(host, port, apiKey, { command: "pause", action: "pause" });
+  }
+
+  protected async rawResumeJob(host: string, port: string, apiKey: string) {
+    return this.jobCommand(host, port, apiKey, { command: "pause", action: "resume" });
+  }
+
+  private async jobCommand(host: string, port: string, apiKey: string, body: Record<string, string>) {
+    const response = await this.apiClient.post(`http://${host}:${port}/api/job`, body as any, {
+      headers: { "X-Api-Key": apiKey, "Content-Type": "application/json" },
+    });
+    return response.data;
+  }
 
   async getStatus(host: string, port: string, apiKey: string) {
     const url = `http://${host}:${port}/api/printer`;

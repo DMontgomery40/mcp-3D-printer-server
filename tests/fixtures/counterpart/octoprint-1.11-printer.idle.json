@@ -1,0 +1,23 @@
+{
+  "sd": {
+    "ready": true
+  },
+  "state": {
+    "error": "",
+    "flags": {
+      "cancelling": false,
+      "closedOrError": false,
+      "error": false,
+      "finishing": false,
+      "operational": true,
+      "paused": false,
+      "pausing": false,
+      "printing": false,
+      "ready": true,
+      "resuming": false,
+      "sdReady": true
+    },
+    "text": "Operational"
+  },
+  "temperature": {}
+}

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add the `counterpart/1` tools that bambu-printer-mcp also implements, so one client can watch and control either server: `counterpart_printer_info` (server, printer identity and detected capabilities), `counterpart_print_progress` (one state, job, progress, time, layer, temperature and problem shape per firmware), `camera_snapshot` (bambu-printer-mcp's arguments and result plus `capturedAt`), `get_printer_filaments` (one external slot, with Spoolman through Moonraker), `pause_print` and `resume_print`. Each declares an `outputSchema` and returns `structuredContent` plus the same JSON as text; their errors carry text only, because MCP clients validate structured content against the schema even on errors.
+- Pause is never gated. Resume reheats and moves the printer, so it resumes only a job this server instance inspected and started, after a fresh report that the same job is paused; a stop or heater-off request cancels a pending resume. A job started elsewhere, or before a restart, is refused. OctoPrint drops a resume sent while it is still pausing, so transitional states are reported as `job.stage` and resume waits for a settled pause.
+- `upload_gcode` and `start_print` results name the remote job in `jobName` (for `start_print`, the checked copy that actually starts), matching `job.name` in `counterpart_print_progress`.
+- `slice_stl` and `slice_with_template` accept `layer_height`, `wall_loops` and `sparse_infill_density`, written over the selected profile: Orca and Bambu Studio process keys on the Bambu-compatible and generic OrcaSlicer paths, and `--layer-height`, `--perimeters` and `--fill-density` for PrusaSlicer and Slic3r. Cura refuses them. Profile files are never modified.
+- `PRINTER_CAMERA_SNAPSHOT_URL` overrides the camera source for any printer, and `REPETIER_SLUG` selects the Repetier-Server printer for the new tools.
+
+### Evidence
+
+- OctoPrint 1.11.2 and 1.8.7 (virtual printer) and Klipper with Moonraker 1.5.0 on simulavr, with Spoolman 0.27.1: info, progress, camera snapshot, filaments, a checked upload-and-print through MCP with the confirmation answered, pause, resume, cancel, and a refused resume after the cancel. `jobName` equalled the reported `job.name` on all three. These are simulators, not printers.
+- PrusaLink, Duet (standalone `rr_*` and DSF), Repetier-Server and Creality follow their API documentation and are covered by recorded-shape mapping tests and loopback HTTP mocks only. Repetier's `done`, `printTime`, `printedTimeComp` and `@pause` are not in its API manual. Creality's Moonraker ports (7125, then 4408) come from community K1 setups. Duet uses `rr_model` flags `d99v` instead of `d99f`, because `f` omits `job.file`.
+- The Bambu mapping is tested offline and matches bambu-printer-mcp's encodings. This server has no Bambu camera, pause or resume path.
+
 ## 1.2.20 — 2026-10-30
 
 ### Fixed
