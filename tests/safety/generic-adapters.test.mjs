@@ -279,19 +279,14 @@ for (const [name, adapter] of Object.entries(ADAPTERS)) {
 }
 
 for (const name of ["klipper", "prusa", "creality"]) {
-  test(`${name}: a finished-job state needs a human even with PRINT_REQUIRE_CONFIRMATION=0`, async (t) => {
+  test(`${name}: a finished-job state prints like idle, with no bed prompt`, async (t) => {
     const adapter = ADAPTERS[name];
     process.env.PRINT_REQUIRE_CONFIRMATION = "0";
     t.after(() => { delete process.env.PRINT_REQUIRE_CONFIRMATION; });
-    const idle = await mockPrinter(t, adapter);
-    const quiet = adapterWith(adapter, async () => { throw new Error("ordinary prompts are opted out"); });
-    assert.equal((await quiet.impl.uploadFile("127.0.0.1", idle.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {})).status, "success");
     const finished = await mockPrinter(t, adapter, { state: "finished" });
-    const { impl, prompts } = adapterWith(adapter, async () => false);
-    await assert.rejects(impl.uploadFile("127.0.0.1", finished.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {}), /declined/);
-    assert.equal(prompts.length, 1);
-    assert.match(prompts[0], /remove the previous part/);
-    assert.deepEqual(mutations(adapter, finished.requests), []);
+    const quiet = adapterWith(adapter, async () => { throw new Error("ordinary prompts are opted out"); });
+    assert.equal((await quiet.impl.uploadFile("127.0.0.1", finished.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {})).status, "success");
+    assert.equal(quiet.prompts.length, 0);
   });
 }
 

@@ -172,7 +172,7 @@ test("the print preflight names nozzles without an identity chip", async () => {
   assert.match(prompts[1], /Printer nozzle 0 reports no identity chip, so its diameter and type are the printer's configured settings; confirm they match the installed hotend\./);
 });
 
-test("confirmation opt-out skips ordinary prompts but a finished bed still needs a human", async (t) => {
+test("confirmation opt-out skips every print prompt, including after a finished job", async (t) => {
   const file = await fixture(t);
   for (const [name, value] of [["BAMBU_REQUIRE_CONFIRMATION", "0"], ["PRINT_REQUIRE_CONFIRMATION", "0"]]) {
     const previous = { BAMBU_REQUIRE_CONFIRMATION: process.env.BAMBU_REQUIRE_CONFIRMATION, PRINT_REQUIRE_CONFIRMATION: process.env.PRINT_REQUIRE_CONFIRMATION };
@@ -185,14 +185,8 @@ test("confirmation opt-out skips ordinary prompts but a finished bed still needs
       assert.equal((await print3mf(idle.printer, file)).status, "success", `${name}=0 opts out of ordinary prompts`);
       assert.equal(prompts, 0);
       const finished = isolatedPrinter(safetyStatus({ state: "FINISH" }), async () => { prompts++; return false; });
-      await assert.rejects(print3mf(finished.printer, file), (error) => {
-        assert.match(error.message, /confirmation was declined or cancelled/i);
-        assert.match(error.message, /always needs a person to accept it/);
-        assert.doesNotMatch(error.message, /REQUIRE_CONFIRMATION/, "the headless opt-out does not apply to physical checks");
-        return true;
-      });
-      assert.equal(prompts, 1, "finished-bed clearance is a physical check");
-      assertNoDispatch(finished.events);
+      assert.equal((await print3mf(finished.printer, file)).status, "success", "a finished job prints like idle: no bed prompt");
+      assert.equal(prompts, 0);
     } finally {
       for (const [key, old] of Object.entries(previous)) {
         if (old === undefined) delete process.env[key];

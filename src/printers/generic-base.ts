@@ -379,11 +379,6 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     }
   }
 
-  private assertBedClearance(state: GenericPrinterState, confirmedFinishedJob: string | undefined): void {
-    if (state.finishedJob !== undefined && state.finishedJob !== confirmedFinishedJob) {
-      throw new Error("Print safety: the printer reports a newly finished job. Confirm its part and debris were removed before retrying.");
-    }
-  }
 
   private async printChecked(
     host: string,
@@ -398,11 +393,10 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     assertExpectedPeaks(options.expectedPeaks, { nozzle: inspection.peaks.nozzle, bed: inspection.peaks.bed });
     const initial = await this.readPrinterState(host, port, apiKey);
     this.assertReady(initial, "print");
-    await requireHumanConfirmation(this.confirm, this.printPrompt(host, port, remoteName, inspection, initial), "generic", initial.finishedJob !== undefined);
+    await requireHumanConfirmation(this.confirm, this.printPrompt(host, port, remoteName, inspection, initial), "generic");
     assertActive();
     const confirmed = await this.readPrinterState(host, port, apiKey);
     this.assertReady(confirmed, "print");
-    this.assertBedClearance(confirmed, initial.finishedJob);
     assertActive();
 
     const summary = {
@@ -437,7 +431,6 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     // Uploads can be long. Recheck state before the start command.
     const dispatch = await this.readPrinterState(host, port, apiKey);
     this.assertReady(dispatch, "print");
-    this.assertBedClearance(dispatch, initial.finishedJob);
     assertActive();
     const response = await this.rawStartJob(host, port, apiKey, remoteName);
     this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
@@ -450,8 +443,8 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
       `Start a checked print of ${remoteName} on ${this.printerLabel} (${host}:${port})? ` +
       `Materials: ${materials} (${inspection.materialSource}). Peak targets: nozzle ${inspection.peaks.nozzle}°C, bed ${inspection.peaks.bed}°C, chamber ${inspection.peaks.chamber}°C ` +
       `(server ceilings ${inspection.ceilings.nozzle}/${inspection.ceilings.bed}/${inspection.ceilings.chamber}°C). File SHA-256: ${inspection.sha256}. ` +
-      "Confirm the loaded filament matches and that the build plate is clear." +
-      (state.finishedJob !== undefined ? ` The printer reports '${state.state}': remove the previous part and debris before confirming.` : "")
+      "Confirm the loaded filament matches." +
+""
     );
   }
 }

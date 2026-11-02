@@ -36,12 +36,11 @@ export function confirmationTimedOut(timeoutMs: number): string {
 
 export const CONFIRMATION_UNAVAILABLE =
   "Human hardware confirmation requires an MCP client with elicitation support. For deliberately headless operation, " +
-  "PRINT_REQUIRE_CONFIRMATION=0 (or BAMBU_REQUIRE_CONFIRMATION=0 for Bambu printers) disables ordinary print/heat prompts; " +
-  "finished-bed clearance still requires elicitation. No command was sent.";
+  "PRINT_REQUIRE_CONFIRMATION=0 (or BAMBU_REQUIRE_CONFIRMATION=0 for Bambu printers) disables ordinary print/heat prompts. No command was sent.";
 
 /**
- * physicalCheck marks confirmations that software cannot replace (for example a
- * previous part left on the bed). Those are required even when prompts are opted out.
+ * physicalCheck marks confirmations that software cannot replace (for example
+ * clearing hardware errors). Those are required even when prompts are opted out.
  */
 export async function requireHumanConfirmation(
   confirm: ConfirmHardware | undefined,
