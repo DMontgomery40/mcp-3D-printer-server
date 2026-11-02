@@ -1734,6 +1734,7 @@ class ThreeDPrinterMCPServer {
                   type: "string",
                   description: "Path to the 3MF file to print."
                 },
+                plate_index: { type: "integer", minimum: 0, description: "Zero-based selected plate; defaults to 0. The same plate is inspected and printed; auto-slicing uses its one-based CLI plate number." },
                 bambu_model: {
                   type: "string",
                   enum: ["p1s", "p1p", "x1c", "x1e", "a1", "a1mini", "h2d"],
@@ -2651,6 +2652,8 @@ class ThreeDPrinterMCPServer {
                 throw new Error("Bambu serial number and access token are required for print_3mf.");
             }
 
+            const printPlate = args.plate_index === undefined ? 0 : args.plate_index;
+            if (typeof printPlate !== "number" || !Number.isSafeInteger(printPlate) || printPlate < 0 || printPlate >= Number.MAX_SAFE_INTEGER) throw new Error("plate_index must be a nonnegative safe integer with a supported one-based plate number.");
             const printModel = await this.resolveBambuModel(args?.bambu_model as string | undefined);
             const printBedType = resolveBedType(args?.bed_type as string | undefined);
             const explicitPrintNozzle = optionalNozzleDiameterArg(args?.nozzle_diameter);
@@ -2661,7 +2664,7 @@ class ThreeDPrinterMCPServer {
 
             // Only the selected plate's exact G-code entry counts as sliced output;
             // a stray .gcode entry elsewhere in the archive is not printable.
-            const selectedPlateEntry = "Metadata/plate_1.gcode";
+            const selectedPlateEntry = `Metadata/plate_${printPlate + 1}.gcode`;
             let shouldAutoSlice = false;
             try {
               const JSZip = (await import('jszip')).default;
@@ -2695,7 +2698,7 @@ class ThreeDPrinterMCPServer {
                   printPreset,
                   filamentProfile || undefined,
                   // Slice for the plate and nozzle the print will be checked against.
-                  { bedType: printBedType, ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}) }
+                  { bedType: printBedType, slicePlate: printPlate + 1, ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}) }
                 );
                 console.error("Auto-sliced to: " + threeMFPath);
               } catch (sliceErr: any) {
@@ -2762,7 +2765,7 @@ class ThreeDPrinterMCPServer {
                 result = await implementation.print3mf(host, bambuSerial, bambuToken, {
                     projectName: projectName,
                     filePath: threeMFPath,
-                    plateIndex: 0, 
+                    plateIndex: printPlate,
                     ...printOptions // Spread the final options
                 });
                 // Report what the printer did, not merely that a command was published.

@@ -3,6 +3,7 @@
 ## [1.2.26] – 2026-11-02
 
 - Expose read-only `inspect_print_file` using the existing private-snapshot inspector, with an exact versioned file/plate receipt. Inspection neither contacts a printer nor authorizes dispatch; printing keeps its existing validation and confirmation.
+- Forward the explicit zero-based `print_3mf.plate_index` through selected-file detection, auto-slicing and the existing checked dispatch, instead of silently printing plate 1.
 - Use Bambu Studio's supported `--clone-objects` for standalone STL copies; preserve `--repetitions` for selected original 3MF plates and refuse conflicting copy options.
 
 - Add camera stream tools that share one MJPEG connection, or serialize existing snapshot requests while a viewer watches. Reuse the latest frame for camera snapshots and stop all camera traffic after idle or shutdown.
