@@ -189,21 +189,13 @@ export class BambuImplementation extends PrinterImplementation {
     await this.confirmHardwareAction(
       `Start a checked print on ${inspection.model.toUpperCase()} (${serial})? Nozzles: ${inspection.nozzleDiameters.join(", ")} mm. ` +
       `Materials: ${inspection.materials.join(", ")}. Peak targets: nozzle ${inspection.maxNozzleTemperature}°C, bed ${inspection.maxBedTemperature}°C, chamber ${inspection.maxChamberTemperature}°C. ` +
-      `File SHA-256: ${inspection.sha256}. Confirm the physical spool labels and that the build plate is clear.` +
-      (finishedJob !== undefined ? " The printer reports FINISH: remove the previous part and debris before confirming." : "") +
+      `File SHA-256: ${inspection.sha256}. Confirm the physical spool labels.` +
       (unchipped.length ? ` Printer ${unchipped.length === 1 ? `nozzle ${unchipped[0]} reports` : `nozzles ${unchipped.join(" and ")} report`} no identity chip, ` +
-        `so ${unchipped.length === 1 ? "its" : "their"} diameter and type are the printer's configured settings; confirm they match the installed ${unchipped.length === 1 ? "hotend" : "hotends"}.` : ""),
-      finishedJob !== undefined
+        `so ${unchipped.length === 1 ? "its" : "their"} diameter and type are the printer's configured settings; confirm they match the installed ${unchipped.length === 1 ? "hotend" : "hotends"}.` : "")
     );
     return finishedJob;
   }
 
-  assertBedClearance(status: any, confirmedFinishedJob: string | undefined): void {
-    const current = this.finishedJobIdentity(status);
-    if (current !== undefined && current !== confirmedFinishedJob) {
-      throw new Error("Printer reports a newly finished job. Confirm that its part and debris have been removed before retrying the print.");
-    }
-  }
 
   private async getPrinter(host: string, serial: string, token: string): Promise<BambuClient> {
     return this.printerStore.getPrinter(host, serial, token);
@@ -378,11 +370,10 @@ export class BambuImplementation extends PrinterImplementation {
     const requirements: PrinterStateRequirements = { ...inspection, amsMapping: checkedMapping, useAMS };
     const initialStatus = await this.getSafetyStatus(host, serial, token);
     validatePrinterState(initialStatus, requirements);
-    const bedClearance = await this.confirmPrintPreflight(serial, initialStatus, inspection);
+    await this.confirmPrintPreflight(serial, initialStatus, inspection);
     // Recheck after the human response: the printer may have changed meanwhile.
     const confirmedStatus = await this.getSafetyStatus(host, serial, token);
     validatePrinterState(confirmedStatus, requirements);
-    this.assertBedClearance(confirmedStatus, bedClearance);
     assertActive();
 
     const remoteFileName = uniquePrintName(options.filePath);
@@ -391,7 +382,6 @@ export class BambuImplementation extends PrinterImplementation {
     // Uploads can be long. Recheck current state before the command is dispatched.
     const dispatchStatus = await this.getSafetyStatus(host, serial, token);
     validatePrinterState(dispatchStatus, requirements);
-    this.assertBedClearance(dispatchStatus, bedClearance);
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
 
@@ -678,17 +668,15 @@ export class BambuImplementation extends PrinterImplementation {
     }
     const initialStatus = await this.getSafetyStatus(host, serial, token);
     this.validateLoadedGcodeState(initialStatus, inspection);
-    const bedClearance = await this.confirmPrintPreflight(serial, initialStatus, inspection);
+    await this.confirmPrintPreflight(serial, initialStatus, inspection);
     const confirmedStatus = await this.getSafetyStatus(host, serial, token);
     this.validateLoadedGcodeState(confirmedStatus, inspection);
-    this.assertBedClearance(confirmedStatus, bedClearance);
     assertActive();
     // Start a uniquely named copy of the inspected bytes, never a name that can change.
     const remotePath = path.posix.join(path.posix.dirname(filename), uniquePrintName(filename));
     await this.ftpUpload(host, token, filePath, `/${remotePath}`);
     const dispatchStatus = await this.getSafetyStatus(host, serial, token);
     this.validateLoadedGcodeState(dispatchStatus, inspection);
-    this.assertBedClearance(dispatchStatus, bedClearance);
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);

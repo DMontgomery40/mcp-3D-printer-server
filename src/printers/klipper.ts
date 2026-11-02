@@ -150,7 +150,7 @@ export class KlipperImplementation extends GenericPrinterImplementation {
   /**
    * Moonraker object query: webhooks.state must be "ready" (not startup,
    * shutdown or error) and print_stats.state standby/complete/cancelled.
-   * complete/cancelled can leave a part on the bed, so they need a human.
+   * complete/cancelled print like standby: the printer detects an occupied bed itself.
    */
   protected async readPrinterState(host: string, port: string, apiKey: string): Promise<GenericPrinterState> {
     let data: any;

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.23] – 2026-11-02
+
+### Removed
+
+- Remove bed-clearance checks. A finished, complete, cancelled or stopped job prints like an idle printer. There is no "remove the previous part and debris" confirmation or forced human prompt, and no "the build plate is clear" line in print confirmations. The printer detects an occupied bed itself during bed leveling. Print confirmations keep their spool and file checks, and `PRINT_REQUIRE_CONFIRMATION=0` now skips every print prompt. Verified with the full suite (570 tests) using mocked printers; no physical print was run.
+
 ## [1.2.22] – 2026-11-02
 
 ### Fixed

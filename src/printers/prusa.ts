@@ -213,8 +213,8 @@ export class PrusaImplementation extends GenericPrinterImplementation {
 
   /**
    * PrusaLink /api/v1/status printer.state, falling back to the legacy
-   * OctoPrint-compatible /api/printer flags. FINISHED and STOPPED are idle but
-   * may leave a part on the bed, so they require a human confirmation.
+   * OctoPrint-compatible /api/printer flags. FINISHED and STOPPED are idle; the
+   * printer detects an occupied bed itself.
    */
   protected async readPrinterState(host: string, port: string, apiKey: string): Promise<GenericPrinterState> {
     let response: AxiosResponse;
