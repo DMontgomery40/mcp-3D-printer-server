@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.24] – 2026-11-02
+
+### Fixed
+
+- `fusion_mcp_status` reports the Fusion360MCP add-in as reachable. The pinned add-in answers a ping on its fast path with `{"ok":true,"status":"pong"}`, and the bridge accepted only `{"pong":true}`, so it reported `connected: false` with a running add-in. Verified against a live Fusion with the add-in at `19b9f1e95192` through bambu-printer-mcp's identical bridge, and with socket fixtures here.
+
 ## [1.2.23] – 2026-11-02
 
 ### Removed
