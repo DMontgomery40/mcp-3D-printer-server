@@ -32,7 +32,7 @@ import { createServer as createHttpServer, type IncomingMessage, type Server as 
 import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
-import { STLManipulator, type BambuSliceOptions, type ProcessOverrides } from "./stl/stl-manipulator.js";
+import { STLManipulator, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { CounterpartService, type PrinterTarget } from "./counterpart/service.js";
 import {
   CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
@@ -626,6 +626,8 @@ type StructuredToolError = {
   message: string;
   tool: string;
   slicer?: Record<string, unknown>;
+  /** The slicer's own result.json, verbatim. */
+  slicer_result?: Record<string, unknown>;
 };
 
 const SLICING_TOOLS = new Set(["slice_stl", "slice_with_template", "list_templates", "save_template", "get_slice_settings"]);
@@ -784,7 +786,7 @@ class ThreeDPrinterMCPServer {
   }
 
   /** Shared slice_stl / slice_with_template implementation. */
-  private async runSliceTool(toolName: string, args: Record<string, unknown> | undefined): Promise<string> {
+  private async runSliceTool(toolName: string, args: Record<string, unknown> | undefined): Promise<SliceOutput> {
     if (!args?.stl_path) {
       throw new Error("Missing required parameter: stl_path");
     }
@@ -847,7 +849,7 @@ class ThreeDPrinterMCPServer {
     const slicerPath =
       this.resolveExecutableSelectorArg(args.slicer_path, toolName, "slicer_path") ?? defaultSlicerPathFor(slicerType);
 
-    return this.stlManipulator.sliceSTL(
+    return this.stlManipulator.sliceSTLWithResult(
       String(args.stl_path),
       slicerType,
       slicerPath,
@@ -1919,7 +1921,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "lay_flat",
-            description: "Attempt to rotate the model so its largest flat face lies on the XY plane (Z=0).",
+            description: "Rotate the model so a face rests on the bed (Z=0), choosing the orientation with the least part and support volume per mm² of bed contact. A face counts only if nothing hangs below it. Returns the new STL path; structuredContent.laid_flat is false, with the input path, when no orientation qualifies.",
             inputSchema: {
               type: "object",
               properties: {
@@ -2197,15 +2199,17 @@ class ThreeDPrinterMCPServer {
             );
             break;
             
-          case "slice_stl":
-            result = await this.runSliceTool("slice_stl", args as Record<string, unknown> | undefined);
-            break;
+          case "slice_stl": {
+            const sliced = await this.runSliceTool("slice_stl", args as Record<string, unknown> | undefined);
+            // The text stays the sliced file's path; slicer_result is the slicer's own result.json, verbatim.
+            return { content: [{ type: "text", text: sliced.path }], structuredContent: sliced };
+          }
 
           case "slice_with_template":
             if (!args?.template_name || !String(args.template_name).trim()) {
               throw new Error("Missing required parameter: template_name");
             }
-            result = await this.runSliceTool("slice_with_template", args as Record<string, unknown> | undefined);
+            result = (await this.runSliceTool("slice_with_template", args as Record<string, unknown> | undefined)).path;
             break;
 
           case "list_templates":
@@ -2795,12 +2799,14 @@ class ThreeDPrinterMCPServer {
             result = await this.stlManipulator.centerModel(String(args.stl_path));
             break;
 
-          case "lay_flat":
+          case "lay_flat": {
             if (!args?.stl_path) {
                 throw new Error("Missing required parameter: stl_path");
             }
-            result = await this.stlManipulator.layFlat(String(args.stl_path));
-            break;
+            const layFlatResult = await this.stlManipulator.layFlatWithResult(String(args.stl_path));
+            // The text stays the STL path clients read; structuredContent says whether it was laid flat.
+            return { content: [{ type: "text", text: layFlatResult.path }], structuredContent: layFlatResult };
+          }
 
           case "fusion_mcp_status":
             return structured(await this.fusion.status(args ?? {}, extra.signal));
@@ -2861,7 +2867,8 @@ class ThreeDPrinterMCPServer {
           content: [
             {
               type: "text",
-              text: `Error: ${errorMessage}\nSuggestion: ${structuredError.suggestion}`
+              // A slicer failure leads with the slicer's own words.
+              text: `${error instanceof SlicerError && error.slicerText ? "" : "Error: "}${errorMessage}\nSuggestion: ${structuredError.suggestion}`
             }
           ],
           // Clients validate structuredContent against a declared outputSchema even on errors.
@@ -3035,6 +3042,7 @@ class ThreeDPrinterMCPServer {
         message,
         tool,
         slicer: { phase: error.phase, ...error.details },
+        ...(error.slicerResult ? { slicer_result: error.slicerResult } : {}),
       };
     }
     if (SLICING_TOOLS.has(tool)) {

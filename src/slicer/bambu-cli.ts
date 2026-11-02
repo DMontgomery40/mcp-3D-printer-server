@@ -641,17 +641,23 @@ const BAMBU_CLI_ERRORS: Record<number, string> = {
 };
 
 /**
- * The CLI's own reason for a failed run: result.json in the run's fresh output
- * directory (written on Linux for handled errors), else the exit-code table.
+ * The result.json in the run's fresh output directory, parsed verbatim. Bambu
+ * Studio 02.08.02.61 writes it on macOS for successes and failures alike.
  */
-export function bambuCliFailureReason(exitCode: number | null, outputDir: string): string | undefined {
+export function readCliResult(outputDir: string): Record<string, unknown> | undefined {
   try {
-    const result = JSON.parse(fs.readFileSync(path.join(outputDir, "result.json"), "utf8"));
-    if (typeof result?.error_string === "string" && result.error_string.trim()) {
-      return `${result.error_string.trim()}${result.return_code !== undefined ? ` [${result.return_code}]` : ""}`;
-    }
+    const result: unknown = JSON.parse(fs.readFileSync(path.join(outputDir, "result.json"), "utf8"));
+    return result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : undefined;
   } catch {
-    // result.json is written only on Linux and only for handled errors.
+    return undefined;
+  }
+}
+
+/** The CLI's own reason for a failed run: its result.json, else the exit-code table. */
+export function bambuCliFailureReason(exitCode: number | null, outputDir: string): string | undefined {
+  const result = readCliResult(outputDir);
+  if (typeof result?.error_string === "string" && result.error_string.trim()) {
+    return `${result.error_string.trim()}${result.return_code !== undefined ? ` [${result.return_code}]` : ""}`;
   }
   if (exitCode === null) return undefined;
   const code = Object.keys(BAMBU_CLI_ERRORS).map(Number).find((value) => value === exitCode || (value & 0xff) === exitCode);

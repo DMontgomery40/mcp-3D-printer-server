@@ -17,6 +17,8 @@ const SERVER_ENTRY = path.join(REPO_ROOT, "dist", "index.js");
 const SAMPLE_STL = path.join(REPO_ROOT, "test", "sample_cube.stl");
 const P1S = "Bambu Lab P1S 0.4 nozzle";
 const REAL_BAMBU_STUDIO = "/Applications/BambuStudio.app/Contents/MacOS/BambuStudio";
+const STUDIO_RESULTS = path.join(REPO_ROOT, "tests", "fixtures", "studio-result");
+const studioResult = async (name) => JSON.parse(await fs.readFile(path.join(STUDIO_RESULTS, name), "utf8"));
 
 async function zipBytes(entries) {
   const zip = new JSZip();
@@ -91,6 +93,12 @@ if (mode === "segv") process.kill(process.pid, "SIGSEGV");
 if (mode === "resultjson") {
   fs.writeFileSync(path.join(path.dirname(out), "result.json"), JSON.stringify({ error_string: "Some objects are outside the plate boundary.", return_code: -52 }));
   process.exit(204);
+}
+// Real Bambu Studio 02.08.02.61 result.json files: "studio:<fixture>[:<exit code>]".
+if (mode.startsWith("studio:")) {
+  const [, fixture, exitCode] = mode.split(":");
+  fs.copyFileSync(path.join(${JSON.stringify(STUDIO_RESULTS)}, fixture), path.join(path.dirname(out), "result.json"));
+  if (exitCode) process.exit(Number(exitCode));
 }
 if (mode === "exit206") process.exit(206);
 if (mode === "nooutput") process.exit(0);
@@ -713,4 +721,51 @@ test("optional: installed BambuStudio slices P1S 0.4 into a 3MF with P1S plate G
   assert.ok(gcode, "real slice must contain Metadata/plate_1.gcode");
   assert.match(gcode, /; printer_model = Bambu Lab P1S/);
   assert.match(gcode, /;===== machine: P1S/);
+  // Studio's own result.json for this run, verbatim: a cube slices cleanly.
+  assert.equal(result.structuredContent.slicer_result.return_code, 0);
+  assert.deepEqual(result.structuredContent.slicer_result.sliced_plates.map((plate) => plate.warning_message), [""]);
+});
+
+// Bambu Studio's own checks: its result.json, verbatim, from the Scan to Make
+// stove gap filler sliced for a P1S. slice_stl used to drop the warnings.
+test("slice_stl returns Bambu Studio's result.json, warnings and errors included", async (t) => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install, { BAMBU_PROFILES_ROOT: path.dirname(install.bbl) });
+  const slice = () => call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s" });
+
+  await install.setMode("studio:p1s-floating-cantilever.json");
+  let result = await slice();
+  assert.equal(result.isError, undefined, text(result));
+  assert.equal(result.content.length, 1);
+  assert.equal(text(result), result.structuredContent.path);
+  await assertSliced(result.structuredContent.path);
+  assert.deepEqual(result.structuredContent.slicer_result, await studioResult("p1s-floating-cantilever.json"));
+
+  // Studio's auto-orient failure: return code -100, exit 156, five empty-layer lines.
+  const failed = await studioResult("p1s-empty-layers.json");
+  await install.setMode("studio:p1s-empty-layers.json:156");
+  result = await slice();
+  assert.equal(result.isError, true);
+  assert.deepEqual(result.structuredContent.slicer_result, failed);
+  assert.ok(text(result).startsWith(`${failed.error_string}\n${failed.sliced_plates[0].warning_message.trim()}\n`), text(result));
+  assert.match(text(result), /exited with code 156 \(bambustudio: [^)]*\): Failed slicing the model\./);
+  assert.equal(result.structuredContent.slicer.phase, "execution");
+
+  // The CLI's return code fails the slice even when the process exits 0.
+  await install.setMode("studio:p1s-empty-layers.json");
+  result = await slice();
+  assert.equal(result.isError, true);
+  assert.deepEqual(result.structuredContent.slicer_result, failed);
+  assert.ok(text(result).startsWith(`${failed.error_string}\n`), text(result));
+  assert.match(text(result), /exited with code 0, but its result\.json reports return_code -100\./);
+
+  // No result.json: the path alone, and errors keep their "Error: " prefix.
+  await install.setMode("ok");
+  result = await slice();
+  assert.equal(result.isError, undefined, text(result));
+  assert.deepEqual(result.structuredContent, { path: text(result) });
+  await install.setMode("exit206");
+  result = await slice();
+  assert.match(text(result), /^Error: /);
+  assert.equal(result.structuredContent.slicer_result, undefined);
 });

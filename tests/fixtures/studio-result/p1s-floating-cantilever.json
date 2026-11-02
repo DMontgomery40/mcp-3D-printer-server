@@ -1,0 +1,65 @@
+{
+    "error_string": "Success.",
+    "export_time": 600,
+    "layer_height": 0.20000000298023224,
+    "plate_index": 0,
+    "prepare_time": 118,
+    "return_code": 0,
+    "sliced_plates": [
+        {
+            "feature_type_times": {
+                "Bottom surface": 181.12857055664063,
+                "Bridge": 2441.662841796875,
+                "Custom": 362.0393371582031,
+                "Flush": 29.0,
+                "Gap infill": 32.97999572753906,
+                "Inner wall": 775.2113647460938,
+                "Internal solid infill": 1776.829345703125,
+                "Outer wall": 1314.666748046875,
+                "Overhang wall": 546.8515625,
+                "Sparse infill": 1437.58154296875,
+                "Top surface": 2599.74169921875,
+                "Travel": 1531.9581298828125,
+                "Undefined": 1515.95166015625
+            },
+            "filament_change_times": 0,
+            "filaments": [
+                {
+                    "filament_id": "GFA00",
+                    "id": 1,
+                    "main_used_g": 103.72400665283203,
+                    "total_used_g": 103.72400665283203
+                }
+            ],
+            "generate_support_material_time": 8,
+            "id": 1,
+            "infill_time": 874,
+            "layer_filament_change": 0,
+            "main_predication": 12603.0888671875,
+            "make_perimeters_time": 27,
+            "obj_cached_cnt": 0,
+            "objects": [
+                {
+                    "bbox": {
+                        "depth": 214.7716827392578,
+                        "height": 14.399999618530273,
+                        "width": 202.0,
+                        "x": 26.999990463256836,
+                        "y": 20.614166259765625,
+                        "z": 0.0
+                    },
+                    "id": 5,
+                    "name": "clean_flat.stl",
+                    "triangle_count": 70824
+                }
+            ],
+            "sliced_time": 1729,
+            "sliced_time_with_cache": 798,
+            "total_predication": 13007.091796875,
+            "triangle_count": 70824,
+            "warning_message": "It seems object clean_flat.stl has floating cantilever. Please re-orient the object or enable support generation."
+        }
+    ],
+    "sparse_infill_density": 15.0,
+    "wall_loops": 2
+}
