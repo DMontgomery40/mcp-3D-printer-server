@@ -566,6 +566,12 @@ Set a target temperature for a printer component. Use `bed` or `extruder`; Bambu
 
 These tools work with `PRINTER_TYPE=bambu` (or `type: "bambu"`). Set up LAN Only Mode, the serial number, the access code, and the model as described in [Bambu Lab setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#bambu-lab).
 
+#### inspect_print_file
+
+Inspect a local prepared `.3mf` or textual `.gcode` file without connecting to a printer or slicing. Pass `file_path` and an explicit `bambu_model`; optional `plate_index` is zero-based (default 0), `nozzle_diameters` contains one or two supported sizes, and `bed_type` checks the file's declared plate type.
+
+The version-1 receipt identifies the exact private snapshot by SHA-256, byte length and format, records the selected plate/model, and includes the existing file inspector's material, nozzle and peak-temperature evidence. `evidence: "file-only"` and `dispatch_authorized: false` are deliberate: this does not establish current hardware readiness or authorize a print. Unsliced projects, missing plates, unsafe temperatures and mismatched metadata reject. Actual printing still performs its existing checks and human confirmation.
+
 #### print_3mf
 
 Upload a sliced `.3mf` project to a Bambu printer over FTPS and start it with an MQTT `project_file` command that carries the plate's G-code path, its MD5, the AMS mapping, and the calibration flags, or print it through FULU's BambuNetwork bridge (`connection_mode: "bambu_network"`). **`bambu_model` is required** (or `BAMBU_MODEL`); without it the server asks through MCP elicitation when the client supports it, or returns an error. The wrong model can crash the bed into the nozzle.
