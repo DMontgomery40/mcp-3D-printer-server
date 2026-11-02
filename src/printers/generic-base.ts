@@ -26,6 +26,12 @@ export interface SnapshotCandidate {
   /** True when the firmware's own settings name this URL; false for a conventional fallback. */
   configured: boolean;
 }
+export interface CameraCandidate extends SnapshotCandidate {
+  transport: "http-mjpeg" | "http-snapshot";
+  /** Snapshot belonging to this same camera, never an unrelated later candidate. */
+  snapshotUrl?: string;
+  unsupportedStream?: boolean;
+}
 
 /** Normalized adapter state used by the print and heating preflight. */
 export interface GenericPrinterState {
@@ -101,6 +107,11 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
   /** Snapshot URLs from the firmware's own settings, in preference order. */
   async snapshotCandidates(_host: string, _port: string, _apiKey: string): Promise<SnapshotCandidate[]> {
     return [];
+  }
+
+  /** Existing snapshot discovery is the fallback for cameras without an MJPEG URL. */
+  async cameraCandidates(host: string, port: string, apiKey: string): Promise<CameraCandidate[]> {
+    return (await this.snapshotCandidates(host, port, apiKey)).map(candidate => ({...candidate, transport: "http-snapshot"}));
   }
 
   /** The single extruder slot; adapters with a spool manager override this. */
