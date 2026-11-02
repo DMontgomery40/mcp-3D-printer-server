@@ -1564,6 +1564,7 @@ export class STLManipulator extends EventEmitter {
       const vB = new THREE.Vector3();
       const vC = new THREE.Vector3();
       const cb = new THREE.Vector3(), ab = new THREE.Vector3();
+      const fromA = new THREE.Vector3(), fromB = new THREE.Vector3(), fromC = new THREE.Vector3();
 
       for (let face = 0; face < faceCount; face++) {
           vA.fromBufferAttribute(positionAttribute, face * 3);
@@ -1573,7 +1574,10 @@ export class STLManipulator extends EventEmitter {
           vB.toArray(mesh.positions, face * 9 + 3);
           vC.toArray(mesh.positions, face * 9 + 6);
           // Signed tetrahedron volumes about the center sum to the enclosed volume.
-          mesh.volume += vA.clone().sub(center).dot(vB.clone().sub(center).cross(vC.clone().sub(center))) / 6;
+          fromA.subVectors(vA, center);
+          fromB.subVectors(vB, center);
+          fromC.subVectors(vC, center);
+          mesh.volume += fromA.dot(fromB.cross(fromC)) / 6;
 
           // The cross product's direction is the outward normal; half its length is the area.
           cb.subVectors(vC, vB);

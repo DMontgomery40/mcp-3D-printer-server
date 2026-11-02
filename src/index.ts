@@ -2799,9 +2799,9 @@ class ThreeDPrinterMCPServer {
             if (!args?.stl_path) {
                 throw new Error("Missing required parameter: stl_path");
             }
-            const laid = await this.stlManipulator.layFlatWithResult(String(args.stl_path));
+            const layFlatResult = await this.stlManipulator.layFlatWithResult(String(args.stl_path));
             // The text stays the STL path clients read; structuredContent says whether it was laid flat.
-            return { content: [{ type: "text", text: laid.path }], structuredContent: laid };
+            return { content: [{ type: "text", text: layFlatResult.path }], structuredContent: layFlatResult };
           }
 
           case "fusion_mcp_status":
