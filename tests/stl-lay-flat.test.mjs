@@ -217,7 +217,6 @@ test("lay_flat leaves a model unchanged and says so when no face can rest on the
 
 test("lay_flat returns the STL path as its only text and says in structuredContent that it laid the model flat", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "stl-lay-flat-mcp-"));
-  t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [fileURLToPath(new URL("../dist/index.js", import.meta.url))],
@@ -225,9 +224,11 @@ test("lay_flat returns the STL path as its only text and says in structuredConte
     env: { PATH: process.env.PATH, HOME: path.join(directory, "home"), MCP_TRANSPORT: "stdio", TEMP_DIR: directory, PRINTER_HOST: "127.0.0.1", API_KEY: "KEY", PRINTER_TYPE: "octoprint" },
     stderr: "pipe",
   });
+  transport.stderr?.on("data", () => {});
   const client = new Client({ name: "lay-flat-tests", version: "1" });
+  // Stop the server before removing its directory.
+  t.after(async () => { await client.close(); await fs.rm(directory, { recursive: true, force: true }); });
   await client.connect(transport);
-  t.after(() => client.close());
   const input = path.join(directory, "standing.stl");
   await fs.writeFile(input, new STLExporter().parse(new THREE.Mesh(new THREE.BoxGeometry(2, 20, 30))));
 
