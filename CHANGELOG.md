@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.22] – 2026-11-02
+
+### Fixed
+
+- `camera_snapshot` tries both 127.0.0.1 and ::1 for a `localhost` snapshot URL. Node 18 resolves `localhost` to ::1 first with no IPv4 fallback, so a webcam that listens on IPv4 only was missed. Verified with the OctoPrint Classic Webcam test on Node 18.20.8 and the full suite on Node 22.
+
 ## [1.2.21] – 2026-11-02
 
 ### Added
