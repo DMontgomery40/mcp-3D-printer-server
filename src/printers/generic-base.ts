@@ -176,6 +176,11 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
       assertActive();
       // Someone may have resumed or stopped it at the printer while the prompt was open.
       await this.assertPausedJob(host, port, apiKey, checked.name);
+      // A progress read during the prompt may have retired this record (the job ended, and a new one
+      // could now be paused under the same name); only the record that was confirmed may be resumed.
+      if (this.checkedJobs.get(key) !== checked) {
+        throw new Error(`Print safety: ${checked.name} ended on ${this.printerLabel} while the confirmation was open; nothing was sent.`);
+      }
       assertActive();
       await this.rawResumeJob!(host, port, apiKey);
       return {

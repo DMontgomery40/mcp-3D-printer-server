@@ -540,7 +540,7 @@ for (const name of Object.keys(PAUSED)) {
     const printer = await controlPrinter(t, name);
     let answer = false;
     let duringPrompt = () => {};
-    const { impl } = adapterWith(ADAPTERS[name], async () => { duringPrompt(); return answer; });
+    const { impl } = adapterWith(ADAPTERS[name], async () => { await duringPrompt(); return answer; });
     answer = true;
     await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
     printer.current.mode = "paused";
@@ -557,6 +557,16 @@ for (const name of Object.keys(PAUSED)) {
     printer.current.job = "job.gcode";
     duringPrompt = () => {};
     await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /only resumes a job this server instance inspected and started/);
+    // Another progress read sees the job end while the prompt is open, then a new job pauses under the same name.
+    printer.current.mode = "idle";
+    await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
+    duringPrompt = async () => {
+      printer.current.mode = "ended";
+      await impl.observedProgress("127.0.0.1", printer.port, "KEY");
+      printer.current.mode = "paused";
+    };
+    printer.current.mode = "paused";
+    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /ended on .* while the confirmation was open; nothing was sent/);
     assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 0);
   });
 
