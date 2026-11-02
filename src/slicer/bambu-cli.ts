@@ -599,6 +599,9 @@ export interface BambuCliInput {
  */
 export function planBambuCliInput(slicerType: BambuCliSlicerType, is3mf: boolean, options: BambuSliceOptions): BambuCliInput {
   const input = { slicerType, is3mf, meshTransformed: false };
+  if (!is3mf && options.repetitions !== undefined && options.cloneObjects) {
+    throw new Error("Use either repetitions or clone_objects for an STL, not both.");
+  }
   if (slicerType === "bambustudio") return input;
   const tilts = !!options.rotateX || !!options.rotateY;
   if (is3mf) {
@@ -609,9 +612,6 @@ export function planBambuCliInput(slicerType: BambuCliSlicerType, is3mf: boolean
       );
     }
     return input;
-  }
-  if (options.repetitions !== undefined && options.cloneObjects) {
-    throw new Error("Use either repetitions or clone_objects for an STL with OrcaSlicer, not both.");
   }
   return { ...input, meshTransformed: options.scale !== undefined || tilts };
 }
@@ -691,8 +691,8 @@ export function buildBambuCliArgs(
   if (options.orient !== undefined) args.push("--orient", options.orient ? "1" : "0");
   if (options.arrange !== undefined) args.push("--arrange", options.arrange ? "1" : "0");
   if (options.repetitions !== undefined) {
-    // OrcaSlicer rejects --repetitions for one STL; it copies the loaded model with --clone-objects.
-    if (input.slicerType !== "bambustudio" && !input.is3mf) args.push("--clone-objects", String(options.repetitions));
+    // Both Bambu Studio and OrcaSlicer copy standalone STL objects with --clone-objects.
+    if (!input.is3mf) args.push("--clone-objects", String(options.repetitions));
     else args.push("--repetitions", String(options.repetitions));
   }
   if (!input.meshTransformed) {
