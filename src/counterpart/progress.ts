@@ -404,16 +404,24 @@ export function mapBambu(raw: any, observedAt: string, options: { connected: boo
   const taskId = typeof raw.task_id === "number" ? String(raw.task_id) : nonEmptyText(raw.task_id);
   const totalLayers = layerNumber(raw.total_layer_num);
   const model = String(options.model ?? raw.model ?? "").trim().toLowerCase();
-  const trayNow = finiteNumber(raw.ams?.tray_now);
+  // V2 reports (H2/X2D) carry the active extruder's temperature and spool in device.extruder
+  // (Bambu Studio DevExtruderSystem.cpp ParseV2_0); older reports use nozzle_temper and tray_now.
+  const extruder = raw.device?.extruder;
+  const extruders: any[] = Array.isArray(extruder?.info) ? extruder.info : [];
+  const activeId = finiteNumber(extruder?.state) !== undefined ? (finiteNumber(extruder.state)! >> 4) & 0xf : undefined;
+  const active = activeId !== undefined ? extruders.find((entry) => finiteNumber(entry?.id) === activeId) : undefined;
+  const packed = finiteNumber(active?.temp);
+  const nozzle = packed !== undefined ? heaterReading(packed & 0xffff, (packed >>> 16) & 0xffff) : heaterReading(raw.nozzle_temper, raw.nozzle_target_temper);
   let activeFilament: CounterpartProgress["activeFilament"];
-  if (trayNow === 254) {
-    activeFilament = bambuTray(raw.vt_tray, "ext");
-  } else if (trayNow !== undefined && trayNow !== 255) {
-    const amsId = Math.floor(trayNow / 4);
-    const trayId = trayNow % 4;
-    const ams = Array.isArray(raw.ams?.ams) ? raw.ams.ams.find((unit: any) => Number(unit?.id) === amsId) : undefined;
-    const tray = Array.isArray(ams?.tray) ? ams.tray.find((entry: any) => Number(entry?.id) === trayId) : undefined;
-    activeFilament = bambuTray(tray, String(amsId * 4 + trayId));
+  const dualNozzle = extruders.length > 1;
+  if (active) {
+    const snow = finiteNumber(active.snow);
+    if (snow !== undefined && snow !== 0xffff) activeFilament = bambuSpool(raw, snow >>> 8, snow & 0xff, dualNozzle);
+  } else {
+    const trayNow = finiteNumber(raw.ams?.tray_now);
+    if (trayNow === 254) activeFilament = bambuSpool(raw, 254, 0, dualNozzle);
+    else if (trayNow !== undefined && trayNow >= 0x80 && trayNow <= 0x87) activeFilament = bambuSpool(raw, trayNow, trayNow & 3, dualNozzle);
+    else if (trayNow !== undefined && trayNow !== 255) activeFilament = bambuSpool(raw, Math.floor(trayNow / 4), trayNow % 4, dualNozzle);
   }
   return progressResult(observedAt, state, {
     job: job(state, {
@@ -426,13 +434,33 @@ export function mapBambu(raw: any, observedAt: string, options: { connected: boo
       totalLayers,
     }),
     temps: {
-      nozzle: heaterReading(raw.nozzle_temper, raw.nozzle_target_temper),
+      nozzle,
       bed: heaterReading(raw.bed_temper, raw.bed_target_temper),
       chamber: NO_CHAMBER_MODELS.has(model) ? undefined : finiteNumber(raw.chamber_temper),
     },
     activeFilament,
     problems,
   });
+}
+
+/**
+ * The spool feeding the nozzle. External spools are 254/255: "ext" on a single
+ * nozzle, "254" (left) or "255" (right) from vir_slot on dual-nozzle printers.
+ * AMS-HT units are ids 0x80-0x87 with one tray; other AMS slots are ams_id*4+tray.
+ */
+function bambuSpool(raw: any, amsId: number, trayIndex: number, dualNozzle: boolean): CounterpartProgress["activeFilament"] {
+  if (amsId === 254 || amsId === 255) {
+    if (!dualNozzle) return bambuTray(raw.vt_tray ?? (Array.isArray(raw.vir_slot) ? raw.vir_slot[0] : undefined), "ext");
+    const virtual = Array.isArray(raw.vir_slot) ? raw.vir_slot.find((entry: any) => finiteNumber(entry?.id) === amsId) : undefined;
+    return bambuTray(virtual, String(amsId));
+  }
+  const unit = Array.isArray(raw.ams?.ams) ? raw.ams.ams.find((entry: any) => finiteNumber(entry?.id) === amsId) : undefined;
+  const trays: any[] = Array.isArray(unit?.tray) ? unit.tray : [];
+  if (amsId >= 0x80 && amsId <= 0x87) {
+    const tray = trays.find((entry) => finiteNumber(entry?.id) === (trayIndex & 3)) ?? (trays.length === 1 ? trays[0] : undefined);
+    return bambuTray(tray, String(amsId));
+  }
+  return bambuTray(trays.find((entry) => finiteNumber(entry?.id) === trayIndex), String(amsId * 4 + trayIndex));
 }
 
 function bambuTray(tray: any, slot: string): CounterpartProgress["activeFilament"] {

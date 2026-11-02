@@ -26,7 +26,7 @@ type StlMetadata = { bytes: number; triangles: number; bounding_box: BoundingBox
 
 class BlenderError extends Error {}
 
-function editDeadline(timeout: number, signal?: AbortSignal): EditDeadline {
+export function editDeadline(timeout: number, signal?: AbortSignal): EditDeadline {
   const deadline = performance.now() + timeout;
   const check = () => {
     if (signal?.aborted) throw new BlenderError("Blender edit cancelled. If execution started, inspect Blender before retrying.");
@@ -35,7 +35,7 @@ function editDeadline(timeout: number, signal?: AbortSignal): EditDeadline {
   return { check, remaining: () => { check(); return Math.max(1, Math.ceil(deadline - performance.now())); } };
 }
 
-class ClosingStdioTransport extends StdioClientTransport {
+export class ClosingStdioTransport extends StdioClientTransport {
   private closing?: Promise<void>;
 
   override close(): Promise<void> {
@@ -120,7 +120,7 @@ function boundingBox(min: number[], max: number[]): BoundingBox {
   };
 }
 
-async function regularStl(filePath: string, deadline: EditDeadline): Promise<StlMetadata> {
+export async function regularStl(filePath: string, deadline: EditDeadline): Promise<StlMetadata> {
   deadline.check();
   const stat = await fs.lstat(filePath).catch(() => { throw new BlenderError("STL file does not exist or is not readable."); });
   deadline.check();

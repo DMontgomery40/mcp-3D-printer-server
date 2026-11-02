@@ -202,6 +202,19 @@ test("Bambu: gcode_state map, cancel as 0300400C, HMS codes, severities, urls an
   assert.equal(valid(mapBambu({ ...raw, task_id: "0" }, AT, { connected: true })).job.id, undefined);
   assert.deepEqual(valid(mapBambu({ ...raw, ams: { tray_now: "254" }, vt_tray: { tray_type: "PLA", tray_color: "000000FF" } }, AT, { connected: true })).activeFilament, { slot: "ext", material: "PLA", color: "#000000" });
   assert.deepEqual(valid(mapBambu(undefined, AT, { connected: false })), { contract: "counterpart/1", observedAt: AT, state: "offline", problems: [] });
+  // AMS-HT, dual-nozzle external spools and V2 device.extruder reports (Bambu Studio DevExtruderSystem.cpp ParseV2_0).
+  const ht = { ...raw, ams: { tray_now: "128", ams: [{ id: "128", tray: [{ id: "0", tray_type: "PA-CF", tray_color: "222222FF" }] }] } };
+  assert.deepEqual(valid(mapBambu(ht, AT, { connected: true })).activeFilament, { slot: "128", material: "PA-CF", color: "#222222" });
+  const v2 = { ...raw, nozzle_temper: 1, nozzle_target_temper: 1,
+    vir_slot: [{ id: "254", tray_type: "TPU", tray_color: "00FF00FF" }, { id: "255", tray_type: "PLA", tray_color: "FFFFFFFF" }],
+    device: { extruder: { state: 0x10, info: [{ id: 0, temp: (220 << 16) | 215, snow: 0x0002 }, { id: 1, temp: (250 << 16) | 249, snow: (254 << 8) }] } } };
+  const right = valid(mapBambu(v2, AT, { connected: true }));
+  assert.deepEqual(right.temps.nozzle, { actual: 249, target: 250 }, "active extruder (state >> 4) & 0xF is 1");
+  assert.deepEqual(right.activeFilament, { slot: "254", material: "TPU", color: "#00FF00" });
+  const left = valid(mapBambu({ ...v2, device: { extruder: { ...v2.device.extruder, state: 0x00 } } }, AT, { connected: true }));
+  assert.deepEqual(left.temps.nozzle, { actual: 215, target: 220 });
+  assert.deepEqual(left.activeFilament, { slot: "2" }, "AMS 0 tray 2; no tray data in this report");
+  assert.equal(valid(mapBambu({ ...v2, device: { extruder: { state: 0x00, info: [{ id: 0, temp: 0, snow: 0xffff }, { id: 1 }] } } }, AT, { connected: true })).activeFilament, undefined);
 });
 
 test("Creality device API fallback reads only recognized states and numeric progress", () => {

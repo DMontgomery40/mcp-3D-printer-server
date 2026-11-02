@@ -113,6 +113,12 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 # BLENDER_MCP_COMMAND=/full/path/to/uvx
 # BLENDER_MCP_ARGS=["mcp-for-blender"]
 # BLENDER_MCP_TIMEOUT_MS=120000
+
+# --- Optional Autodesk Fusion (faust-machines/fusion360-mcp-server, pinned) ---
+# FUSION_MCP_COMMAND=/full/path/to/uvx
+# FUSION_MCP_ARGS=["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]
+# FUSION_MCP_TIMEOUT_MS=180000
+# FUSION_MCP_HOST=localhost
 ```
 
 ### Environment variables reference
@@ -165,8 +171,12 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `BLENDER_MCP_ARGS` | `[]` | No | JSON array of arguments, such as `["mcp-for-blender"]`; no shell parsing |
 | `BLENDER_MCP_TIMEOUT_MS` | `120000` | No | Connection, discovery, and call deadline, 100 to 300000 ms |
 | `BLENDER_MCP_BRIDGE_COMMAND` | | No | Legacy trusted shell command for `blender_mcp_edit_model`; separate from the standard MCP integration |
+| `FUSION_MCP_COMMAND` | | No | Trusted executable for the Fusion MCP server: the full path to `uvx`. See the [Fusion guide](./FUSION.md) |
+| `FUSION_MCP_ARGS` | the pinned faust-machines server in socket mode | No | JSON array of arguments; no shell parsing. The default is `["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]` |
+| `FUSION_MCP_TIMEOUT_MS` | `180000` | No | Connection, discovery, and call deadline, 100 to 600000 ms |
+| `FUSION_MCP_HOST` | `localhost` | No | Where the Fusion360MCP add-in listens, passed through to the Fusion server. `FUSION_MCP_PORT` (default 9876) is passed through too |
 
-The Blender MCP server also reads its own `BLENDER_HOST` and `BLENDER_PORT` (default `localhost:9876`) if the addon listens elsewhere. This server passes only `BLENDER_*` settings to it, never printer credentials. See the [Blender guide](./BLENDER.md).
+The Blender MCP server also reads its own `BLENDER_HOST` and `BLENDER_PORT` (default `localhost:9876`) if the addon listens elsewhere. This server passes only `BLENDER_*` settings to it, never printer credentials. See the [Blender guide](./BLENDER.md). The Fusion MCP server likewise receives only `FUSION_*` settings. Its add-in also defaults to port 9876, so if you run Blender and Fusion together, move one of them with `BLENDER_PORT` or `FUSION_MCP_PORT`. See the [Fusion guide](./FUSION.md).
 
 ---
 

@@ -218,6 +218,7 @@ The optional FULU **BambuNetwork bridge** is a separate runtime. `fulu_bambu_net
 - Required Bambu printer model for print operations, asked for through MCP elicitation when missing
 - FULU OrcaSlicer-bambulab setup inspection and diagnostic BambuNetwork bridge RPC, with raw print methods refused
 - Optional Blender MCP bridge: discover a standard Blender MCP server's tools, forward calls, export named scene objects to a verified STL, and run verified STL edits
+- Optional Autodesk Fusion bridge through the pinned faust-machines Fusion MCP server: check Fusion and its add-in, forward any of its CAD tools, start a parametric design, and export STL, F3D and parameters with verified output
 - Slicer, bridge, and Blender executables come from server configuration unless you explicitly opt in to per-call selectors
 - MCP resources for printer status, files, and file details
 - Transports: stdio (default) and streamable HTTP, plus a Docker image
@@ -807,6 +808,38 @@ Import an STL into Blender, apply ordered edits, and export a new STL. Supported
 - A valid STL is not proof of printability. Inspect the result before slicing.
 
 Legacy `BLENDER_MCP_BRIDGE_COMMAND` shell commands remain supported when no standard command is configured. They receive JSON on stdin (`modelPath`, `operations`, `source`, and `stlPath`) and the same JSON in `MCP_BLENDER_PAYLOAD`, and their results report `output_verified: false`. A per-call `bridge_command` requires `MCP_ALLOW_EXECUTABLE_ARG=1`.
+
+#### Fusion MCP
+
+Design parts from scratch in Autodesk Fusion through [faust-machines/fusion360-mcp-server](https://github.com/faust-machines/fusion360-mcp-server), pinned to commit `19b9f1e95192`. Set `FUSION_MCP_COMMAND` to the full path of `uvx`; `FUSION_MCP_ARGS` defaults to the pinned server in socket mode. Install that commit's Fusion360MCP add-in in Fusion and set it to Run on Startup. The client stays connected for the life of this server, only `FUSION_*` settings reach the Fusion server, and requests are never replayed. See the [Fusion guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FUSION.md) for setup, units, and the open-document requirement.
+
+#### fusion_mcp_status
+
+Report `configured`, `connected`, `addinReachable`, `fusionRunning`, and the Fusion server's `tools` (names and summaries; `tool_names` returns full schemas). `connected` is true only when the add-in answered its ping. With `launch: true` and Fusion not running on this Mac, it runs `open -a "Autodesk Fusion"` and waits up to 90 s for the add-in.
+
+```json
+{ "launch": true }
+```
+
+#### fusion_mcp_call
+
+Call any tool the Fusion server advertises, such as `create_sketch`, `extrude`, `fillet`, `set_parameter`, or `execute_code`, with arguments matching its discovered schema. The full MCP result and errors are returned, as for `blender_mcp_call`. Calls change the active design and are never retried. Fusion lengths are in centimetres unless a tool says otherwise.
+
+```json
+{ "tool_name": "create_sketch", "arguments": { "plane": "xy" } }
+```
+
+#### fusion_mcp_new_design
+
+Open a new parametric design document, so the Fusion tools have an active design. At the pinned commit, Fusion must already have some document open: no tool works from Fusion's home screen ([issue #12](https://github.com/faust-machines/fusion360-mcp-server/issues/12)).
+
+#### fusion_mcp_export
+
+Write `<name>.stl` (from `export_stl`), `<name>.f3d` (from `export_f3d`), and `<name>.parameters.json` (the design's user parameters) into `output_dir`, and return their absolute paths. The STL is one body: the only visible solid body, or `body_name`. It is checked as a finite triangle mesh, and `stl_units` reports whether its numbers are millimetres. Existing files are never overwritten, and a failed export publishes nothing.
+
+```json
+{ "output_dir": "/path/to/project", "name": "bracket" }
+```
 
 </details>
 

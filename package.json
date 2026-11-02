@@ -67,7 +67,10 @@
         "CONTRIBUTORS.md",
         "server.json",
         "dist/counterpart",
-        "src/counterpart"
+        "src/counterpart",
+        "dist/fusion-mcp-bridge.js",
+        "dist/fusion-mcp-bridge.d.ts",
+        "src/fusion-mcp-bridge.ts"
     ],
     "keywords": [
         "mcp",

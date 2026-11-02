@@ -66,6 +66,13 @@ export const PAGES = [
     sources: [{ file: 'docs/BLENDER.md', whole: true }],
   },
   {
+    group: 'Guides',
+    route: 'guide/fusion',
+    title: 'Fusion MCP',
+    description: 'Design parametric parts in Autodesk Fusion through your agent, export STL, F3D and parameters, and print them.',
+    sources: [{ file: 'docs/FUSION.md', whole: true }],
+  },
+  {
     group: 'Reference',
     route: 'reference/features',
     title: 'Features',
@@ -107,9 +114,9 @@ export const PAGES = [
   {
     group: 'Reference',
     route: 'reference/blender',
-    title: 'Blender MCP',
-    description: 'Drive a standard Blender MCP server for model edits, with verified STL output.',
-    toolGroup: 'Blender',
+    title: 'Blender and Fusion MCP',
+    description: 'Drive a standard Blender MCP server or Autodesk Fusion for model edits and new parts, with verified STL output.',
+    toolGroup: 'Blender and Fusion',
     sources: [{ file: 'README.md', heading: 'Advanced Tools' }],
   },
   {

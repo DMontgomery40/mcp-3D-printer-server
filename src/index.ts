@@ -19,6 +19,14 @@ import fs from "fs";
 import path from "path";
 import os from "node:os";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
+import {
+  FUSION_CALL_OUTPUT_SCHEMA,
+  FUSION_EXPORT_OUTPUT_SCHEMA,
+  FUSION_MCP_PINNED_COMMIT,
+  FUSION_NEW_DESIGN_OUTPUT_SCHEMA,
+  FUSION_STATUS_OUTPUT_SCHEMA,
+  FusionMcpBridge,
+} from "./fusion-mcp-bridge.js";
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
@@ -338,6 +346,7 @@ const PRINTER_TARGET_PROPERTIES = {
 /** Tools that declare an outputSchema: their errors carry no structuredContent, which clients would validate. */
 const OUTPUT_SCHEMA_TOOLS = new Set([
   "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
+  "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
 ]);
 
 /** layer_height / wall_loops / sparse_infill_density (PRD §8.4), validated before slicing. */
@@ -626,6 +635,7 @@ function credentialSuggestion(): string {
 class ThreeDPrinterMCPServer {
   private server: Server;
   private readonly blender = new BlenderMcpBridge();
+  private readonly fusion = new FusionMcpBridge();
   private printerFactory: PrinterFactory;
   private readonly counterpart: CounterpartService;
   private stlManipulator: STLManipulator;
@@ -1961,6 +1971,63 @@ class ThreeDPrinterMCPServer {
               required: ["stl_path", "operations"],
               additionalProperties: false
             }
+          },
+          {
+            name: "fusion_mcp_status",
+            description: `Check the Autodesk Fusion bridge: whether the Fusion MCP server is configured (faust-machines/fusion360-mcp-server@${FUSION_MCP_PINNED_COMMIT}), whether Fusion is running, whether its Fusion360MCP add-in answers on its port, and the server's tools. connected is true only when the add-in answered. With launch: true and Fusion not running on this Mac, opens Autodesk Fusion and waits up to 90 s for the add-in.`,
+            inputSchema: {
+              type: "object",
+              properties: {
+                launch: { type: "boolean", description: "Open Autodesk Fusion when it is not running (macOS), then wait up to 90 s for the add-in (default false)." },
+                tool_names: { type: "array", items: { type: "string" }, maxItems: 64, description: "Return full input schemas for these discovered tools, such as [\"create_sketch\", \"extrude\"]." },
+                timeout_ms: { type: "integer", minimum: 100, maximum: 600000, description: "Deadline in milliseconds; defaults to FUSION_MCP_TIMEOUT_MS or 180000. The first start downloads the pinned server with uvx." }
+              },
+              additionalProperties: false
+            },
+            outputSchema: FUSION_STATUS_OUTPUT_SCHEMA,
+          },
+          {
+            name: "fusion_mcp_call",
+            description: "Call a discovered tool on the Fusion MCP server (create_sketch, extrude, fillet, set_parameter, export_stl, execute_code, and others), preserving its full MCP content and errors. Discover tool schemas with fusion_mcp_status first. Calls change the active Fusion design and are never automatically retried. Most tools need an active design: call fusion_mcp_new_design first.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                tool_name: { type: "string", description: "Exact name advertised by the Fusion MCP server." },
+                arguments: { type: "object", description: "Arguments matching the remote tool's discovered input schema. Fusion lengths are in centimetres unless a tool says otherwise." },
+                timeout_ms: { type: "integer", minimum: 100, maximum: 600000, description: "Deadline in milliseconds; defaults to FUSION_MCP_TIMEOUT_MS or 180000." }
+              },
+              required: ["tool_name"],
+              additionalProperties: false
+            },
+            outputSchema: FUSION_CALL_OUTPUT_SCHEMA,
+          },
+          {
+            name: "fusion_mcp_new_design",
+            description: "Open a new parametric design document in Fusion, so the Fusion tools have an active design. Fusion must already have some document open: at the pinned faust-machines commit no tool works from Fusion's home screen (issue #12).",
+            inputSchema: {
+              type: "object",
+              properties: {
+                timeout_ms: { type: "integer", minimum: 100, maximum: 600000, description: "Deadline in milliseconds; defaults to FUSION_MCP_TIMEOUT_MS or 180000." }
+              },
+              additionalProperties: false
+            },
+            outputSchema: FUSION_NEW_DESIGN_OUTPUT_SCHEMA,
+          },
+          {
+            name: "fusion_mcp_export",
+            description: "Export the active Fusion design into output_dir as <name>.stl (export_stl), <name>.f3d (export_f3d) and <name>.parameters.json (the design's user parameters), and return their absolute paths. The STL is checked as a finite triangle mesh and its size compared with the Fusion body to report its units. Existing files are never overwritten. Fusion and this server must share the computer's file system.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                output_dir: { type: "string", description: "Existing absolute directory for the three files." },
+                name: { type: "string", description: "Base file name without a path or extension, such as \"bracket\"." },
+                body_name: { type: "string", description: "Body to export as the STL. Optional when the design has exactly one visible solid body." },
+                timeout_ms: { type: "integer", minimum: 100, maximum: 600000, description: "Deadline in milliseconds; defaults to FUSION_MCP_TIMEOUT_MS or 180000." }
+              },
+              required: ["output_dir", "name"],
+              additionalProperties: false
+            },
+            outputSchema: FUSION_EXPORT_OUTPUT_SCHEMA,
           }
         ]
       };
@@ -2708,6 +2775,18 @@ class ThreeDPrinterMCPServer {
             result = await this.stlManipulator.layFlat(String(args.stl_path));
             break;
 
+          case "fusion_mcp_status":
+            return structured(await this.fusion.status(args ?? {}, extra.signal));
+
+          case "fusion_mcp_call":
+            return await this.fusion.call(args ?? {}, extra.signal);
+
+          case "fusion_mcp_new_design":
+            return structured(await this.fusion.newDesign(args ?? {}, extra.signal));
+
+          case "fusion_mcp_export":
+            return structured(await this.fusion.export(args ?? {}, extra.signal));
+
           case "blender_mcp_status":
             result = await this.blender.status(args ?? {}, extra.signal);
             break;
@@ -2940,6 +3019,15 @@ class ThreeDPrinterMCPServer {
         tool,
       };
     }
+    if (tool.startsWith("fusion_mcp_")) {
+      return {
+        status: "error",
+        retryable: false,
+        suggestion: "Check that Autodesk Fusion is open with the Fusion360MCP add-in running and the FUSION_MCP_* settings, then ask again. Fusion requests are never replayed; inspect the design before repeating a change.",
+        message,
+        tool,
+      };
+    }
     if (isCredentialRejection(message)) {
       return { status: "error", retryable: false, suggestion: credentialSuggestion(), message, tool };
     }
@@ -3130,6 +3218,7 @@ class ThreeDPrinterMCPServer {
 
   async close(): Promise<void> {
     await this.printerFactory.disconnectAll();
+    await this.fusion.close();
 
     if (this.httpRuntime) {
       await this.httpRuntime.transport.close();
