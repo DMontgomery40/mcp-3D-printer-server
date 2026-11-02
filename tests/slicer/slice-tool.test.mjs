@@ -564,6 +564,22 @@ fs.writeFileSync(args[args.indexOf(flag) + 1], "; generic gcode\\n");
     assert.ok(args.includes(profile), `${slicerType} receives its profile unchanged`);
   }
 
+  // PrusaSlicer and Slic3r load one filament preset after the main config; later --load files override earlier ones.
+  const filament = path.join(root, "PLA preset.ini");
+  await fs.writeFile(filament, "filament_type = PLA\ntemperature = 215\n");
+  for (const slicerType of ["prusaslicer", "slic3r"]) {
+    const sliced = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: slicerType, slicer_profile: profile, load_filaments: filament });
+    assert.equal(sliced.isError, undefined, `${slicerType}: ${text(sliced)}`);
+    const argv = JSON.parse(await fs.readFile(capture, "utf8"));
+    assert.deepEqual(argv.slice(0, 7), ["--slice", "--output", text(sliced), "--load", profile, "--load", filament]);
+    assert.equal(argv.at(-1), SAMPLE_STL);
+  }
+  for (const [loadFilaments, pattern] of [[`${filament};${filament}`, /takes one filament preset/], [path.join(root, "pla.json"), /as \.ini files/]]) {
+    const refused = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", slicer_profile: profile, load_filaments: loadFilaments });
+    assert.equal(refused.isError, true);
+    assert.match(text(refused), pattern);
+  }
+
   await fs.writeFile(modeFile, "fail");
   const failed = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", slicer_profile: profile });
   assert.equal(failed.isError, true);
@@ -639,6 +655,15 @@ if (args.includes("--outputdir")) {
   const orcaProcess = JSON.parse(await fs.readFile(`${capture}.process`, "utf8"));
   assert.deepEqual([orcaProcess.name, orcaProcess.layer_height, orcaProcess.wall_loops, orcaProcess.sparse_infill_density], ["My process", "0.12", "2", "15%"]);
   assert.equal(JSON.parse(await fs.readFile(processProfile, "utf8")).layer_height, "0.2", "the caller's profile is not modified");
+  // Generic OrcaSlicer takes load_filaments (get_printer_filaments' slots[].profile) as --load-filaments.
+  const orcaFilament = path.join(root, "Generic PLA.json");
+  await fs.writeFile(orcaFilament, JSON.stringify({ name: "Generic PLA", filament_type: ["PLA"] }));
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: `${machine};${processProfile}`, load_filaments: orcaFilament });
+  assert.equal(result.isError, undefined, text(result));
+  args = JSON.parse(await fs.readFile(capture, "utf8"));
+  assert.equal(args[args.indexOf("--load-filaments") + 1], orcaFilament);
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: `${machine};${processProfile}`, load_filaments: orcaFilament, filament_profile: machine });
+  assert.match(text(result), /either load_filaments or filament_profile/);
   result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: machine, ...overrides });
   assert.equal(result.isError, true);
   assert.match(text(result), /need a readable process profile/);

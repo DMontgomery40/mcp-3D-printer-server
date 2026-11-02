@@ -60,7 +60,9 @@ export class CounterpartService {
   constructor(
     private readonly implementation: (type: string) => PrinterImplementation,
     private readonly http: AxiosInstance,
-    private readonly server: { name: string; version: string }
+    private readonly server: { name: string; version: string },
+    /** The slicer filament profile for a slot's material (undefined: the configured default). */
+    private readonly filamentProfile?: (material: string | undefined) => Promise<string | undefined>
   ) {}
 
   private generic(target: PrinterTarget): GenericPrinterImplementation | undefined {
@@ -144,7 +146,12 @@ export class CounterpartService {
     if (!generic) {
       throw new Error("Unsupported: Bambu AMS and external-spool inventory is read by bambu-printer-mcp's get_printer_filaments.");
     }
-    return compact({ slots: await generic.counterpartFilaments(target.host, target.port, target.apiKey) });
+    const slots = await generic.counterpartFilaments(target.host, target.port, target.apiKey);
+    const profiled = await Promise.all(slots.map(async (slot) => {
+      const profile = await this.filamentProfile?.(slot.material).catch(() => undefined);
+      return profile ? { ...slot, profile } : slot;
+    }));
+    return compact({ slots: profiled });
   }
 
   async pause(target: PrinterTarget) {

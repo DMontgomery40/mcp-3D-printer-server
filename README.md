@@ -528,7 +528,9 @@ Relative URLs and loopback hosts in the firmware's settings are read as the prin
 
 #### get_printer_filaments
 
-Report the loaded filament as one external slot, `{"slots": [{"id": "ext", "material", "color", "name", "source"}]}`. Moonraker printers with Spoolman report the active spool's material, `#RRGGBB` colour and name (`source: "spoolman"`); every other printer reports `source: "unknown"`. Bambu AMS inventory is in [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).
+Report the loaded filament as one external slot, `{"slots": [{"id": "ext", "material", "color", "name", "source", "profile"}]}`. Moonraker printers with Spoolman report the active spool's material, `#RRGGBB` colour and name (`source: "spoolman"`); every other printer reports `source: "unknown"`. Bambu AMS inventory is in [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).
+
+Each slot also carries `profile`: the absolute path of the installed slicer filament profile for its material, which `slice_stl` takes as `load_filaments`. It is resolved in the slicer `slice_stl` uses by default (`SLICER_TYPE`, `SLICER_PATH`), for the printer in `SLICER_PROFILE`. OrcaSlicer searches its bundled `profiles/<vendor>/filament`, the `OrcaSlicer/system` copies and the user's `OrcaSlicer/user/<id>/filament` presets, reading `filament_type` and `compatible_printers` through `inherits`. PrusaSlicer and Slic3r search the data folder's `filament/*.ini` presets. The material must equal the profile's `filament_type` exactly (case aside): a `PLA` spool never gets a `PLA-CF` profile. Profiles that list other printers are skipped; one that lists this printer comes first, then profiles for every printer, user presets before bundled ones. With no reported material, `profile` is the filament `slice_stl` loads by default (`FILAMENT_PROFILE`), when that file exists. When nothing resolves, `profile` is omitted.
 
 #### set_printer_temperature
 
@@ -654,7 +656,7 @@ Options for the Bambu-compatible path:
 |---|---|
 | `bed_type` | Build plate: `textured_plate`, `cool_plate`, `engineering_plate`, or `hot_plate` (default `BED_TYPE` or `textured_plate`) |
 | `nozzle_type` | Installed nozzle: `stainless_steel`, `hardened_steel`, `tungsten_carbide`, or `brass` (default `BAMBU_NOZZLE_TYPE`, else the preset's stock nozzle). Printing requires it to match the printer's reported nozzle |
-| `load_filaments` | Filament profile JSON paths in slot order, `;`-separated. One profile applies to every slot; otherwise give one per slot. `filament_profile` is an alias |
+| `load_filaments` | Filament profile JSON paths in slot order, `;`-separated. One profile applies to every slot; otherwise give one per slot. PrusaSlicer and Slic3r take one `.ini` filament preset. `filament_profile` is an alias; `get_printer_filaments` reports a matching path as `slots[].profile` |
 | `load_filament_ids` | Comma-separated filament IDs mapping filaments to objects, such as `1,2,3,1` |
 | `filament_colours` | One `#RRGGBB` per filament slot, `;`-separated. Defaults to the input 3MF's colours, then each profile's colour |
 | `template_3mf_path`, `template_name`, `template_dir` | Reuse a 3MF's or profile's slicer settings as the process profile (defaults: `BAMBU_TEMPLATE_3MF_PATH`, `BAMBU_TEMPLATE_DIR`). An explicit `slicer_profile` takes precedence |
@@ -665,7 +667,7 @@ Options for the Bambu-compatible path:
 
 `layer_height` (mm), `wall_loops` (a whole number), and `sparse_infill_density` (such as `"15%"`) are written over the selected profile on every slicer: as the process keys `layer_height`, `wall_loops`, and `sparse_infill_density` for Bambu Studio and OrcaSlicer, and as `--layer-height`, `--perimeters`, and `--fill-density` for PrusaSlicer and Slic3r. They win over a template. Cura refuses them; set them in its definition file. Your profile files are never modified.
 
-Generic slicers keep their own profile formats: PrusaSlicer and Slic3r load one exported config, and generic OrcaSlicer takes `machine.json;process.json`, optionally followed by `|filament.json`. `slicer_type`, `slicer_profile`, and `filament_profile` fall back to `SLICER_TYPE`, `SLICER_PROFILE`, and `FILAMENT_PROFILE`. The slicer executable comes from `SLICER_PATH`; a per-call `slicer_path` requires `MCP_ALLOW_EXECUTABLE_ARG=1`. See the [slicing guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing).
+Generic slicers keep their own profile formats: PrusaSlicer and Slic3r load one exported config, plus an optional filament preset `.ini` from `load_filaments`, and generic OrcaSlicer takes `machine.json;process.json`, optionally followed by `|filament.json`. `slicer_type`, `slicer_profile`, and `filament_profile` fall back to `SLICER_TYPE`, `SLICER_PROFILE`, and `FILAMENT_PROFILE`. The slicer executable comes from `SLICER_PATH`; a per-call `slicer_path` requires `MCP_ALLOW_EXECUTABLE_ARG=1`. See the [slicing guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing).
 
 #### slice_with_template
 

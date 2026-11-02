@@ -47,7 +47,8 @@ async function server(t, env) {
     command: process.execPath,
     args: [path.join(ROOT, "dist", "index.js")],
     cwd: temp, // outside the repo, so a developer .env cannot change the configuration
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, MCP_TRANSPORT: "stdio", TEMP_DIR: temp, PRINTER_HOST: "127.0.0.1", API_KEY: "KEY", ...env },
+    // An empty HOME: installed slicer profiles on the test machine must not change slots[].profile.
+    env: { PATH: process.env.PATH, HOME: path.join(temp, "home"), MCP_TRANSPORT: "stdio", TEMP_DIR: temp, PRINTER_HOST: "127.0.0.1", API_KEY: "KEY", ...env },
     stderr: "pipe",
   });
   const client = new Client({ name: "counterpart-tests", version: "1" });
@@ -211,4 +212,38 @@ test("snapshot URLs resolve relative paths and loopback hosts against the printe
   assert.deepEqual(service.resolve("http://127.0.0.1:8080/?action=snapshot", target), ["http://192.0.2.10:8080/?action=snapshot"]);
   assert.deepEqual(service.resolve("http://cam.local/snap.jpg", target), ["http://cam.local/snap.jpg"]);
   assert.throws(() => service.resolve("file:///etc/passwd", target), /Unsupported snapshot URL scheme/);
+});
+
+test("get_printer_filaments: slots[].profile is the installed slicer profile for Spoolman's material, else the configured filament", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "counterpart-profiles-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const write = async (file, value) => {
+    await fs.mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await fs.writeFile(path.join(root, file), typeof value === "string" ? value : JSON.stringify(value));
+    return path.join(root, file);
+  };
+  // A fake OrcaSlicer.app: its bundled profiles, plus a machine preset in SLICER_PROFILE.
+  const executable = await write("OrcaSlicer.app/Contents/MacOS/OrcaSlicer", "");
+  await write("OrcaSlicer.app/Contents/Resources/profiles/OrcaFilamentLibrary/filament/Generic PLA @System.json",
+    { name: "Generic PLA @System", filament_type: ["PLA"], instantiation: "true", compatible_printers: [] });
+  const vendor = await write("OrcaSlicer.app/Contents/Resources/profiles/Voron/filament/Voron Generic PLA.json",
+    { name: "Voron Generic PLA", filament_type: ["PLA"], instantiation: "true", compatible_printers: ["Voron 2.4 350 0.4 nozzle"] });
+  const machine = await write("machine.json", { type: "machine", name: "My Voron", inherits: "Voron 2.4 350 0.4 nozzle" });
+  const processProfile = await write("process.json", { type: "process", name: "0.2mm" });
+  const printer = await mock(t, [
+    ["/server/spoolman/spool_id", 200, await fixture("moonraker-spoolman-spool_id.json")],
+    ["/server/spoolman/proxy", 200, await fixture("moonraker-spoolman-proxy-spool1.json")],
+  ]);
+  const { client } = await server(t, { PRINTER_TYPE: "klipper", PRINTER_PORT: printer.port, API_KEY: "",
+    SLICER_TYPE: "orcaslicer", SLICER_PATH: executable, SLICER_PROFILE: `${machine};${processProfile}` });
+  const [slot] = (await call(client, "get_printer_filaments")).structuredContent.slots;
+  assert.equal(slot.material, "PLA");
+  // The bundle is found through the executable's real path, as slice_stl finds it.
+  assert.equal(slot.profile, await fs.realpath(vendor), "the profile for this printer, over the universal one");
+
+  // No material reported: the filament slice_stl loads by default (PrusaSlicer takes one .ini preset).
+  const preset = await write("PLA preset.ini", "filament_type = PLA\n");
+  const octoprint = await mock(t, [["/api/printer", 409, "Printer is not operational", "text/plain"]]);
+  const configured = await server(t, { PRINTER_TYPE: "octoprint", PRINTER_PORT: octoprint.port, SLICER_TYPE: "prusaslicer", FILAMENT_PROFILE: preset });
+  assert.deepEqual((await call(configured.client, "get_printer_filaments")).structuredContent.slots, [{ id: "ext", source: "unknown", profile: preset }]);
 });

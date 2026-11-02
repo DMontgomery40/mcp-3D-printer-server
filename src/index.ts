@@ -19,6 +19,7 @@ import fs from "fs";
 import path from "path";
 import os from "node:os";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
+import { resolveFilamentProfile } from "./slicer/filament-profiles.js";
 import {
   FUSION_CALL_OUTPUT_SCHEMA,
   FUSION_EXPORT_OUTPUT_SCHEMA,
@@ -466,6 +467,21 @@ function buildBambuSliceOptions(args: Record<string, unknown> | undefined): Bamb
   return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) as BambuSliceOptions;
 }
 
+/** The slicer, printer and filament slice_stl uses when a call names none (get_printer_filaments' profile). */
+function defaultFilamentProfileContext() {
+  const splitList = (value: string) => value.split(";").map((item) => item.trim()).filter(Boolean);
+  const pipeFilaments = DEFAULT_SLICER_PROFILE.includes("|") ? splitList(DEFAULT_SLICER_PROFILE.split("|", 2)[1]) : [];
+  const configuredFilaments = DEFAULT_SLICER_TYPE === "cura" ? []
+    : DEFAULT_SLICER_TYPE === "prusaslicer" || DEFAULT_SLICER_TYPE === "slic3r" ? splitList(DEFAULT_FILAMENT_PROFILE)
+    : [...pipeFilaments, ...splitList(DEFAULT_FILAMENT_PROFILE)];
+  return {
+    slicerType: DEFAULT_SLICER_TYPE,
+    slicerPath: defaultSlicerPathFor(DEFAULT_SLICER_TYPE) || undefined,
+    slicerProfile: DEFAULT_SLICER_PROFILE || undefined,
+    configuredFilaments,
+  };
+}
+
 function defaultSlicerPathFor(slicerType: SlicerType): string {
   if (process.env.SLICER_PATH) return process.env.SLICER_PATH;
   if (slicerType === DEFAULT_SLICER_TYPE) return DEFAULT_SLICER_PATH;
@@ -661,7 +677,8 @@ class ThreeDPrinterMCPServer {
     this.counterpart = new CounterpartService(
       (printerType) => this.printerFactory.getImplementation(printerType),
       axios.create({ timeout: 10000 }),
-      { name: SERVER_NAME, version: SERVER_VERSION }
+      { name: SERVER_NAME, version: SERVER_VERSION },
+      (material) => resolveFilamentProfile(material, defaultFilamentProfileContext())
     );
     this.stlManipulator = new STLManipulator(TEMP_DIR);
 
@@ -815,7 +832,13 @@ class ThreeDPrinterMCPServer {
 
     const explicitFilament =
       typeof args.filament_profile === "string" && args.filament_profile.trim() ? args.filament_profile.trim() : undefined;
-    const filamentProfile = options?.loadFilaments ?? explicitFilament ?? (DEFAULT_FILAMENT_PROFILE || undefined);
+    // Generic slicers take load_filaments too (filament_profile is its alias), as the Bambu CLI path does.
+    const explicitLoad =
+      !bambuCli && typeof args.load_filaments === "string" && args.load_filaments.trim() ? args.load_filaments.trim() : undefined;
+    if (explicitLoad && explicitFilament && explicitLoad !== explicitFilament) {
+      throw new Error("Provide either load_filaments or filament_profile, not conflicting values.");
+    }
+    const filamentProfile = options?.loadFilaments ?? explicitLoad ?? explicitFilament ?? (DEFAULT_FILAMENT_PROFILE || undefined);
     const slicerPath =
       this.resolveExecutableSelectorArg(args.slicer_path, toolName, "slicer_path") ?? defaultSlicerPathFor(slicerType);
 

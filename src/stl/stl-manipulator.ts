@@ -1172,17 +1172,29 @@ export class STLManipulator extends EventEmitter {
       } else {
         switch (slicerType) {
           case 'prusaslicer':
-          case 'slic3r': // PrusaSlicer and Slic3r share similar CLI args
+          case 'slic3r': { // PrusaSlicer and Slic3r share similar CLI args
+            // A filament preset (.ini from the slicer's filament folder) is loaded after the main
+            // config: --load may repeat, and later files override earlier ones.
+            const filaments = this.splitProfileList(filamentProfile);
+            if (filaments.length > 1) {
+              throw new SlicerError('preparation',
+                `${slicerType} takes one filament preset; filament_profile/FILAMENT_PROFILE lists ${filaments.length}.`, { slicerType, slicerPath });
+            }
+            if (filaments.length && !/\.ini$/i.test(filaments[0])) {
+              throw new SlicerError('preparation',
+                `${slicerType} loads filament presets as .ini files (its filament folder, or File > Export > Export Config); ${path.basename(filaments[0])} is not one.`,
+                { slicerType, slicerPath });
+            }
             args = [
               '--slice',
               '--output', outputFilePath,
-              '--load', slicerProfile || '', // Pass profile path
+              ...(slicerProfile ? ['--load', slicerProfile] : []),
+              ...filaments.flatMap((filament) => ['--load', filament]),
               ...prusaSlicerOverrideArgs(processOverrides),
               stlFilePath
             ];
-            // Remove empty profile arg if not provided
-            args = args.filter(arg => arg !== '');
             break;
+          }
 
           case 'orcaslicer':
             orcaOutputDir = path.join(this.tempDir, `${operationId}-orca-output`);

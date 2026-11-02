@@ -54,7 +54,7 @@ A per-call `slicer_path` is refused unless `MCP_ALLOW_EXECUTABLE_ARG=1`; see [ex
 
 | Slicer | `SLICER_PROFILE` | Filament profile |
 |---|---|---|
-| PrusaSlicer, Slic3r | One config file exported from the slicer (File > Export > Export Config), containing printer, print, and filament settings | Not used; include filament settings in the exported config |
+| PrusaSlicer, Slic3r | One config file exported from the slicer (File > Export > Export Config), containing printer, print, and filament settings | Optional: one filament preset `.ini` (from the slicer's `filament` folder), loaded with a second `--load` after the config so its filament settings win |
 | Generic OrcaSlicer (no `bambu_model`) | Machine and process JSON files separated by `;`, optionally followed by a filament file (see below) | Loaded with `--load-filaments` |
 | CuraEngine | A Cura definition JSON | Not used |
 | Bambu Studio, FULU OrcaSlicer-bambulab, or OrcaSlicer with `bambu_model` | **One process profile only.** The machine preset always comes from the printer model and nozzle; a `machine;process` list is rejected with instructions | `;`-separated, in slot order, loaded with `--load-filaments` |

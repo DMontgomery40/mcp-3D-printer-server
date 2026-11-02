@@ -83,6 +83,8 @@ export interface FilamentSlot {
   color?: string;
   name?: string;
   source: "spoolman" | "unknown";
+  /** Absolute path of the slicer filament profile for this material, as slice_stl's load_filaments takes it. */
+  profile?: string;
 }
 
 export interface CameraSnapshotResult {
@@ -218,6 +220,10 @@ export const FILAMENTS_OUTPUT_SCHEMA = {
           color: { type: "string" },
           name: { type: "string" },
           source: { type: "string", enum: ["spoolman", "unknown"] },
+          profile: {
+            type: "string",
+            description: "Absolute path of the installed slicer filament profile for this slot's material, which slice_stl accepts as load_filaments. Omitted when none resolves.",
+          },
         },
       },
     },
