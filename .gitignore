@@ -76,6 +76,7 @@ coverage/
 !/CHANGELOG.md
 !/CONTRIBUTORS.md
 !/docs/SETUP.md
+!/docs/CAMERA-STREAM.md
 !/docs/SLICING.md
 !/docs/FULU.md
 !/docs/BLENDER.md
