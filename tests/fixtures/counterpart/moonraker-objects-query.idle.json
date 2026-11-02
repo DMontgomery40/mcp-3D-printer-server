@@ -1,0 +1,48 @@
+{
+  "result": {
+    "eventtime": 199474.173890105,
+    "status": {
+      "print_stats": {
+        "filename": "",
+        "total_duration": 0.0,
+        "print_duration": 0.0,
+        "filament_used": 0.0,
+        "state": "standby",
+        "message": "",
+        "info": {
+          "total_layer": null,
+          "current_layer": null
+        }
+      },
+      "virtual_sdcard": {
+        "file_path": null,
+        "progress": 0.0,
+        "is_active": false,
+        "file_position": 0,
+        "file_size": 0
+      },
+      "display_status": {
+        "progress": 0.0,
+        "message": "Runout sensor reports: Insert G-Code"
+      },
+      "extruder": {
+        "temperature": 103.26,
+        "target": 0.0,
+        "power": 0.0,
+        "can_extrude": true,
+        "pressure_advance": 0.1,
+        "smooth_time": 0.01,
+        "motion_queue": null
+      },
+      "heater_bed": {
+        "temperature": 103.26,
+        "target": 0.0,
+        "power": 0.0
+      },
+      "webhooks": {
+        "state": "ready",
+        "state_message": "Printer is ready"
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { AxiosInstance } from "axios";
 import { PrinterImplementation } from "../types.js";
 import { cancelPendingPrinterOperations, withPrinterOperation } from "../safety/artifact.js";
@@ -17,6 +17,15 @@ import {
   type GenericPrintInspection,
   type Heater,
 } from "../safety/gcode-thermal.js";
+import type { CounterpartProgress, FilamentSlot, PrinterIdentity } from "../counterpart/contract.js";
+
+/** A camera snapshot URL as the firmware configures it, before resolution against the printer host. */
+export interface SnapshotCandidate {
+  url: string;
+  source: string;
+  /** True when the firmware's own settings name this URL; false for a conventional fallback. */
+  configured: boolean;
+}
 
 /** Normalized adapter state used by the print and heating preflight. */
 export interface GenericPrinterState {
@@ -45,13 +54,170 @@ export const REMOTE_DOWNLOAD_TIMEOUT_MS = 120_000;
  * uploaded, check fresh adapter state, ask a human (MCP elicitation), recheck
  * state and only then dispatch. Heater-off and cancel are never gated.
  */
+/** seenRunning: a report showed this job printing or paused, so a later ended report is about it, not about the previous job. */
+type CheckedJob = { name: string; sha256: string; peaks: GenericPrintInspection["peaks"]; materials: string[]; seenRunning: boolean };
+const checkedJob = (name: string, inspection: GenericPrintInspection): CheckedJob =>
+  ({ name, sha256: inspection.sha256, peaks: inspection.peaks, materials: inspection.materials, seenRunning: false });
+const RUNNING_STATES = new Set<string>(["preparing", "printing", "paused"]);
+/** Reports after which the checked job can no longer be resumed. */
+const ENDED_STATES = new Set<string>(["idle", "finished", "cancelled", "failed"]);
+
 export abstract class GenericPrinterImplementation extends PrinterImplementation {
   protected abstract readonly printerLabel: string;
   /** True when rawUploadFile(print=true) starts the uploaded bytes atomically. */
   protected readonly uploadStartsPrint: boolean = false;
 
+  /**
+   * The last job this server instance inspected and started, per printer.
+   * Cleared by cancel and by a report that the job ended, so a later job
+   * reusing the name is never resumed on this record.
+   */
+  private readonly checkedJobs = new Map<string, CheckedJob>();
+
   constructor(apiClient: AxiosInstance, private readonly confirm?: ConfirmHardware) {
     super(apiClient);
+  }
+
+  // ---- Counterpart contract (counterpart/1) ----
+
+  /** Normalized progress for counterpart_print_progress; throws when the printer cannot be read. */
+  abstract counterpartProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress>;
+
+  /** Progress that also retires the resume record once the printer reports the job ended. */
+  async observedProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress> {
+    const progress = await this.counterpartProgress(host, port, apiKey);
+    const key = this.operationKey(host, port);
+    const checked = this.checkedJobs.get(key);
+    if (checked && RUNNING_STATES.has(progress.state) && progress.job?.name === checked.name) checked.seenRunning = true;
+    else if (checked?.seenRunning && (ENDED_STATES.has(progress.state) || (RUNNING_STATES.has(progress.state) && progress.job?.name !== undefined))) {
+      this.checkedJobs.delete(key);
+    }
+    return progress;
+  }
+
+  /** Optional identity fields; failures are ignored by the caller. */
+  async counterpartIdentity(_host: string, _port: string, _apiKey: string): Promise<PrinterIdentity> {
+    return {};
+  }
+
+  /** Snapshot URLs from the firmware's own settings, in preference order. */
+  async snapshotCandidates(_host: string, _port: string, _apiKey: string): Promise<SnapshotCandidate[]> {
+    return [];
+  }
+
+  /** The single extruder slot; adapters with a spool manager override this. */
+  async counterpartFilaments(_host: string, _port: string, _apiKey: string): Promise<FilamentSlot[]> {
+    return [{ id: "ext", source: "unknown" }];
+  }
+
+  /** Whether progress reports carry layer numbers on this firmware. */
+  async reportsLayers(_host: string, _port: string, _apiKey: string): Promise<boolean> {
+    return false;
+  }
+
+  async supportsPauseResume(_host: string, _port: string, _apiKey: string): Promise<boolean> {
+    return this.rawPauseJob !== undefined && this.rawResumeJob !== undefined;
+  }
+
+  protected rawPauseJob?(host: string, port: string, apiKey: string): Promise<unknown>;
+  protected rawResumeJob?(host: string, port: string, apiKey: string): Promise<unknown>;
+
+  /** Pause is never gated, like cancel and heater-off. */
+  async pauseJob(host: string, port: string, apiKey: string): Promise<{ status: string; action: "pause"; message: string }> {
+    if (!(await this.supportsPauseResume(host, port, apiKey)) || !this.rawPauseJob) {
+      throw new Error(`Unsupported: ${this.printerLabel} has no verified pause route in this server.`);
+    }
+    await this.rawPauseJob(host, port, apiKey);
+    return { status: "success", action: "pause", message: `Pause command sent to ${this.printerLabel} (${host}:${port}).` };
+  }
+
+  /**
+   * Resume reheats and moves the printer, so it is gated like a print start:
+   * only the job this server instance inspected and started, only while the
+   * printer freshly reports that job paused, with its bytes re-read and
+   * compared where the firmware can download them, and after human
+   * confirmation (unless the server opted out). A stop or heater-off request
+   * in the meantime cancels it.
+   */
+  async resumeJob(host: string, port: string, apiKey: string): Promise<{ status: string; action: "resume"; message: string; jobName: string; bytesVerified: boolean }> {
+    if (!(await this.supportsPauseResume(host, port, apiKey)) || !this.rawResumeJob) {
+      throw new Error(`Unsupported: ${this.printerLabel} has no verified resume route in this server.`);
+    }
+    const key = this.operationKey(host, port);
+    return withPrinterOperation(host, key, async (assertActive) => {
+      const checked = this.checkedJobs.get(key);
+      if (!checked) {
+        throw new Error(
+          `Print safety: resume_print only resumes a job this server instance inspected and started on ${this.printerLabel}; nothing was sent. ` +
+          "Check the paused job at the printer and resume it there."
+        );
+      }
+      await this.assertPausedJob(host, port, apiKey, checked.name);
+      let bytesVerified = false;
+      if (this.downloadRemoteFile) {
+        const sha256 = await this.remoteSha256(host, port, apiKey, checked.name).catch(() => {
+          throw new Error(`Print safety: could not re-read ${checked.name} from ${this.printerLabel} to confirm it is the inspected file; nothing was sent. Resume it at the printer.`);
+        });
+        if (sha256 !== checked.sha256) {
+          this.checkedJobs.delete(key);
+          throw new Error(`Print safety: ${checked.name} on ${this.printerLabel} is no longer the file this server inspected (SHA-256 changed); nothing was sent.`);
+        }
+        bytesVerified = true;
+      }
+      assertActive();
+      await requireHumanConfirmation(
+        this.confirm,
+        `Resume ${checked.name} on ${this.printerLabel} (${host}:${port})? It reheats to its targets (peak nozzle ${checked.peaks.nozzle}°C, ` +
+        `bed ${checked.peaks.bed}°C, chamber ${checked.peaks.chamber}°C) and moves. Materials: ${checked.materials.length ? checked.materials.join(", ") : "none declared"}. ` +
+        `File SHA-256: ${checked.sha256}${bytesVerified ? " (re-read from the printer)" : " (this firmware cannot re-read the file; matched by name)"}. ` +
+        "Confirm the nozzle path is clear and the filament is still loaded.",
+        "generic"
+      );
+      assertActive();
+      // Someone may have resumed or stopped it at the printer while the prompt was open.
+      await this.assertPausedJob(host, port, apiKey, checked.name);
+      // A progress read during the prompt may have retired this record (the job ended, and a new one
+      // could now be paused under the same name); only the record that was confirmed may be resumed.
+      if (this.checkedJobs.get(key) !== checked) {
+        throw new Error(`Print safety: ${checked.name} ended on ${this.printerLabel} while the confirmation was open; nothing was sent.`);
+      }
+      assertActive();
+      await this.rawResumeJob!(host, port, apiKey);
+      return {
+        status: "success",
+        action: "resume",
+        message: `Resume command sent to ${this.printerLabel} (${host}:${port}) for ${checked.name}.`,
+        jobName: checked.name,
+        bytesVerified,
+      };
+    });
+  }
+
+  private async assertPausedJob(host: string, port: string, apiKey: string, name: string): Promise<void> {
+    const progress = await this.observedProgress(host, port, apiKey);
+    if (progress.state === "paused" && progress.job?.stage === "Pausing") {
+      // OctoPrint accepts a resume while still pausing and then drops it.
+      throw new Error(`Print safety: ${this.printerLabel} is still pausing; nothing was sent. Resume once it reports paused.`);
+    }
+    if (progress.state !== "paused") {
+      throw new Error(`Print safety: ${this.printerLabel} reports '${progress.state}', not a paused job; nothing was sent.`);
+    }
+    if (progress.job?.name !== name) {
+      throw new Error(
+        `Print safety: the paused job (${progress.job?.name ?? "unknown"}) does not match the job this server started (${name}); nothing was sent.`
+      );
+    }
+  }
+
+  private async remoteSha256(host: string, port: string, apiKey: string, name: string): Promise<string> {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "printer-resume-"));
+    try {
+      const destination = path.join(directory, "job.gcode");
+      await this.downloadRemoteFile!(host, port, apiKey, name, destination);
+      return createHash("sha256").update(await fs.readFile(destination)).digest("hex");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   }
 
   protected abstract rawUploadFile(host: string, port: string, apiKey: string, filePath: string, filename: string, print: boolean): Promise<any>;
@@ -91,6 +257,8 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
 
   async cancelJob(host: string, port: string, apiKey: string): Promise<any> {
     cancelPendingPrinterOperations(host, this.operationKey(host, port));
+    // A cancelled job is never resumed, even if a later job reuses its name.
+    this.checkedJobs.delete(this.operationKey(host, port));
     return this.rawCancelJob(host, port, apiKey);
   }
 
@@ -241,6 +409,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
       status: "success",
       printRequested: true,
       remotePath: remoteName,
+      jobName: remoteName,
       sha256: inspection.sha256,
       materials: inspection.materials,
       peakTemperatures: inspection.peaks,
@@ -258,6 +427,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
       if (!this.uploadStartedPrint(response)) {
         throw new Error(`${this.printerLabel} stored ${remoteName} but reports that it did not start printing it.`);
       }
+      this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
       return { ...summary, response };
     }
     const upload = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, false);
@@ -270,6 +440,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     this.assertBedClearance(dispatch, initial.finishedJob);
     assertActive();
     const response = await this.rawStartJob(host, port, apiKey, remoteName);
+    this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
     return { ...summary, upload, response };
   }
 

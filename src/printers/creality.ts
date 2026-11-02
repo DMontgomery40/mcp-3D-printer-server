@@ -1,6 +1,19 @@
-import { GenericPrinterImplementation, type GenericPrinterState } from "./generic-base.js";
+import type { AxiosInstance } from "axios";
+import { GenericPrinterImplementation, type GenericPrinterState, type SnapshotCandidate } from "./generic-base.js";
+import { KlipperImplementation, MACRO_TIMEOUT_MS } from "./klipper.js";
+import type { ConfirmHardware } from "../safety/confirmation.js";
+import type { CounterpartProgress, FilamentSlot, PrinterIdentity } from "../counterpart/contract.js";
+import { mapCrealityDevice } from "../counterpart/progress.js";
 import fs from "fs";
 import FormData from "form-data";
+
+/**
+ * K1/K2-series printers can run Moonraker: 7125 is Moonraker's own port and
+ * 4408 the Fluidd nginx front end that proxies its API. Neither is documented
+ * by Creality; stock firmware may run neither, so this is probed, never assumed.
+ */
+export const CREALITY_MOONRAKER_PORTS = ["7125", "4408"];
+const MOONRAKER_PROBE_TTL_MS = 5 * 60_000;
 
 const IDLE_STATES = new Set(["idle", "ready", "standby", "operational"]);
 const FINISHED_STATES = new Set(["complete", "completed", "finished", "finish", "cancelled", "canceled", "stopped"]);
@@ -13,6 +26,76 @@ const FINISHED_STATES = new Set(["complete", "completed", "finished", "finish", 
  */
 export class CrealityImplementation extends GenericPrinterImplementation {
   protected readonly printerLabel = "Creality";
+  private readonly moonraker: KlipperImplementation;
+  private readonly probes = new Map<string, { port?: string; at: number }>();
+  /** Ports probed for Moonraker, in order. */
+  moonrakerPorts: string[] = [...CREALITY_MOONRAKER_PORTS];
+
+  constructor(apiClient: AxiosInstance, confirm?: ConfirmHardware) {
+    super(apiClient, confirm);
+    this.moonraker = new KlipperImplementation(apiClient, confirm);
+  }
+
+  /** The Moonraker port that answers /server/info on this host, if any. */
+  async moonrakerPort(host: string): Promise<string | undefined> {
+    const cached = this.probes.get(host);
+    if (cached && Date.now() - cached.at < MOONRAKER_PROBE_TTL_MS) return cached.port;
+    let found: string | undefined;
+    for (const port of this.moonrakerPorts) {
+      try {
+        const info = (await this.apiClient.get(`http://${host}:${port}/server/info`, { timeout: 2_000 })).data;
+        if (info?.result && typeof info.result === "object") { found = port; break; }
+      } catch {
+        // Try the next port.
+      }
+    }
+    this.probes.set(host, { port: found, at: Date.now() });
+    return found;
+  }
+
+  async counterpartProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress> {
+    const moonraker = await this.moonrakerPort(host);
+    if (moonraker) return this.moonraker.counterpartProgress(host, moonraker, "");
+    const data = (await this.apiClient.get(`http://${host}:${port}/api/device/status`, { headers: { "Authorization": `Bearer ${apiKey}` } })).data;
+    return mapCrealityDevice(data, new Date().toISOString());
+  }
+
+  async reportsLayers(host: string): Promise<boolean> {
+    return (await this.moonrakerPort(host)) !== undefined;
+  }
+
+  async supportsPauseResume(host: string): Promise<boolean> {
+    return (await this.moonrakerPort(host)) !== undefined;
+  }
+
+  async snapshotCandidates(host: string): Promise<SnapshotCandidate[]> {
+    const moonraker = await this.moonrakerPort(host);
+    return moonraker ? this.moonraker.snapshotCandidates(host, moonraker, "") : [];
+  }
+
+  async counterpartFilaments(host: string, port: string, apiKey: string): Promise<FilamentSlot[]> {
+    const moonraker = await this.moonrakerPort(host);
+    return moonraker ? this.moonraker.counterpartFilaments(host, moonraker, "") : super.counterpartFilaments(host, port, apiKey);
+  }
+
+  async counterpartIdentity(host: string): Promise<PrinterIdentity> {
+    const moonraker = await this.moonrakerPort(host);
+    return moonraker ? this.moonraker.counterpartIdentity(host, moonraker, "") : {};
+  }
+
+  /** Pause and resume only through a detected Moonraker; the device API has no verified route. */
+  protected async rawPauseJob(host: string) {
+    const moonraker = await this.moonrakerPort(host);
+    if (!moonraker) throw new Error("Unsupported: this Creality printer has no Moonraker API for pause.");
+    return (await this.apiClient.post(`http://${host}:${moonraker}/printer/print/pause`, null as any, { timeout: MACRO_TIMEOUT_MS })).data;
+  }
+
+  protected async rawResumeJob(host: string) {
+    const moonraker = await this.moonrakerPort(host);
+    if (!moonraker) throw new Error("Unsupported: this Creality printer has no Moonraker API for resume.");
+    // The Creality adapter already checked the job identity; send the raw resume.
+    return (await this.apiClient.post(`http://${host}:${moonraker}/printer/print/resume`, null as any, { timeout: MACRO_TIMEOUT_MS })).data;
+  }
 
   protected async readPrinterState(host: string, port: string, apiKey: string): Promise<GenericPrinterState> {
     let data: any;

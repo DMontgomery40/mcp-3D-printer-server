@@ -1,13 +1,129 @@
 import fs from "fs";
 import FormData from "form-data";
-import { GenericPrinterImplementation, type GenericPrinterState } from "./generic-base.js";
+import { isAxiosError } from "axios";
+import { GenericPrinterImplementation, type GenericPrinterState, type SnapshotCandidate } from "./generic-base.js";
+import type { CounterpartProgress, FilamentSlot, PrinterIdentity } from "../counterpart/contract.js";
+import { finiteNumber, nonEmptyText } from "../counterpart/contract.js";
+import { mapMoonraker } from "../counterpart/progress.js";
+
+const PROGRESS_QUERY = "print_stats&virtual_sdcard&display_status&extruder&heater_bed&webhooks";
+const ESTIMATE_TTL_MS = 10 * 60_000;
+export const MACRO_TIMEOUT_MS = 60_000;
 
 function encodePath(filename: string): string {
   return filename.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/");
 }
 
 export class KlipperImplementation extends GenericPrinterImplementation {
-  protected readonly printerLabel = "Klipper/Moonraker";
+  protected readonly printerLabel: string = "Klipper/Moonraker";
+  /** Slicer estimates by host:port:filename, so a poll does not re-read file metadata. */
+  private readonly estimates = new Map<string, { value?: number; at: number }>();
+
+  /**
+   * One object query; remaining time is the file's slicer estimate minus
+   * print_duration. https://moonraker.readthedocs.io/en/latest/external_api/printer/
+   * and .../external_api/file_manager/ (estimated_time, seconds).
+   */
+  async counterpartProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress> {
+    const data = (await this.apiClient.get(`http://${host}:${port}/printer/objects/query?${PROGRESS_QUERY}`, this.authHeaders(apiKey))).data;
+    const observedAt = new Date().toISOString();
+    const status = data?.result?.status;
+    if (!status || typeof status !== "object") throw new Error("Moonraker returned no printer object status.");
+    const stats = status.print_stats ?? {};
+    const filename = nonEmptyText(stats.filename);
+    const estimate = filename && (stats.state === "printing" || stats.state === "paused")
+      ? await this.estimatedTime(host, port, apiKey, filename)
+      : undefined;
+    return mapMoonraker(status, estimate, observedAt);
+  }
+
+  private async estimatedTime(host: string, port: string, apiKey: string, filename: string): Promise<number | undefined> {
+    const key = `${host}:${port}:${filename}`;
+    const cached = this.estimates.get(key);
+    if (cached && Date.now() - cached.at < ESTIMATE_TTL_MS) return cached.value;
+    let value: number | undefined;
+    try {
+      const metadata = (await this.apiClient.get(
+        `http://${host}:${port}/server/files/metadata?filename=${encodeURIComponent(filename)}`,
+        this.authHeaders(apiKey)
+      )).data;
+      const estimate = finiteNumber(metadata?.result?.estimated_time ?? metadata?.estimated_time);
+      value = estimate !== undefined && estimate > 0 ? estimate : undefined;
+    } catch {
+      value = undefined;
+    }
+    if (this.estimates.size > 64) this.estimates.clear();
+    this.estimates.set(key, { value, at: Date.now() });
+    return value;
+  }
+
+  async reportsLayers(): Promise<boolean> {
+    return true;
+  }
+
+  /**
+   * GET /server/webcams/list: enabled webcams' snapshot_url, which may be a
+   * path relative to the host. https://moonraker.readthedocs.io/en/latest/external_api/webcams/
+   */
+  async snapshotCandidates(host: string, port: string, apiKey: string): Promise<SnapshotCandidate[]> {
+    const data = (await this.apiClient.get(`http://${host}:${port}/server/webcams/list`, this.authHeaders(apiKey))).data;
+    const webcams = Array.isArray(data?.result?.webcams) ? data.result.webcams : [];
+    return webcams
+      .filter((webcam: any) => webcam?.enabled !== false && nonEmptyText(webcam?.snapshot_url))
+      .map((webcam: any) => ({ url: String(webcam.snapshot_url).trim(), source: "moonraker-webcam", configured: true }));
+  }
+
+  /**
+   * Spoolman through Moonraker: GET /server/spoolman/spool_id, then the proxy
+   * for /v1/spool/<id>. https://moonraker.readthedocs.io/en/latest/external_api/integrations/
+   * Spoolman color_hex has no '#'. Without Spoolman (404, null id) the slot is unknown.
+   */
+  async counterpartFilaments(host: string, port: string, apiKey: string): Promise<FilamentSlot[]> {
+    const unknown: FilamentSlot[] = [{ id: "ext", source: "unknown" }];
+    let spoolId: number | undefined;
+    try {
+      const active = (await this.apiClient.get(`http://${host}:${port}/server/spoolman/spool_id`, this.authHeaders(apiKey))).data;
+      spoolId = finiteNumber(active?.result?.spool_id);
+    } catch (error) {
+      if (isAxiosError(error) && error.response) return unknown;
+      throw error;
+    }
+    if (spoolId === undefined) return unknown;
+    const proxied = (await this.apiClient.post(
+      `http://${host}:${port}/server/spoolman/proxy`,
+      { request_method: "GET", path: `/v1/spool/${spoolId}` } as any,
+      this.authHeaders(apiKey)
+    )).data;
+    // v1 responses return the spool directly; use_v2_response wraps it in {response, error}.
+    const spool = proxied?.result?.response ?? proxied?.result;
+    const filament = spool?.filament ?? {};
+    const hex = nonEmptyText(filament.color_hex)?.replace(/^#/, "");
+    return [{
+      id: "ext",
+      material: nonEmptyText(filament.material),
+      color: hex && /^[0-9a-f]{6}$/i.test(hex) ? `#${hex.toUpperCase()}` : undefined,
+      name: nonEmptyText(filament.name),
+      source: "spoolman",
+    }];
+  }
+
+  async counterpartIdentity(host: string, port: string, apiKey: string): Promise<PrinterIdentity> {
+    const info = (await this.apiClient.get(`http://${host}:${port}/printer/info`, this.authHeaders(apiKey))).data;
+    return { name: nonEmptyText(info?.result?.hostname) };
+  }
+
+  /**
+   * POST /printer/print/pause and /printer/print/resume (Moonraker printer API).
+   * Moonraker answers after the PAUSE/RESUME macro finishes (parking, retract),
+   * which can exceed the shared 10 s client timeout.
+   */
+  protected async rawPauseJob(host: string, port: string, apiKey: string) {
+    return (await this.apiClient.post(`http://${host}:${port}/printer/print/pause`, null as any, { ...this.authHeaders(apiKey), timeout: MACRO_TIMEOUT_MS })).data;
+  }
+
+  protected async rawResumeJob(host: string, port: string, apiKey: string) {
+    return (await this.apiClient.post(`http://${host}:${port}/printer/print/resume`, null as any, { ...this.authHeaders(apiKey), timeout: MACRO_TIMEOUT_MS })).data;
+  }
 
   protected authHeaders(apiKey: string): Record<string, unknown> {
     return apiKey ? { headers: { "X-Api-Key": apiKey } } : {};

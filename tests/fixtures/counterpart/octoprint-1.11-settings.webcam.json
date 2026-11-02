@@ -1,0 +1,82 @@
+{
+  "webcam": {
+    "bitrate": "10000k",
+    "cacheBuster": false,
+    "defaultWebcam": "classic",
+    "ffmpegCommandline": "{ffmpeg} -framerate {fps} -i \"{input}\" -vcodec {videocodec} -threads {threads} -b:v {bitrate} -f {containerformat} -y {filters} \"{output}\"",
+    "ffmpegPath": null,
+    "ffmpegThreads": 1,
+    "ffmpegVideoCodec": "libx264",
+    "flipH": false,
+    "flipV": false,
+    "renderAfterPrintDelay": 0,
+    "rotate90": false,
+    "snapshotSslValidation": false,
+    "snapshotTimeout": 5,
+    "snapshotUrl": "http://192.0.2.10:8099/snapshot.jpg",
+    "snapshotWebcam": "classic",
+    "streamRatio": "16:9",
+    "streamTimeout": 5,
+    "streamUrl": "http://192.0.2.10:8099/snapshot.jpg",
+    "streamWebrtcIceServers": [
+      "stun:stun.l.google.com:19302"
+    ],
+    "timelapseEnabled": true,
+    "watermark": true,
+    "webcamEnabled": true,
+    "webcams": [
+      {
+        "canSnapshot": true,
+        "compat": {
+          "cacheBuster": false,
+          "snapshot": "http://192.0.2.10:8099/snapshot.jpg",
+          "snapshotSslValidation": false,
+          "snapshotTimeout": 5,
+          "stream": "http://192.0.2.10:8099/snapshot.jpg",
+          "streamRatio": "16:9",
+          "streamTimeout": 5,
+          "streamWebrtcIceServers": [
+            "stun:stun.l.google.com:19302"
+          ]
+        },
+        "displayName": "Classic Webcam",
+        "extras": {
+          "cacheBuster": false,
+          "stream": "http://192.0.2.10:8099/snapshot.jpg",
+          "streamRatio": "16:9",
+          "streamTimeout": 5,
+          "streamWebrtcIceServers": [
+            "stun:stun.l.google.com:19302"
+          ]
+        },
+        "flipH": false,
+        "flipV": false,
+        "name": "classic",
+        "provider": "classicwebcam",
+        "rotate90": false,
+        "snapshotDisplay": "http://192.0.2.10:8099/snapshot.jpg"
+      }
+    ]
+  },
+  "plugins": {
+    "classicwebcam": {
+      "cacheBuster": false,
+      "flipH": false,
+      "flipV": false,
+      "rotate90": false,
+      "snapshot": "http://192.0.2.10:8099/snapshot.jpg",
+      "snapshotAuth": "none",
+      "snapshotBearerToken": "",
+      "snapshotPassword": "",
+      "snapshotSslValidation": false,
+      "snapshotTimeout": 5,
+      "snapshotUsername": "",
+      "stream": "http://192.0.2.10:8099/snapshot.jpg",
+      "streamRatio": "16:9",
+      "streamTimeout": 5,
+      "streamWebrtcIceServers": [
+        "stun:stun.l.google.com:19302"
+      ]
+    }
+  }
+}

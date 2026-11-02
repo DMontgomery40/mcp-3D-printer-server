@@ -208,15 +208,17 @@ The optional FULU **BambuNetwork bridge** is a separate runtime. `fulu_bambu_net
 
 - Seven printer backends, selected with `PRINTER_TYPE`: OctoPrint, Klipper (Moonraker), Duet, Repetier-Server, Bambu Lab, PrusaLink or Prusa Connect, and Creality
 - Per-call `type`, `host`, `port`, and `api_key` arguments for working with more than one printer
-- Printer status, file listing, G-code upload from inline content or a local path, starting a stored file, cancelling a job, and setting bed or nozzle temperatures
+- Printer status, file listing, G-code upload from inline content or a local path, starting a stored file, pausing, resuming, cancelling a job, and setting bed or nozzle temperatures
+- The `counterpart/1` tools shared with [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp): one progress shape for every firmware (state, job, progress, time left, layers, temperatures, problems), detected printer capabilities, camera snapshots, and the loaded filament (Spoolman on Moonraker)
 - STL tools: inspect dimensions, scale, rotate, translate, extend the base, merge vertices, center, lay flat, transform one section of a model, and render multi-angle SVG previews
-- A print and heating safety gate on every backend: the exact G-code is inspected, every heater target is checked against hardware and material ceilings, the printer's state is checked, and a human confirms through MCP elicitation. Heater-off and cancel are never gated
+- A print and heating safety gate on every backend: the exact G-code is inspected, every heater target is checked against hardware and material ceilings, the printer's state is checked, and a human confirms through MCP elicitation. Heater-off, pause, and cancel are never gated; resume only continues a paused job this server inspected and started, after a person confirms
 - Slicing through PrusaSlicer, Slic3r, OrcaSlicer, CuraEngine, FULU OrcaSlicer-bambulab, or Bambu Studio command lines, with G-code peak-temperature checks and a one-call process-and-print pipeline
 - Bambu-compatible CLI slicing with the exact model and nozzle machine preset resolved from your slicer installation, filament slots and colours, placement options, and a local template registry
 - Bambu Lab project printing: upload a sliced `.3mf` over FTPS and start it over MQTT with the plate's G-code path, MD5, AMS mapping, and calibration flags, after checking the plate against a fresh printer report; auto-slice unsliced projects with FULU OrcaSlicer-bambulab or Bambu Studio
 - Required Bambu printer model for print operations, asked for through MCP elicitation when missing
 - FULU OrcaSlicer-bambulab setup inspection and diagnostic BambuNetwork bridge RPC, with raw print methods refused
 - Optional Blender MCP bridge: discover a standard Blender MCP server's tools, forward calls, export named scene objects to a verified STL, and run verified STL edits
+- Optional Autodesk Fusion bridge through the pinned faust-machines Fusion MCP server: check Fusion and its add-in, forward any of its CAD tools, start a parametric design, and export STL, F3D and parameters with verified output
 - Slicer, bridge, and Blender executables come from server configuration unless you explicitly opt in to per-call selectors
 - MCP resources for printer status, files, and file details
 - Transports: stdio (default) and streamable HTTP, plus a Docker image
@@ -392,7 +394,7 @@ Every printer tool accepts `host`, `port`, `type`, and `api_key`, and Bambu prin
 
 What each call does depends on the backend; see [printer backend setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#printer-backend-setup) for the exact API routes.
 
-Every print start and positive heating command, on every backend, goes through a [safety gate](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#print-and-heating-safety): the server inspects the exact G-code it will start, checks each heater target against hardware and material ceilings, checks that the printer is ready, and asks a human to confirm through MCP elicitation. Turning a heater off (`temperature: 0`) and `cancel_print` are never gated.
+Every print start and positive heating command, on every backend, goes through a [safety gate](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#print-and-heating-safety): the server inspects the exact G-code it will start, checks each heater target against hardware and material ceilings, checks that the printer is ready, and asks a human to confirm through MCP elicitation. Turning a heater off (`temperature: 0`), `pause_print`, and `cancel_print` are never gated. `resume_print` reheats and moves the printer, so it only resumes a job this server inspected and started, and asks a person first.
 
 #### get_printer_status
 
@@ -436,6 +438,7 @@ Upload G-code to the printer, and optionally start it. Pass `gcode_path` for a l
 - With `print: true`, the exact uploaded bytes are inspected first (every `S` and `R` heater target, tool changes, and hardware and material ceilings), the printer's state is checked, and a human confirms before the job starts.
 - Printing needs a declared material: slicer metadata in the file (`; filament_type = PLA`) or the `material` argument, which must not contradict the file.
 - On Bambu printers, files go to `cache/` over FTPS, and printing also needs the model (`bambu_model` or `BAMBU_MODEL`). Automatic printing after upload supports `.gcode` only; print `.3mf` projects with `print_3mf`.
+- The result's `jobName` is the remote file name. `counterpart_print_progress` reports the same name as `job.name` while that job runs.
 
 #### start_print
 
@@ -450,11 +453,11 @@ Start a G-code file that is already stored on the printer. The server downloads 
 }
 ```
 
-Pass `material` when the file has no `filament_type` metadata. On Bambu printers it also needs the model and supports `.gcode` files only; bare filenames are looked up in `cache/`.
+Pass `material` when the file has no `filament_type` metadata. On Bambu printers it also needs the model and supports `.gcode` files only; bare filenames are looked up in `cache/`. The result's `jobName` is the checked copy's name (`checked-<id>-<file>`), which is the name the printer reports for the job.
 
 #### cancel_print
 
-Cancel the current print job. Cancelling is never gated and also cancels checked prints still waiting to start. There is no pause or resume tool; cancelling is not resumable.
+Cancel the current print job. Cancelling is never gated and also cancels checked prints still waiting to start, including a pending `resume_print`. A cancelled job cannot be resumed; use `pause_print` to stop temporarily.
 
 ```json
 {
@@ -462,6 +465,72 @@ Cancel the current print job. Cancelling is never gated and also cancels checked
   "host": "192.168.1.120"
 }
 ```
+
+#### pause_print
+
+Pause the current print. Pausing is never gated. Routes: OctoPrint `POST /api/job` (`{"command":"pause","action":"pause"}`), Moonraker `POST /printer/print/pause`, PrusaLink `PUT /api/v1/job/<id>/pause`, Duet `M25`, Repetier `@pause`, and Creality printers that run Moonraker. Bambu pause is in [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).
+
+```json
+{
+  "type": "klipper",
+  "host": "192.168.1.50",
+  "port": "7125"
+}
+```
+
+#### resume_print
+
+Resume a paused print. Resume reheats and moves the printer, so it is gated like a print start. It resumes only the job this server instance inspected and started, after a fresh report that the same job is paused, and after a person confirms through MCP elicitation (unless the server sets `PRINT_REQUIRE_CONFIRMATION=0`). OctoPrint, Klipper and Duet re-download the file and compare its SHA-256 with the inspected bytes before asking; PrusaLink, Repetier and Creality have no download route here, so the job is matched by name only. The printer is read again after the confirmation. Cancelling the job, or a report that it ended, retires it, so a later job that reuses the name is never resumed. A job started at the printer, from another app, or before the server restarted is refused; resume it at the printer. Duet's download route needs the Duet Software Framework, so a standalone board's resume is refused. The result's `bytesVerified` says whether the bytes were re-read. OctoPrint drops a resume sent while it is still pausing, so the server waits for a settled pause (`job.stage` "Pausing" means not yet). Routes: OctoPrint `{"command":"pause","action":"resume"}`, Moonraker `POST /printer/print/resume`, PrusaLink `PUT /api/v1/job/<id>/resume`, Duet `M24`, and Repetier `continueJob`.
+
+#### counterpart_printer_info
+
+Describe the printer in the shared `counterpart/1` shape: the server's name and version, the printer's kind, host and any model, serial or name it reports, and which features work. Capabilities are detected from the firmware, never assumed. For example, `camera` is `http-snapshot` only when the firmware names a snapshot URL or the conventional one answers with a JPEG.
+
+```json
+{
+  "contract": "counterpart/1",
+  "server": { "name": "mcp-3d-printer-server", "version": "1.2.21" },
+  "printer": { "kind": "klipper", "host": "192.168.1.50", "name": "voron" },
+  "capabilities": { "progress": true, "layers": true, "camera": "http-snapshot", "filaments": "single",
+                    "pause": true, "resume": true, "cancel": true, "print3mf": false, "gcode": true }
+}
+```
+
+#### counterpart_print_progress
+
+Read the printer's state and current job in one shape for every firmware. `state` is one of `idle`, `preparing`, `printing`, `paused`, `finished`, `failed`, `cancelled`, `offline`, or `busy`. `job` carries the file name (the same as the upload's `jobName`), `progress` (0 to 100), `elapsedSec`, `remainingSec`, `layer` and `totalLayers` where the firmware reports them, and `stage` for transitional states. `problems` lists firmware errors and messages. Optional fields are omitted, never null. A printer that does not answer at all is `offline`. See [progress, camera, pause and resume](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#progress-camera-pause-and-resume) for each firmware's requests and mapping.
+
+```json
+{
+  "contract": "counterpart/1",
+  "observedAt": "2026-11-01T12:00:00.000Z",
+  "state": "printing",
+  "job": { "name": "checked-4f2a-bracket.gcode", "progress": 25, "elapsedSec": 1200, "remainingSec": 3600, "layer": 12, "totalLayers": 80 },
+  "temps": { "nozzle": { "actual": 215, "target": 215 }, "bed": { "actual": 60, "target": 60 } },
+  "problems": []
+}
+```
+
+#### camera_snapshot
+
+Capture one JPEG frame and return it as base64, with the same arguments and result as bambu-printer-mcp's `camera_snapshot` plus `capturedAt`. Pass `save_path` to also write the file, and `timeout_ms` (default 8000).
+- OctoPrint: the Classic Webcam snapshot URL on 1.9 and later (`plugins.classicwebcam.snapshot`), `webcam.snapshotUrl` on 1.8, then `http://<host>/webcam/?action=snapshot`.
+- Moonraker: the first enabled webcam's `snapshot_url` from `/server/webcams/list`.
+- Repetier: the printer's webcam `staticUrl`.
+- PrusaLink and Duet have no local snapshot API.
+- `PRINTER_CAMERA_SNAPSHOT_URL` overrides the source for any printer.
+
+Relative URLs and loopback hosts in the firmware's settings are read as the printer itself. The API key is sent only to the printer's own API address, and only a JPEG is accepted.
+
+```json
+{ "status": "success", "format": "image/jpeg", "sizeBytes": 78719, "base64": "/9j/4AAQ…", "capturedAt": "2026-11-01T12:00:00.000Z", "source": "moonraker-webcam" }
+```
+
+#### get_printer_filaments
+
+Report the loaded filament as one external slot, `{"slots": [{"id": "ext", "material", "color", "name", "source", "profile"}]}`. Moonraker printers with Spoolman report the active spool's material, `#RRGGBB` colour and name (`source: "spoolman"`); every other printer reports `source: "unknown"`. Bambu AMS inventory is in [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).
+
+Each slot also carries `profile`: the absolute path of the installed slicer filament profile for its material, which `slice_stl` takes as `load_filaments`. It is resolved in the slicer `slice_stl` uses by default (`SLICER_TYPE`, `SLICER_PATH`), for the printer in `SLICER_PROFILE`. OrcaSlicer searches its bundled `profiles/<vendor>/filament`, the `OrcaSlicer/system` copies and the user's `OrcaSlicer/user/<id>/filament` presets, reading `filament_type` and `compatible_printers` through `inherits`. PrusaSlicer and Slic3r search the data folder's `filament/*.ini` presets. The material must equal the profile's `filament_type` exactly (case aside): a `PLA` spool never gets a `PLA-CF` profile. Profiles that list other printers are skipped; one that lists this printer comes first, then profiles for every printer, user presets before bundled ones. With no reported material, `profile` is the filament `slice_stl` loads by default (`FILAMENT_PROFILE`), when that file exists. When nothing resolves, `profile` is omitted.
 
 #### set_printer_temperature
 
@@ -587,7 +656,7 @@ Options for the Bambu-compatible path:
 |---|---|
 | `bed_type` | Build plate: `textured_plate`, `cool_plate`, `engineering_plate`, or `hot_plate` (default `BED_TYPE` or `textured_plate`) |
 | `nozzle_type` | Installed nozzle: `stainless_steel`, `hardened_steel`, `tungsten_carbide`, or `brass` (default `BAMBU_NOZZLE_TYPE`, else the preset's stock nozzle). Printing requires it to match the printer's reported nozzle |
-| `load_filaments` | Filament profile JSON paths in slot order, `;`-separated. One profile applies to every slot; otherwise give one per slot. `filament_profile` is an alias |
+| `load_filaments` | Filament profile JSON paths in slot order, `;`-separated. One profile applies to every slot; otherwise give one per slot. PrusaSlicer and Slic3r take one `.ini` filament preset. `filament_profile` is an alias; `get_printer_filaments` reports a matching path as `slots[].profile` |
 | `load_filament_ids` | Comma-separated filament IDs mapping filaments to objects, such as `1,2,3,1` |
 | `filament_colours` | One `#RRGGBB` per filament slot, `;`-separated. Defaults to the input 3MF's colours, then each profile's colour |
 | `template_3mf_path`, `template_name`, `template_dir` | Reuse a 3MF's or profile's slicer settings as the process profile (defaults: `BAMBU_TEMPLATE_3MF_PATH`, `BAMBU_TEMPLATE_DIR`). An explicit `slicer_profile` takes precedence |
@@ -596,7 +665,9 @@ Options for the Bambu-compatible path:
 | `scale`, `rotate`, `rotate_x`, `rotate_y` | Transform before slicing (uniform scale; rotations in degrees). For OrcaSlicer STL input the server applies them to a mesh copy in Orca's order to avoid a CLI crash; see [OrcaSlicer CLI limits](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing) |
 | `enable_timelapse`, `allow_mix_temp` | Insert timelapse parking moves; allow filaments with different temperature needs on one plate |
 
-Generic slicers keep their own profile formats: PrusaSlicer and Slic3r load one exported config, and generic OrcaSlicer takes `machine.json;process.json`, optionally followed by `|filament.json`. `slicer_type`, `slicer_profile`, and `filament_profile` fall back to `SLICER_TYPE`, `SLICER_PROFILE`, and `FILAMENT_PROFILE`. The slicer executable comes from `SLICER_PATH`; a per-call `slicer_path` requires `MCP_ALLOW_EXECUTABLE_ARG=1`. See the [slicing guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing).
+`layer_height` (mm), `wall_loops` (a whole number), and `sparse_infill_density` (such as `"15%"`) are written over the selected profile on every slicer: as the process keys `layer_height`, `wall_loops`, and `sparse_infill_density` for Bambu Studio and OrcaSlicer, and as `--layer-height`, `--perimeters`, and `--fill-density` for PrusaSlicer and Slic3r. They win over a template. Cura refuses them; set them in its definition file. Your profile files are never modified.
+
+Generic slicers keep their own profile formats: PrusaSlicer and Slic3r load one exported config, plus an optional filament preset `.ini` from `load_filaments`, and generic OrcaSlicer takes `machine.json;process.json`, optionally followed by `|filament.json`. `slicer_type`, `slicer_profile`, and `filament_profile` fall back to `SLICER_TYPE`, `SLICER_PROFILE`, and `FILAMENT_PROFILE`. The slicer executable comes from `SLICER_PATH`; a per-call `slicer_path` requires `MCP_ALLOW_EXECUTABLE_ARG=1`. See the [slicing guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing).
 
 #### slice_with_template
 
@@ -740,6 +811,38 @@ Import an STL into Blender, apply ordered edits, and export a new STL. Supported
 
 Legacy `BLENDER_MCP_BRIDGE_COMMAND` shell commands remain supported when no standard command is configured. They receive JSON on stdin (`modelPath`, `operations`, `source`, and `stlPath`) and the same JSON in `MCP_BLENDER_PAYLOAD`, and their results report `output_verified: false`. A per-call `bridge_command` requires `MCP_ALLOW_EXECUTABLE_ARG=1`.
 
+#### Fusion MCP
+
+Design parts from scratch in Autodesk Fusion through [faust-machines/fusion360-mcp-server](https://github.com/faust-machines/fusion360-mcp-server), pinned to commit `19b9f1e95192`. Set `FUSION_MCP_COMMAND` to the full path of `uvx`; `FUSION_MCP_ARGS` defaults to the pinned server in socket mode. Install that commit's Fusion360MCP add-in in Fusion and set it to Run on Startup. The client stays connected for the life of this server, only `FUSION_*` settings reach the Fusion server, and requests are never replayed. See the [Fusion guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FUSION.md) for setup, units, and the open-document requirement.
+
+#### fusion_mcp_status
+
+Report `configured`, `connected`, `addinReachable`, `fusionRunning`, the Fusion server's `tools` with their schemas, `launched`, `pin` (the faust-machines commit), and `error` when the server could not start. `addinReachable` means the add-in answered its own `ping` within 2 s on `FUSION_MCP_PORT` (default 9877, because Blender's MCP addon holds 9876). `connected` is true only when the add-in also answered through the Fusion server. With `launch: true` and Fusion not running on this Mac, it runs `open -a "Autodesk Fusion" --env FUSION_MCP_PORT=<port>` and waits up to 90 s for the add-in.
+
+```json
+{ "launch": true }
+```
+
+#### fusion_mcp_call
+
+Call any tool the Fusion server advertises, such as `create_sketch`, `extrude`, `fillet`, `set_parameter`, or `execute_code`, with arguments matching its discovered schema. The full MCP result and errors are returned, as for `blender_mcp_call`. Calls change the active design and are never retried. Fusion lengths are in centimetres unless a tool says otherwise.
+
+```json
+{ "tool_name": "create_sketch", "arguments": { "plane": "xy" } }
+```
+
+#### fusion_mcp_new_design
+
+Open a new parametric design document, so the Fusion tools have an active design. At the pinned commit, Fusion must already have some document open: no tool works from Fusion's home screen ([issue #12](https://github.com/faust-machines/fusion360-mcp-server/issues/12)).
+
+#### fusion_mcp_export
+
+Write `<name>.stl` (from `export_stl`), `<name>.f3d` (from `export_f3d`), and `<name>.parameters.json` (the design's user parameters) into `output_dir`, and return their absolute paths as `stl`, `f3d`, and `parameters`. The STL is one body: the only visible solid body, or `body_name`, whose name must be unique across all bodies, hidden ones and component copies included. It is checked as a finite triangle mesh, and `stlUnits` reports whether its numbers are millimetres. Existing files are never overwritten, and a failed export publishes nothing.
+
+```json
+{ "output_dir": "/path/to/project", "name": "bracket" }
+```
+
 </details>
 
 </details>
@@ -764,8 +867,8 @@ For example, `printer://192.168.1.100/status` reads the status of the printer at
 
 ## Printer Limitations
 
-1. **Status depth varies by backend.** Bambu status includes progress, layers, and time remaining. OctoPrint status comes from `/api/printer` (state and temperatures, not job progress). Klipper status comes from Moonraker's `/printer/info`, which reports the host state but not job progress or temperatures. Duet, Repetier, and Creality responses have not been verified on hardware.
-2. **Cancel, but no pause.** There is no pause or resume tool. `cancel_print` stops the job.
+1. **Status depth varies by backend.** `get_printer_status` returns each backend's own status data: Bambu includes progress, layers, and time remaining; OctoPrint's `/api/printer` and Moonraker's `/printer/info` have no job progress. Use `counterpart_print_progress` for job progress on every backend. Its OctoPrint and Klipper mappings were checked against OctoPrint 1.8 and 1.11 virtual printers and a simulated Klipper printer; PrusaLink, Duet, Repetier, and Creality follow their API documentation and have not been checked on hardware.
+2. **Resume only what this server started.** `resume_print` refuses a job it did not inspect and start, including one it started before a restart. Repetier's pause command and its time fields are not in Repetier's API manual.
 3. **Plain HTTP for most backends.** OctoPrint, Klipper, Duet, Repetier, and Creality adapters connect over `http://`. The Prusa adapter uses HTTPS for Prusa Connect, an `https://` host, or port 443.
 4. **Moonraker authentication is optional; Duet has no password support.** Set `API_KEY` for Moonraker hosts that require authentication. Leave it empty only when Moonraker trusts the MCP host. A password-protected Duet cannot be reached yet.
 5. **Command sent is not print finished.** A success response means the printer or its host accepted the request. Check status, and the printer itself, before you walk away.

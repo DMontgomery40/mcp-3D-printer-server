@@ -99,6 +99,10 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 # BAMBU_PROFILES_ROOT=            # Profile tree containing BBL/, if not found from SLICER_PATH
 # BAMBU_TEMPLATE_DIR=~/Sync/bambu/templates
 
+# --- Progress, camera, pause and resume (counterpart/1) ---
+# PRINTER_CAMERA_SNAPSHOT_URL=http://192.168.1.60/snapshot.jpg  # Override the camera source for any printer
+# REPETIER_SLUG=my_printer        # Repetier-Server printer slug, when the server has more than one printer
+
 # --- MCP transport ---
 # MCP_TRANSPORT=stdio             # stdio (default) or streamable-http
 # MCP_HTTP_HOST=127.0.0.1
@@ -109,6 +113,13 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 # BLENDER_MCP_COMMAND=/full/path/to/uvx
 # BLENDER_MCP_ARGS=["mcp-for-blender"]
 # BLENDER_MCP_TIMEOUT_MS=120000
+
+# --- Optional Autodesk Fusion (faust-machines/fusion360-mcp-server, pinned) ---
+# FUSION_MCP_COMMAND=/full/path/to/uvx
+# FUSION_MCP_ARGS=["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]
+# FUSION_MCP_TIMEOUT_MS=180000
+# FUSION_MCP_HOST=localhost
+# FUSION_MCP_PORT=9877
 ```
 
 ### Environment variables reference
@@ -135,7 +146,7 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `SLICER_TYPE` | `orcaslicer-bambulab` when `PRINTER_TYPE=bambu`, otherwise `prusaslicer` | No | `prusaslicer`, `slic3r`, `orcaslicer`, `orcaslicer-bambulab` (FULU), `bambustudio`, or `cura`. See [slicer aliases](./SLICING.md#slicer-types-and-aliases) |
 | `SLICER_PATH` | Common install paths for FULU/Orca and Bambu Studio; none for other slicers | To slice | Slicer executable. Per-call `slicer_path` requires `MCP_ALLOW_EXECUTABLE_ARG=1` |
 | `SLICER_PROFILE` | | No | Bambu-compatible slicers: one process profile JSON; the machine preset always comes from the model and nozzle. Generic OrcaSlicer: `machine.json;process.json`, optionally `\|filament.json`. See the [slicing guide](./SLICING.md#profiles) |
-| `FILAMENT_PROFILE` | | No | Filament profile path(s) loaded with `--load-filaments`, `;`-separated in slot order. Alias: `SLICER_FILAMENT_PROFILE` |
+| `FILAMENT_PROFILE` | | No | Filament profile path(s) loaded with `--load-filaments`, `;`-separated in slot order; PrusaSlicer and Slic3r take one `.ini` preset, loaded with a second `--load`. Alias: `SLICER_FILAMENT_PROFILE` |
 | `SLICER_TIMEOUT_MS` | `600000` | No | Slicer process deadline in milliseconds |
 | `BAMBU_PROFILES_ROOT` | found from `SLICER_PATH` | No | Profile tree containing `BBL/` for the active Bambu-compatible slicer. Set it for AppImages or non-standard installs. It is never replaced by another installation's tree |
 | `BAMBU_SLICER_PROFILE_DIRS` | the slicers' user `system/BBL` directories | No | Directories (separated with your OS path delimiter) searched for custom process and filament parents, never for machine presets. Set it empty to disable the search |
@@ -147,6 +158,8 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `FULU_BAMBU_BRIDGE_COMMAND` | | FULU bridge tools | Trusted command that starts the FULU BambuNetwork bridge host. See the [FULU guide](./FULU.md) |
 | `MCP_ALLOW_EXECUTABLE_ARG` | disabled | No | Accept per-call executable selectors (`slicer_path`, `bridge_command`, and bridge probe paths). Leave off for normal use; see [executable settings](#executable-settings-stay-in-server-configuration) |
 | `MCP_ALLOW_BRIDGE_COMMAND_ARG` | disabled | No | Legacy opt-in for bridge commands and bridge-derived probe paths only |
+| `PRINTER_CAMERA_SNAPSHOT_URL` | | No | JPEG snapshot URL used by `camera_snapshot` for any printer, instead of the firmware's own webcam settings. Use it for PrusaLink and Duet, which have no local snapshot API |
+| `REPETIER_SLUG` | the only printer | Repetier-Server with several printers | Printer slug the progress, camera, pause and resume tools address. Without it, those tools need a server with exactly one printer |
 | `TEMP_DIR` | private folder under the system temporary directory | No | Intermediate files. Each server instance gets its own folder unless you set this |
 | `MCP_TRANSPORT` | `stdio` | No | `stdio` or `streamable-http` |
 | `MCP_HTTP_HOST` | `127.0.0.1` | No | HTTP bind address (HTTP transport only) |
@@ -159,8 +172,13 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `BLENDER_MCP_ARGS` | `[]` | No | JSON array of arguments, such as `["mcp-for-blender"]`; no shell parsing |
 | `BLENDER_MCP_TIMEOUT_MS` | `120000` | No | Connection, discovery, and call deadline, 100 to 300000 ms |
 | `BLENDER_MCP_BRIDGE_COMMAND` | | No | Legacy trusted shell command for `blender_mcp_edit_model`; separate from the standard MCP integration |
+| `FUSION_MCP_COMMAND` | | No | Trusted executable for the Fusion MCP server: the full path to `uvx`. See the [Fusion guide](./FUSION.md) |
+| `FUSION_MCP_ARGS` | the pinned faust-machines server in socket mode | No | JSON array of arguments; no shell parsing. The default is `["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]` |
+| `FUSION_MCP_TIMEOUT_MS` | `180000` | No | Connection, discovery, and call deadline, 100 to 600000 ms |
+| `FUSION_MCP_HOST` | `localhost` | No | Where the Fusion360MCP add-in listens, passed through to the Fusion server |
+| `FUSION_MCP_PORT` | `9877` | No | The add-in's port. Blender's MCP addon holds the add-in's own default, 9876, so Fusion uses 9877. The Fusion server and the add-in both read it; Fusion, a GUI app, needs it in its own environment (see the [Fusion guide](./FUSION.md)) |
 
-The Blender MCP server also reads its own `BLENDER_HOST` and `BLENDER_PORT` (default `localhost:9876`) if the addon listens elsewhere. This server passes only `BLENDER_*` settings to it, never printer credentials. See the [Blender guide](./BLENDER.md).
+The Blender MCP server also reads its own `BLENDER_HOST` and `BLENDER_PORT` (default `localhost:9876`) if the addon listens elsewhere. This server passes only `BLENDER_*` settings to it, never printer credentials. See the [Blender guide](./BLENDER.md). The Fusion MCP server likewise receives only `FUSION_*` settings, and runs on `FUSION_MCP_PORT=9877` so it does not collide with Blender on 9876. See the [Fusion guide](./FUSION.md).
 
 ---
 
@@ -292,15 +310,15 @@ The adapter connects over plain HTTP and sends the key as `X-Api-Key`. It calls 
 2. If Moonraker requires authentication, set `API_KEY` to its API key. The adapter sends `X-Api-Key` on status, file, upload, start, cancel, and heater requests. Leave it empty only when Moonraker trusts the MCP host. See [Moonraker authentication](https://moonraker.readthedocs.io/en/latest/external_api/authorization/).
 3. Set `PRINTER_TYPE=klipper`, `PRINTER_HOST`, and `PRINTER_PORT=7125`.
 
-Status comes from `/printer/info`, which reports the Klipper host state (for example `ready`) but not job progress or temperatures; [#12](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/12) requests richer job status. The safety gate reads `/printer/objects/query?webhooks&print_stats` to refuse a printer that is printing, paused, or in error. Other calls: `/server/files/list`, `/server/files/upload`, `/server/files/gcodes/<file>` (download for inspection before `start_print`), `/printer/print/start`, `/printer/print/cancel`, and `SET_HEATER_TEMPERATURE` through `/printer/gcode/script` for `bed` and `extruder`.
+`get_printer_status` comes from `/printer/info`, which reports the Klipper host state (for example `ready`) but not job progress or temperatures. For job progress, layers and temperatures ([#12](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/12)), use `counterpart_print_progress`; see [progress, camera, pause and resume](#progress-camera-pause-and-resume). The safety gate reads `/printer/objects/query?webhooks&print_stats` to refuse a printer that is printing, paused, or in error. Other calls: `/server/files/list`, `/server/files/upload`, `/server/files/gcodes/<file>` (download for inspection before `start_print`), `/printer/print/start`, `/printer/print/cancel`, and `SET_HEATER_TEMPERATURE` through `/printer/gcode/script` for `bed` and `extruder`.
 
 ### Duet
 
-Set `PRINTER_TYPE=duet`, `PRINTER_HOST`, and `PRINTER_PORT` if not 80. The adapter targets the Duet Software Framework (DuetWebServer) REST API and sends no password. It calls `GET /machine/status`, `GET /machine/directory/0:/gcodes` to list files, `GET` and `PUT /machine/file/<path>` to download and upload, and `POST /machine/code` with a raw-text G-code body (`M32` to start, `M0` to cancel, `M140`/`M104` for temperatures). The routes follow DuetSoftwareFramework's `MachineController`; standalone RepRapFirmware `rr_*` routes are not supported. They have not been verified against Duet hardware; please report which firmware and host mode you tested.
+Set `PRINTER_TYPE=duet`, `PRINTER_HOST`, and `PRINTER_PORT` if not 80. The adapter targets the Duet Software Framework (DuetWebServer) REST API and sends no password. It calls `GET /machine/status`, `GET /machine/directory/0:/gcodes` to list files, `GET` and `PUT /machine/file/<path>` to download and upload, and `POST /machine/code` with a raw-text G-code body (`M32` to start, `M0` to cancel, `M140`/`M104` for temperatures). The routes follow DuetSoftwareFramework's `MachineController`; printing and file routes do not support standalone RepRapFirmware. The progress, pause and resume tools also speak the `rr_model` and `rr_gcode` routes that standalone boards and DSF 3.5 or later answer, falling back to `/machine/status` and `/machine/code`. They have not been verified against Duet hardware; please report which firmware and host mode you tested.
 
 ### Repetier
 
-Set `PRINTER_TYPE=repetier`, `PRINTER_HOST`, `PRINTER_PORT` (Repetier-Server usually uses 3344), and `API_KEY` from Repetier-Server. The adapter sends the key as an `apikey` query parameter to `/printer/api/` with actions such as `listPrinter`, `getPrinterInfo`, `ls`, `startJob`, `stopJob`, `setBedTemp`, and `setExtruderTemp`. The adapter does not add a printer slug to the path, and it has not been verified against a Repetier-Server install. It has no verified download route, so `start_print` of a file already on the server is refused; upload the local G-code with `print: true`.
+Set `PRINTER_TYPE=repetier`, `PRINTER_HOST`, `PRINTER_PORT` (Repetier-Server usually uses 3344), and `API_KEY` from Repetier-Server. The adapter sends the key as an `apikey` query parameter to `/printer/api/` with actions such as `listPrinter`, `getPrinterInfo`, `ls`, `startJob`, `stopJob`, `setBedTemp`, and `setExtruderTemp`. The print and file routes do not add a printer slug to the path, and they have not been verified against a Repetier-Server install. The progress, camera, pause and resume tools address `/printer/api/<slug>`, using `REPETIER_SLUG` or the server's only printer. It has no verified download route, so `start_print` of a file already on the server is refused; upload the local G-code with `print: true`.
 
 ### Bambu Lab
 
@@ -363,7 +381,25 @@ The adapter sends the key as both `X-Api-Key` and `Authorization: Bearer`. If a 
 
 Set `PRINTER_TYPE=creality`, `PRINTER_HOST`, `PRINTER_PORT` if not 80, and `API_KEY` to a bearer token. The adapter calls `/api/device/status`, `/api/storage/list`, `/api/storage/info`, `/api/storage/upload`, `/api/job/start`, `/api/job/cancel`, and `/api/printer/temperature` over HTTP with `Authorization: Bearer <API_KEY>`. None of these routes has been verified against Creality Cloud or stock Creality firmware. `start_print` of a file already on the printer is refused; upload the local G-code with `print: true`.
 
-If your Creality printer runs Klipper with Moonraker reachable on the network, as with the K1 Max in [#16](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/16), use `PRINTER_TYPE=klipper` instead.
+If your Creality printer runs Klipper with Moonraker reachable on the network, as with the K1 Max in [#16](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/16), use `PRINTER_TYPE=klipper` instead. With `PRINTER_TYPE=creality`, the progress, camera, filament, pause and resume tools probe Moonraker on port 7125, then 4408, and use it when it answers.
+
+## Progress, camera, pause and resume
+
+`counterpart_printer_info`, `counterpart_print_progress`, `camera_snapshot`, `get_printer_filaments`, `pause_print`, and `resume_print` follow the `counterpart/1` contract that [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) also implements, so one client can treat both servers alike. Each declares an `outputSchema` and returns `structuredContent` plus the same JSON as text. A tool error carries text only, because MCP clients validate any structured content against the output schema.
+
+| Firmware | Progress requests | State and job | Camera | Pause / resume | Checked against |
+|---|---|---|---|---|---|
+| OctoPrint | `GET /api/job`, `GET /api/printer` (temperatures; 409 when not operational). After a job ends, the file's `prints.last` | `Operational` is `idle`, or `finished` at 100%, or `cancelled` when the selected file's last print failed with no progress (OctoPrint records a cancel that way). `Printing`, `Paused`, `Error`, `Offline` and the transitional states (`job.stage`) map directly. `completion` is 0 to 100; times are seconds | `plugins.classicwebcam.snapshot` (1.9+), `webcam.snapshotUrl` (1.8, and 1.9+ compatibility), `/webcam/?action=snapshot` | `POST /api/job` `{"command":"pause","action":"pause"\|"resume"}` | OctoPrint 1.11.2 and 1.8.7 virtual printers; [job API](https://docs.octoprint.org/en/master/api/job.html) |
+| Klipper (Moonraker) | `GET /printer/objects/query?print_stats&virtual_sdcard&display_status&extruder&heater_bed&webhooks`, plus `estimated_time` from `/server/files/metadata` | `print_stats.state`; `webhooks.state` other than `ready` is `busy`. Progress is `display_status.progress` (else `virtual_sdcard.progress`) ×100; remaining is the slicer estimate minus `print_duration`; layers come from `SET_PRINT_STATS_INFO` | First enabled webcam's `snapshot_url` from `/server/webcams/list` | `POST /printer/print/pause` and `/resume`, waiting up to 60 s for the macro | Klipper and Moonraker 1.5.0 on simulavr (mainsail-crew virtual-klipper-printer), with Spoolman 0.27.1; [Moonraker printer API](https://moonraker.readthedocs.io/en/latest/external_api/printer/), [Klipper status reference](https://www.klipper3d.org/Status_Reference.html) |
+| PrusaLink | `GET /api/v1/status`, and `GET /api/v1/job` for the long file name. Older firmware: the OctoPrint-compatible `/api/job` | `PRINTING`, `PAUSED`, `FINISHED`, `STOPPED` (cancelled), `ERROR` (failed), `ATTENTION` (paused, with a problem), `IDLE`/`READY`, `BUSY` | None | `PUT /api/v1/job/<id>/pause` and `/resume` | [PrusaLink OpenAPI](https://github.com/prusa3d/Prusa-Link-Web/blob/master/spec/openapi.yaml) only |
+| Duet (RRF 3) | `GET /rr_model?key=state&flags=d99v` and `key=job` (standalone and DSF 3.5+), else `GET /machine/status` | `state.status`; an idle board's `job.lastFileName` with `lastFileCancelled`/`lastFileAborted` gives `cancelled`, `failed` or `finished`. Progress is `filePosition / file.size`; remaining is `timesLeft.slicer`, else `.file`. The verbose `v` flag is required: `f` drops `job.file` | None | `M25` and `M24` through `rr_gcode`, else `POST /machine/code` | [RRF HTTP requests](https://github.com/Duet3D/RepRapFirmware/wiki/HTTP-requests), [object model](https://github.com/Duet3D/RepRapFirmware/wiki/Object-Model-Documentation) only |
+| Repetier-Server | `GET /printer/api/<slug>?a=listPrinter` | `online`, `job` and `paused`; progress is `done`; elapsed is `printedTimeComp`, remaining `printTime - printedTimeComp`. These fields and `@pause` are returned or accepted by current servers but are not in the [API manual](https://www.repetier-server.com/manuals/programming/API/index.html) | `getPrinterConfig` webcam `staticUrl` | `send` `{"cmd":"@pause"}`; `continueJob` | Docs only |
+| Creality | Moonraker on port 7125, then 4408, when it answers; otherwise `/api/device/status` | As Klipper, or the device status's recognized state words | As Klipper, or none | Only through Moonraker | Not verified; the ports come from community K1 setups, not Creality documentation |
+| Bambu Lab | The MQTT report (`get_printer_status` raw) | `gcode_state`; a user cancel (`print_error` `0300400C`) is `cancelled`; HMS codes as `AAAA_BBBB_CCCC_DDDD` | None here; use bambu-printer-mcp | Use bambu-printer-mcp | Offline mapping tests |
+
+`resume_print` asks a person first, like a print start (unless `PRINT_REQUIRE_CONFIRMATION=0`). OctoPrint, Klipper and Duet (DSF) re-download the job and compare its SHA-256 with the inspected bytes before asking; PrusaLink, Repetier and Creality match it by name only. A standalone Duet board has no download route here, so its resume is refused.
+
+`get_printer_filaments` reports one external slot. The slot also carries `profile`: the absolute path of the installed slicer filament profile for its material, which `slice_stl` takes as `load_filaments`. It is resolved in the slicer `slice_stl` uses by default (`SLICER_TYPE`, `SLICER_PATH`), for the printer in `SLICER_PROFILE`. OrcaSlicer searches its bundled `profiles/<vendor>/filament`, the `OrcaSlicer/system` copies and the user's `OrcaSlicer/user/<id>/filament` presets, reading `filament_type` and `compatible_printers` through `inherits`. PrusaSlicer and Slic3r search the data folder's `filament/*.ini` presets. The material must equal the profile's `filament_type` exactly (case aside): a `PLA` spool never gets a `PLA-CF` profile. Profiles that list other printers are skipped; one that lists this printer comes first, then profiles for every printer, user presets before bundled ones. With no reported material, `profile` is the filament `slice_stl` loads by default (`FILAMENT_PROFILE`), when that file exists. When nothing resolves, `profile` is omitted.  On Moonraker it reads the active spool with `GET /server/spoolman/spool_id` and `POST /server/spoolman/proxy` (`/v1/spool/<id>`); without Spoolman, and on every other firmware, the slot's source is `unknown`.
 
 ---
 

@@ -1,0 +1,34 @@
+{
+  "result": {
+    "id": 1,
+    "registered": "2026-11-01T23:50:47Z",
+    "filament": {
+      "id": 1,
+      "registered": "2026-11-01T23:50:47Z",
+      "name": "KAN-216 Test PLA Orange",
+      "vendor": {
+        "id": 1,
+        "registered": "2026-11-01T23:50:47Z",
+        "name": "KAN-216 Test Vendor",
+        "extra": {}
+      },
+      "material": "PLA",
+      "density": 1.24,
+      "diameter": 1.75,
+      "weight": 1000.0,
+      "spool_weight": 200.0,
+      "color_hex": "FF8800",
+      "extra": {},
+      "tags": []
+    },
+    "remaining_weight": 1000.0,
+    "initial_weight": 1000.0,
+    "spool_weight": 200.0,
+    "used_weight": 0.0,
+    "remaining_length": 335283.6194167644,
+    "used_length": 0.0,
+    "archived": false,
+    "extra": {},
+    "tags": []
+  }
+}

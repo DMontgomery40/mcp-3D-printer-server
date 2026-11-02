@@ -49,6 +49,8 @@ export interface BambuSliceOptions {
   minSave?: boolean;           // --min-save
   skipModifiedGcodes?: boolean;// --skip-modified-gcodes
   slicePlate?: number;         // --slice N (0 = all plates)
+  /** Process keys written over the resolved process preset (layer_height, wall_loops, sparse_infill_density). */
+  processOverrides?: Record<string, string>;
 }
 
 export interface BambuSettingsBundle {
@@ -526,6 +528,17 @@ export class BambuCliProfilePreparer {
         this.writeTempJson(outputBase, "machine_orca_resolved", this.sanitizeMachineForOrca(this.readJsonFile(machinePath))),
         this.writeTempJson(outputBase, "process_orca_resolved", this.sanitizeProcessForOrca(this.readJsonFile(processPath), printerPreset)),
       ].join(";");
+    }
+    // Print-sheet quality/strength choices win over the preset and any template.
+    if (options.processOverrides && Object.keys(options.processOverrides).length && bundle.settingsArg) {
+      const [machinePath, processPath, ...rest] = bundle.settingsArg.split(";");
+      if (processPath) {
+        bundle.settingsArg = [
+          machinePath,
+          this.writeTempJson(outputBase, "process_overrides", { ...this.readJsonFile(processPath), ...options.processOverrides }),
+          ...rest,
+        ].join(";");
+      }
     }
     return this.isolateMachineSettings(bundle);
   }

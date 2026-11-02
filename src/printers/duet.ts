@@ -1,5 +1,13 @@
 import fs from "fs";
+import { isAxiosError } from "axios";
 import { GenericPrinterImplementation, type GenericPrinterState } from "./generic-base.js";
+import type { CounterpartProgress, PrinterIdentity } from "../counterpart/contract.js";
+import { nonEmptyText } from "../counterpart/contract.js";
+import { mapDuet } from "../counterpart/progress.js";
+
+function notFound(error: unknown): boolean {
+  return isAxiosError(error) && (error.response?.status === 404 || error.response?.status === 405);
+}
 
 /**
  * Duet Software Framework (DuetWebServer) REST routes, verified against
@@ -23,6 +31,65 @@ export class DuetImplementation extends GenericPrinterImplementation {
       headers: { "Content-Type": "text/plain" },
     });
     return response.data;
+  }
+
+  /**
+   * Object model keys for counterpart_print_progress and identity. Standalone
+   * RepRapFirmware and DSF 3.5+ answer rr_model; older DSF only /machine/status
+   * (an alias of /machine/model). 'v' (verbose) is required: 'f' omits job.file.
+   * Without a machine password no rr_connect is needed; with one, requests get 401.
+   * https://github.com/Duet3D/RepRapFirmware/wiki/HTTP-requests
+   */
+  private async objectModel(host: string, port: string, keys: string[]): Promise<Record<string, any>> {
+    const base = `http://${host}:${port}`;
+    const model: Record<string, any> = {};
+    try {
+      // Sequential: standalone boards serve few concurrent HTTP connections.
+      for (const key of keys) {
+        model[key] = (await this.apiClient.get(`${base}/rr_model?key=${encodeURIComponent(key)}&flags=d99v`)).data?.result;
+      }
+      return model;
+    } catch (error) {
+      if (!notFound(error)) throw error;
+    }
+    const full = (await this.apiClient.get(`${base}/machine/status`)).data;
+    const root = full?.result && typeof full.result === "object" ? full.result : full;
+    for (const key of keys) model[key] = root?.[key];
+    return model;
+  }
+
+  async counterpartProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress> {
+    const model = await this.objectModel(host, port, ["state", "job"]);
+    if (!model.state || typeof model.state !== "object") throw new Error("Duet did not return state from its object model.");
+    return mapDuet(model.state, model.job ?? {}, new Date().toISOString());
+  }
+
+  async reportsLayers(): Promise<boolean> {
+    return true;
+  }
+
+  async counterpartIdentity(host: string, port: string): Promise<PrinterIdentity> {
+    const model = await this.objectModel(host, port, ["network", "boards"]);
+    const board = Array.isArray(model.boards) ? model.boards[0] : undefined;
+    return { name: nonEmptyText(model.network?.name), model: nonEmptyText(board?.name) ?? nonEmptyText(board?.shortName) };
+  }
+
+  /** M25 pauses and M24 resumes: rr_gcode on standalone/DSF 3.5+, POST /machine/code on older DSF. */
+  protected async rawPauseJob(host: string, port: string) {
+    return this.sendGcode(host, port, "M25");
+  }
+
+  protected async rawResumeJob(host: string, port: string) {
+    return this.sendGcode(host, port, "M24");
+  }
+
+  private async sendGcode(host: string, port: string, gcode: string) {
+    try {
+      return (await this.apiClient.get(`http://${host}:${port}/rr_gcode?gcode=${encodeURIComponent(gcode)}`)).data;
+    } catch (error) {
+      if (!notFound(error)) throw error;
+    }
+    return this.code(host, port, gcode);
   }
 
   async getStatus(host: string, port: string, apiKey: string) {

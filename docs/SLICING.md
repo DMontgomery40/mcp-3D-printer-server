@@ -54,18 +54,33 @@ A per-call `slicer_path` is refused unless `MCP_ALLOW_EXECUTABLE_ARG=1`; see [ex
 
 | Slicer | `SLICER_PROFILE` | Filament profile |
 |---|---|---|
-| PrusaSlicer, Slic3r | One config file exported from the slicer (File > Export > Export Config), containing printer, print, and filament settings | Not used; include filament settings in the exported config |
+| PrusaSlicer, Slic3r | One config file exported from the slicer (File > Export > Export Config), containing printer, print, and filament settings | Optional: one filament preset `.ini` (from the slicer's `filament` folder), loaded with a second `--load` after the config so its filament settings win |
 | Generic OrcaSlicer (no `bambu_model`) | Machine and process JSON files separated by `;`, optionally followed by a filament file (see below) | Loaded with `--load-filaments` |
 | CuraEngine | A Cura definition JSON | Not used |
 | Bambu Studio, FULU OrcaSlicer-bambulab, or OrcaSlicer with `bambu_model` | **One process profile only.** The machine preset always comes from the printer model and nozzle; a `machine;process` list is rejected with instructions | `;`-separated, in slot order, loaded with `--load-filaments` |
 
-For generic OrcaSlicer, a filament file can ride along in the profile setting after a pipe character:
+For generic OrcaSlicer, a filament preset that `inherits` other installed presets (as bundled ones such as `Generic PETG @System` do) is passed to `--load-filaments` with its inheritance chain merged in, because the CLI does not resolve `inherits`. Your files are not modified.
+
+A filament file can also ride along in the profile setting after a pipe character; a `load_filaments` or `filament_profile` given to the call replaces it:
 
 ```env
 SLICER_PROFILE=/path/to/machine.json;/path/to/process.json|/path/to/filament.json
 ```
 
 Generic OrcaSlicer writes `plate_1.gcode`; the server renames it after the input model and returns that path. Do not use this form for Bambu Lab slicing: pass `bambu_model` (or use Bambu Studio or FULU OrcaSlicer-bambulab) and give only a process profile.
+
+### Layer height, walls and infill
+
+`slice_stl` and `slice_with_template` accept `layer_height` (mm), `wall_loops` (a whole number of walls), and `sparse_infill_density` (a percentage such as `"15%"`; a bare number is read as a percentage). They are written over the profile the slice would otherwise use, so they win over the preset, `SLICER_PROFILE`, and a template:
+
+| Slicer | How they are applied |
+|---|---|
+| Bambu Studio, FULU OrcaSlicer-bambulab, OrcaSlicer with `bambu_model` | Process keys `layer_height`, `wall_loops`, `sparse_infill_density`, written into the resolved process profile the CLI loads |
+| Generic OrcaSlicer | The same keys, written into a copy of the process profile (the settings file whose `type` is `process`, else the last of two or more). A machine-only `slicer_profile` is refused |
+| PrusaSlicer, Slic3r | `--layer-height`, `--perimeters`, `--fill-density`, which override the loaded config |
+| CuraEngine | Refused; set them in the Cura definition |
+
+Your profile files are never modified. The slicer still validates the values against the machine, for example a layer height larger than the nozzle allows.
 
 ## Bambu-compatible slicing
 

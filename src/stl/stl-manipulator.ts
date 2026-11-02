@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import { EventEmitter } from 'events';
 import * as crypto from 'crypto';
 import { detectProfilesRoot } from '../slicer/profile-flatten.js';
+import { flattenOrcaFilament } from '../slicer/filament-profiles.js';
 import {
   BambuCliProfilePreparer,
   assertSlicedProjectOutput,
@@ -21,6 +22,34 @@ import { runSlicerProcess } from '../slicer/run-slicer.js';
 import { SlicerError, asPreparationError } from '../slicer/slicer-error.js';
 
 export type { BambuSliceOptions } from '../slicer/bambu-cli.js';
+
+/** Print-sheet slicing overrides (PRD §8.4), applied on top of the selected profile. */
+export interface ProcessOverrides {
+  /** mm */
+  layerHeight?: number;
+  /** wall (perimeter) count */
+  wallLoops?: number;
+  /** e.g. "15%" */
+  sparseInfillDensity?: string;
+}
+
+/** Orca/Bambu Studio process keys; profile JSON values are strings. */
+export function orcaProcessOverrides(overrides: ProcessOverrides | undefined): Record<string, string> {
+  const keys: Record<string, string> = {};
+  if (overrides?.layerHeight !== undefined) keys.layer_height = String(overrides.layerHeight);
+  if (overrides?.wallLoops !== undefined) keys.wall_loops = String(overrides.wallLoops);
+  if (overrides?.sparseInfillDensity !== undefined) keys.sparse_infill_density = overrides.sparseInfillDensity;
+  return keys;
+}
+
+/** PrusaSlicer/Slic3r command-line options, which override the loaded config. */
+export function prusaSlicerOverrideArgs(overrides: ProcessOverrides | undefined): string[] {
+  const args: string[] = [];
+  if (overrides?.layerHeight !== undefined) args.push('--layer-height', String(overrides.layerHeight));
+  if (overrides?.wallLoops !== undefined) args.push('--perimeters', String(overrides.wallLoops));
+  if (overrides?.sparseInfillDensity !== undefined) args.push('--fill-density', overrides.sparseInfillDensity);
+  return args;
+}
 import { execFile } from 'child_process';
 import { scanGcodeThermal } from '../safety/gcode-thermal.js';
 
@@ -134,6 +163,49 @@ export class STLManipulator extends EventEmitter {
         console.warn(`${label} specified but not found: ${profile}. Slicer might use defaults.`);
       }
     }
+  }
+
+  /**
+   * Generic OrcaSlicer: write the overrides over a copy of the process profile
+   * (the settings file whose type is "process", else the last of two or more).
+   */
+  private withOrcaProcessOverrides(
+    profiles: { settingsProfiles: string[]; filamentProfiles: string[] },
+    overrides: ProcessOverrides | undefined,
+    outputDir: string
+  ): { settingsProfiles: string[]; filamentProfiles: string[] } {
+    const keys = orcaProcessOverrides(overrides);
+    if (!Object.keys(keys).length) return profiles;
+    const parsed = profiles.settingsProfiles.map((profile) => {
+      try { return JSON.parse(fs.readFileSync(profile, 'utf8')); } catch { return undefined; }
+    });
+    let index = parsed.findIndex((profile) => profile?.type === 'process');
+    if (index < 0 && profiles.settingsProfiles.length >= 2) index = profiles.settingsProfiles.length - 1;
+    if (index < 0 || !parsed[index] || typeof parsed[index] !== 'object') {
+      throw new SlicerError('preparation',
+        'layer_height, wall_loops and sparse_infill_density need a readable process profile for generic OrcaSlicer. ' +
+        "Pass slicer_profile as 'machine.json;process.json', or slice with bambu_model.",
+        { slicerType: 'orcaslicer' });
+    }
+    const merged = path.join(outputDir, `process-overrides-${path.basename(profiles.settingsProfiles[index])}`);
+    fs.writeFileSync(merged, JSON.stringify({ ...parsed[index], ...keys }, null, 2));
+    const settingsProfiles = [...profiles.settingsProfiles];
+    settingsProfiles[index] = merged;
+    return { ...profiles, settingsProfiles };
+  }
+
+  /** Bundled and user Orca filament presets inherit their settings; the CLI needs them merged in. */
+  private async withFlattenedOrcaFilaments<T extends { settingsProfiles: string[]; filamentProfiles: string[] }>(
+    profiles: T, slicerPath: string, outputDir: string
+  ): Promise<T> {
+    const filamentProfiles = await Promise.all(profiles.filamentProfiles.map(async (profile, index) => {
+      const flat = await flattenOrcaFilament(profile, { slicerPath }).catch(() => undefined);
+      if (!flat) return profile;
+      const merged = path.join(outputDir, `filament-${index + 1}-${path.basename(profile)}`);
+      fs.writeFileSync(merged, JSON.stringify(flat, null, 2));
+      return merged;
+    }));
+    return { ...profiles, filamentProfiles };
   }
 
   private appendOrcaProfileArgs(
@@ -1022,7 +1094,8 @@ export class STLManipulator extends EventEmitter {
     progressCallback?: ProgressCallback,
     printerPreset?: string,
     filamentProfile?: string,
-    bambuOptions?: BambuSliceOptions
+    bambuOptions?: BambuSliceOptions,
+    processOverrides?: ProcessOverrides
   ): Promise<string> {
     const operationId = this.generateOperationId();
     this.activeOperations.set(operationId, true);
@@ -1076,6 +1149,8 @@ export class STLManipulator extends EventEmitter {
             );
           }
           const options: BambuSliceOptions = { ...bambuOptions };
+          const overrideKeys = orcaProcessOverrides(processOverrides);
+          if (Object.keys(overrideKeys).length) options.processOverrides = overrideKeys;
           if (orcaProfiles.filamentProfiles.length > 0) {
             const legacyFilaments = orcaProfiles.filamentProfiles.join(';');
             if (options.loadFilaments && this.splitProfileList(options.loadFilaments).join(';') !== legacyFilaments) {
@@ -1112,16 +1187,29 @@ export class STLManipulator extends EventEmitter {
       } else {
         switch (slicerType) {
           case 'prusaslicer':
-          case 'slic3r': // PrusaSlicer and Slic3r share similar CLI args
+          case 'slic3r': { // PrusaSlicer and Slic3r share similar CLI args
+            // A filament preset (.ini from the slicer's filament folder) is loaded after the main
+            // config: --load may repeat, and later files override earlier ones.
+            const filaments = this.splitProfileList(filamentProfile);
+            if (filaments.length > 1) {
+              throw new SlicerError('preparation',
+                `${slicerType} takes one filament preset; filament_profile/FILAMENT_PROFILE lists ${filaments.length}.`, { slicerType, slicerPath });
+            }
+            if (filaments.length && !/\.ini$/i.test(filaments[0])) {
+              throw new SlicerError('preparation',
+                `${slicerType} loads filament presets as .ini files (its filament folder, or File > Export > Export Config); ${path.basename(filaments[0])} is not one.`,
+                { slicerType, slicerPath });
+            }
             args = [
               '--slice',
               '--output', outputFilePath,
-              '--load', slicerProfile || '', // Pass profile path
+              ...(slicerProfile ? ['--load', slicerProfile] : []),
+              ...filaments.flatMap((filament) => ['--load', filament]),
+              ...prusaSlicerOverrideArgs(processOverrides),
               stlFilePath
             ];
-            // Remove empty profile arg if not provided
-            args = args.filter(arg => arg !== '');
             break;
+          }
 
           case 'orcaslicer':
             orcaOutputDir = path.join(this.tempDir, `${operationId}-orca-output`);
@@ -1130,11 +1218,17 @@ export class STLManipulator extends EventEmitter {
               '--slice', '0',
               '--outputdir', orcaOutputDir,
             ];
-            this.appendOrcaProfileArgs(args, orcaProfiles);
+            this.appendOrcaProfileArgs(args, await this.withFlattenedOrcaFilaments(
+              this.withOrcaProcessOverrides(orcaProfiles, processOverrides, orcaOutputDir), slicerPath, orcaOutputDir));
             args.push(stlFilePath);
             break;
 
           case 'cura':
+            if (Object.keys(orcaProcessOverrides(processOverrides)).length) {
+              throw new SlicerError('preparation',
+                'layer_height, wall_loops and sparse_infill_density are not mapped for Cura; set them in the Cura definition passed as slicer_profile.',
+                { slicerType, slicerPath });
+            }
             // CuraEngine CLI args are different, often requiring -s for settings
             // Example: curaengine slice -v -j cura_settings.json -s layer_height=0.2 -o output.gcode -l input.stl
             args = [

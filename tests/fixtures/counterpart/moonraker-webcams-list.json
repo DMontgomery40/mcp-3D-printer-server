@@ -1,0 +1,24 @@
+{
+  "result": {
+    "webcams": [
+      {
+        "name": "test",
+        "enabled": true,
+        "icon": "mdiWebcam",
+        "aspect_ratio": "4:3",
+        "target_fps": 15,
+        "target_fps_idle": 5,
+        "location": "printer",
+        "service": "mjpegstreamer",
+        "stream_url": "http://192.0.2.10:8099/snapshot.jpg",
+        "snapshot_url": "http://192.0.2.10:8099/snapshot.jpg",
+        "flip_horizontal": false,
+        "flip_vertical": false,
+        "rotation": 0,
+        "source": "config",
+        "extra_data": {},
+        "uid": "ab15da2f-2faf-5878-b59f-186b2d9d939a"
+      }
+    ]
+  }
+}

@@ -564,6 +564,22 @@ fs.writeFileSync(args[args.indexOf(flag) + 1], "; generic gcode\\n");
     assert.ok(args.includes(profile), `${slicerType} receives its profile unchanged`);
   }
 
+  // PrusaSlicer and Slic3r load one filament preset after the main config; later --load files override earlier ones.
+  const filament = path.join(root, "PLA preset.ini");
+  await fs.writeFile(filament, "filament_type = PLA\ntemperature = 215\n");
+  for (const slicerType of ["prusaslicer", "slic3r"]) {
+    const sliced = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: slicerType, slicer_profile: profile, load_filaments: filament });
+    assert.equal(sliced.isError, undefined, `${slicerType}: ${text(sliced)}`);
+    const argv = JSON.parse(await fs.readFile(capture, "utf8"));
+    assert.deepEqual(argv.slice(0, 7), ["--slice", "--output", text(sliced), "--load", profile, "--load", filament]);
+    assert.equal(argv.at(-1), SAMPLE_STL);
+  }
+  for (const [loadFilaments, pattern] of [[`${filament};${filament}`, /takes one filament preset/], [path.join(root, "pla.json"), /as \.ini files/]]) {
+    const refused = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", slicer_profile: profile, load_filaments: loadFilaments });
+    assert.equal(refused.isError, true);
+    assert.match(text(refused), pattern);
+  }
+
   await fs.writeFile(modeFile, "fail");
   const failed = await call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", slicer_profile: profile });
   assert.equal(failed.isError, true);
@@ -571,6 +587,106 @@ fs.writeFileSync(args[args.indexOf(flag) + 1], "; generic gcode\\n");
   assert.match(text(failed), /unknown option in profile\.ini/);
   assert.doesNotMatch(text(failed), /printer connectivity/i);
   assert.doesNotMatch(text(failed), /sample_cube\.gcode$/m, "a failed run cannot return a previous G-code");
+});
+
+test("print-sheet overrides: layer_height, wall_loops and sparse_infill_density map to each slicer", async (t) => {
+  // Bambu-compatible CLI: written over the resolved process, winning over a template.
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install);
+  const template = path.join(install.root, "strong.json");
+  await fs.writeFile(template, JSON.stringify({ name: "Strong", from: "User", inherits: "0.20mm Standard @BBL X1C", wall_loops: "6", layer_height: "0.12" }));
+  let result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", slicer_profile: template,
+    layer_height: 0.28, wall_loops: 4, sparse_infill_density: "25%" });
+  assert.equal(result.isError, undefined, text(result));
+  let args = await install.args();
+  const processConfig = JSON.parse(await fs.readFile(args[args.indexOf("--load-settings") + 1].split(";")[1], "utf8"));
+  assert.equal(processConfig.layer_height, "0.28");
+  assert.equal(processConfig.wall_loops, "4");
+  assert.equal(processConfig.sparse_infill_density, "25%");
+  assert.equal(JSON.parse(await fs.readFile(template, "utf8")).wall_loops, "6", "the caller's profile is not modified");
+  // A bare number is a percentage; invalid values stop before the slicer runs.
+  await install.resetCapture();
+  result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", sparse_infill_density: 15 });
+  assert.equal(result.isError, undefined, text(result));
+  args = await install.args();
+  assert.equal(JSON.parse(await fs.readFile(args[args.indexOf("--load-settings") + 1].split(";")[1], "utf8")).sparse_infill_density, "15%");
+  for (const [bad, pattern] of [[{ layer_height: 0 }, /layer_height/], [{ wall_loops: 2.5 }, /wall_loops/], [{ sparse_infill_density: "150%" }, /sparse_infill_density/], [{ layer_height: "0.2" }, /layer_height/]]) {
+    await install.resetCapture();
+    result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", ...bad });
+    assert.equal(result.isError, true, JSON.stringify(bad));
+    assert.match(text(result), pattern);
+    await assertNotExecuted(install);
+  }
+
+  // PrusaSlicer/Slic3r flags, generic OrcaSlicer process copy, Cura refused.
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "override-slicers-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const capture = path.join(root, "args.json");
+  const executable = path.join(root, "fake-slicer");
+  await fs.writeFile(executable, `#!${process.execPath}
+const fs = require("fs"); const path = require("path");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args));
+if (args.includes("--outputdir")) {
+  const settings = args.flatMap((arg, i) => args[i - 1] === "--load-settings" ? [arg] : []);
+  fs.writeFileSync(${JSON.stringify(capture)} + ".process", fs.readFileSync(settings.at(-1), "utf8"));
+  const filaments = args.flatMap((arg, i) => args[i - 1] === "--load-filaments" ? [fs.readFileSync(arg, "utf8")] : []);
+  fs.writeFileSync(${JSON.stringify(capture)} + ".filaments", JSON.stringify(filaments));
+  fs.writeFileSync(path.join(args[args.indexOf("--outputdir") + 1], "plate_1.gcode"), "; orca\\n");
+} else {
+  const flag = args.includes("--output") ? "--output" : "-o";
+  fs.writeFileSync(args[args.indexOf(flag) + 1], "; generic gcode\\n");
+}
+`, { mode: 0o755 });
+  // HOME is the test root, so only this fake slicer's bundled profiles are installed.
+  const generic = await startServer(t, { root, executable }, { SLICER_TYPE: "prusaslicer", HOME: root });
+  const overrides = { layer_height: 0.12, wall_loops: 2, sparse_infill_density: "15%" };
+  for (const slicerType of ["prusaslicer", "slic3r"]) {
+    result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: slicerType, ...overrides });
+    assert.equal(result.isError, undefined, `${slicerType}: ${text(result)}`);
+    args = JSON.parse(await fs.readFile(capture, "utf8"));
+    assert.deepEqual(args.slice(args.indexOf("--layer-height"), args.indexOf("--layer-height") + 6),
+      ["--layer-height", "0.12", "--perimeters", "2", "--fill-density", "15%"]);
+    assert.equal(args.at(-1), SAMPLE_STL);
+  }
+  const machine = path.join(root, "machine.json");
+  const processProfile = path.join(root, "process.json");
+  await fs.writeFile(machine, JSON.stringify({ type: "machine", name: "My printer" }));
+  await fs.writeFile(processProfile, JSON.stringify({ type: "process", name: "My process", layer_height: "0.2", wall_loops: "3" }));
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: `${machine};${processProfile}`, ...overrides });
+  assert.equal(result.isError, undefined, text(result));
+  const orcaProcess = JSON.parse(await fs.readFile(`${capture}.process`, "utf8"));
+  assert.deepEqual([orcaProcess.name, orcaProcess.layer_height, orcaProcess.wall_loops, orcaProcess.sparse_infill_density], ["My process", "0.12", "2", "15%"]);
+  assert.equal(JSON.parse(await fs.readFile(processProfile, "utf8")).layer_height, "0.2", "the caller's profile is not modified");
+  // Generic OrcaSlicer takes load_filaments (get_printer_filaments' slots[].profile) as --load-filaments.
+  const orcaFilament = path.join(root, "Generic PLA.json");
+  await fs.writeFile(orcaFilament, JSON.stringify({ name: "Generic PLA", filament_type: ["PLA"] }));
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: `${machine};${processProfile}`, load_filaments: orcaFilament });
+  assert.equal(result.isError, undefined, text(result));
+  args = JSON.parse(await fs.readFile(capture, "utf8"));
+  assert.equal(args[args.indexOf("--load-filaments") + 1], orcaFilament);
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: `${machine};${processProfile}`, load_filaments: orcaFilament, filament_profile: machine });
+  assert.match(text(result), /either load_filaments or filament_profile/);
+  // A bundled preset inherits its settings; the CLI gets them merged in, and the bundled file is untouched.
+  const bundle = path.join(root, "resources", "profiles", "OrcaFilamentLibrary", "filament");
+  await fs.mkdir(bundle, { recursive: true });
+  await fs.writeFile(path.join(bundle, "fdm_filament_petg.json"), JSON.stringify({ name: "fdm_filament_petg", instantiation: "false", filament_type: ["PETG"], nozzle_temperature: ["240"], hot_plate_temp: ["70"] }));
+  const petg = path.join(bundle, "Generic PETG @System.json");
+  await fs.writeFile(petg, JSON.stringify({ name: "Generic PETG @System", inherits: "fdm_filament_petg", from: "system", instantiation: "true", hot_plate_temp: ["80"], compatible_printers: [] }));
+  // An explicit filament also replaces the "|filament" default in the profile setting.
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: `${machine};${processProfile}|${orcaFilament}`, load_filaments: petg });
+  assert.equal(result.isError, undefined, text(result));
+  const loaded = JSON.parse(await fs.readFile(`${capture}.filaments`, "utf8")).map((content) => JSON.parse(content));
+  assert.equal(loaded.length, 1, "the chosen filament is the only slot");
+  assert.deepEqual([loaded[0].name, loaded[0].filament_type, loaded[0].nozzle_temperature, loaded[0].hot_plate_temp, loaded[0].inherits, loaded[0].from],
+    ["Generic PETG @System", ["PETG"], ["240"], ["80"], "", "User"], "inherited temperatures reach the CLI; the leaf's own values win");
+  assert.equal(JSON.parse(await fs.readFile(petg, "utf8")).inherits, "fdm_filament_petg");
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "orcaslicer", slicer_profile: machine, ...overrides });
+  assert.equal(result.isError, true);
+  assert.match(text(result), /need a readable process profile/);
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "cura", ...overrides });
+  assert.equal(result.isError, true);
+  assert.match(text(result), /not mapped for Cura/);
 });
 
 test("optional: installed BambuStudio slices P1S 0.4 into a 3MF with P1S plate G-code", async (t) => {
