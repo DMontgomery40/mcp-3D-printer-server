@@ -28,7 +28,8 @@ export const FUSION_MCP_DEFAULT_ARGS = [
   "--from", `git+https://github.com/faust-machines/fusion360-mcp-server@${FUSION_MCP_PINNED_COMMIT}`,
   "fusion360-mcp-server", "--mode", "socket",
 ];
-export const FUSION_ADDIN_DEFAULT_PORT = 9876;
+/** PRD §8.9: Blender's MCP addon holds the add-in's own default, 9876, so Fusion uses 9877. */
+export const FUSION_ADDIN_DEFAULT_PORT = 9877;
 const DEFAULT_TIMEOUT_MS = 180_000;
 const LAUNCH_WAIT_MS = 90_000;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
@@ -90,6 +91,8 @@ function fusionEnvironment(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (key.startsWith("FUSION_") && value !== undefined && !["FUSION_MCP_COMMAND", "FUSION_MCP_ARGS"].includes(key)) env[key] = value;
   }
+  // The faust server reads FUSION_MCP_PORT too (src/fusion360_mcp/connection.py), so it dials the port this bridge probes.
+  env.FUSION_MCP_PORT = String(addinAddress().port);
   return env;
 }
 
@@ -141,8 +144,9 @@ function addinAnswers(host: string, port: number, timeoutMs: number): Promise<bo
     const socket = net.connect({ host, port });
     let buffer = "";
     let settled = false;
-    const done = (value: boolean) => { if (settled) return; settled = true; socket.destroy(); resolve(value); };
-    socket.setTimeout(timeoutMs, () => done(false));
+    const done = (value: boolean) => { if (settled) return; settled = true; clearTimeout(deadline); socket.destroy(); resolve(value); };
+    // A hard total deadline: socket.setTimeout is an idle timer that a listener sending a trickle of bytes could hold open.
+    const deadline = setTimeout(() => done(false), timeoutMs);
     socket.once("connect", () => socket.write(`${JSON.stringify({ type: "ping", params: {} })}\n`));
     socket.on("data", (chunk) => {
       buffer += chunk.toString("utf8");
@@ -169,6 +173,11 @@ async function fusionProcessRunning(): Promise<boolean | undefined> {
   } catch {
     return false;
   }
+}
+
+/** `open --env` applies only when it starts the app, which is the only time this runs. */
+export function fusionLaunchArguments(port: number): string[] {
+  return ["-a", "Autodesk Fusion", "--env", `FUSION_MCP_PORT=${port}`];
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -270,10 +279,11 @@ export class FusionMcpBridge {
     if (launch && !addinReachable && processRunning !== true) {
       if (process.platform !== "darwin" || !local) throw new FusionError("launch is supported only for Fusion on this Mac; start Fusion yourself.");
       try {
-        await execFileAsync("open", ["-a", "Autodesk Fusion"], { timeout: 15_000 });
+        // A GUI app gets no shell environment; the add-in reads FUSION_MCP_PORT from Fusion's (addon/Fusion360MCP.py).
+        await execFileAsync("open", fusionLaunchArguments(port), { timeout: 30_000 });
         launched = true;
       } catch {
-        throw new FusionError("Could not start Autodesk Fusion with open -a \"Autodesk Fusion\". Is it installed?");
+        throw new FusionError(`Could not start Autodesk Fusion with open -a "Autodesk Fusion" --env FUSION_MCP_PORT=${port}. Is it installed?`);
       }
     }
     if (launch && !addinReachable) {
@@ -281,7 +291,7 @@ export class FusionMcpBridge {
       while (!addinReachable && Date.now() < until) {
         if (signal?.aborted) throw new FusionError("Fusion MCP request cancelled while waiting for Fusion to start.");
         await sleep(1_000);
-        addinReachable = await addinAnswers(host, port, 1_500);
+        addinReachable = await addinAnswers(host, port, 2_000);
       }
       if (local) processRunning = await fusionProcessRunning();
     }
@@ -452,7 +462,7 @@ export const FUSION_STATUS_OUTPUT_SCHEMA = {
   properties: {
     configured: { type: "boolean", description: "FUSION_MCP_COMMAND is set." },
     connected: { type: "boolean", description: "The Fusion MCP server started and the add-in answered its ping." },
-    addinReachable: { type: "boolean", description: "The Fusion360MCP add-in answers its ping on FUSION_MCP_HOST:FUSION_MCP_PORT (default localhost:9876)." },
+    addinReachable: { type: "boolean", description: "The Fusion360MCP add-in answered a ping on FUSION_MCP_HOST:FUSION_MCP_PORT (default localhost:9877) within 2 s. Another program on that port, such as Blender's MCP addon, does not count." },
     fusionRunning: { type: "boolean" },
     tools: { type: "array", items: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
     launched: { type: "boolean", description: "This call started Fusion." },

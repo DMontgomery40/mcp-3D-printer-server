@@ -119,6 +119,7 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 # FUSION_MCP_ARGS=["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]
 # FUSION_MCP_TIMEOUT_MS=180000
 # FUSION_MCP_HOST=localhost
+# FUSION_MCP_PORT=9877
 ```
 
 ### Environment variables reference
@@ -174,9 +175,10 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `FUSION_MCP_COMMAND` | | No | Trusted executable for the Fusion MCP server: the full path to `uvx`. See the [Fusion guide](./FUSION.md) |
 | `FUSION_MCP_ARGS` | the pinned faust-machines server in socket mode | No | JSON array of arguments; no shell parsing. The default is `["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]` |
 | `FUSION_MCP_TIMEOUT_MS` | `180000` | No | Connection, discovery, and call deadline, 100 to 600000 ms |
-| `FUSION_MCP_HOST` | `localhost` | No | Where the Fusion360MCP add-in listens, passed through to the Fusion server. `FUSION_MCP_PORT` (default 9876) is passed through too |
+| `FUSION_MCP_HOST` | `localhost` | No | Where the Fusion360MCP add-in listens, passed through to the Fusion server |
+| `FUSION_MCP_PORT` | `9877` | No | The add-in's port. Blender's MCP addon holds the add-in's own default, 9876, so Fusion uses 9877. The Fusion server and the add-in both read it; Fusion, a GUI app, needs it in its own environment (see the [Fusion guide](./FUSION.md)) |
 
-The Blender MCP server also reads its own `BLENDER_HOST` and `BLENDER_PORT` (default `localhost:9876`) if the addon listens elsewhere. This server passes only `BLENDER_*` settings to it, never printer credentials. See the [Blender guide](./BLENDER.md). The Fusion MCP server likewise receives only `FUSION_*` settings. Its add-in also defaults to port 9876, so if you run Blender and Fusion together, move one of them with `BLENDER_PORT` or `FUSION_MCP_PORT`. See the [Fusion guide](./FUSION.md).
+The Blender MCP server also reads its own `BLENDER_HOST` and `BLENDER_PORT` (default `localhost:9876`) if the addon listens elsewhere. This server passes only `BLENDER_*` settings to it, never printer credentials. See the [Blender guide](./BLENDER.md). The Fusion MCP server likewise receives only `FUSION_*` settings, and runs on `FUSION_MCP_PORT=9877` so it does not collide with Blender on 9876. See the [Fusion guide](./FUSION.md).
 
 ---
 
@@ -394,6 +396,8 @@ If your Creality printer runs Klipper with Moonraker reachable on the network, a
 | Repetier-Server | `GET /printer/api/<slug>?a=listPrinter` | `online`, `job` and `paused`; progress is `done`; elapsed is `printedTimeComp`, remaining `printTime - printedTimeComp`. These fields and `@pause` are returned or accepted by current servers but are not in the [API manual](https://www.repetier-server.com/manuals/programming/API/index.html) | `getPrinterConfig` webcam `staticUrl` | `send` `{"cmd":"@pause"}`; `continueJob` | Docs only |
 | Creality | Moonraker on port 7125, then 4408, when it answers; otherwise `/api/device/status` | As Klipper, or the device status's recognized state words | As Klipper, or none | Only through Moonraker | Not verified; the ports come from community K1 setups, not Creality documentation |
 | Bambu Lab | The MQTT report (`get_printer_status` raw) | `gcode_state`; a user cancel (`print_error` `0300400C`) is `cancelled`; HMS codes as `AAAA_BBBB_CCCC_DDDD` | None here; use bambu-printer-mcp | Use bambu-printer-mcp | Offline mapping tests |
+
+`resume_print` asks a person first, like a print start (unless `PRINT_REQUIRE_CONFIRMATION=0`). OctoPrint, Klipper and Duet (DSF) re-download the job and compare its SHA-256 with the inspected bytes before asking; PrusaLink, Repetier and Creality match it by name only. A standalone Duet board has no download route here, so its resume is refused.
 
 `get_printer_filaments` reports one external slot. On Moonraker it reads the active spool with `GET /server/spoolman/spool_id` and `POST /server/spoolman/proxy` (`/v1/spool/<id>`); without Spoolman, and on every other firmware, the slot's source is `unknown`.
 

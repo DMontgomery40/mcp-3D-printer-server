@@ -211,7 +211,7 @@ The optional FULU **BambuNetwork bridge** is a separate runtime. `fulu_bambu_net
 - Printer status, file listing, G-code upload from inline content or a local path, starting a stored file, pausing, resuming, cancelling a job, and setting bed or nozzle temperatures
 - The `counterpart/1` tools shared with [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp): one progress shape for every firmware (state, job, progress, time left, layers, temperatures, problems), detected printer capabilities, camera snapshots, and the loaded filament (Spoolman on Moonraker)
 - STL tools: inspect dimensions, scale, rotate, translate, extend the base, merge vertices, center, lay flat, transform one section of a model, and render multi-angle SVG previews
-- A print and heating safety gate on every backend: the exact G-code is inspected, every heater target is checked against hardware and material ceilings, the printer's state is checked, and a human confirms through MCP elicitation. Heater-off, pause, and cancel are never gated; resume only continues a paused job this server inspected and started
+- A print and heating safety gate on every backend: the exact G-code is inspected, every heater target is checked against hardware and material ceilings, the printer's state is checked, and a human confirms through MCP elicitation. Heater-off, pause, and cancel are never gated; resume only continues a paused job this server inspected and started, after a person confirms
 - Slicing through PrusaSlicer, Slic3r, OrcaSlicer, CuraEngine, FULU OrcaSlicer-bambulab, or Bambu Studio command lines, with G-code peak-temperature checks and a one-call process-and-print pipeline
 - Bambu-compatible CLI slicing with the exact model and nozzle machine preset resolved from your slicer installation, filament slots and colours, placement options, and a local template registry
 - Bambu Lab project printing: upload a sliced `.3mf` over FTPS and start it over MQTT with the plate's G-code path, MD5, AMS mapping, and calibration flags, after checking the plate against a fresh printer report; auto-slice unsliced projects with FULU OrcaSlicer-bambulab or Bambu Studio
@@ -394,7 +394,7 @@ Every printer tool accepts `host`, `port`, `type`, and `api_key`, and Bambu prin
 
 What each call does depends on the backend; see [printer backend setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#printer-backend-setup) for the exact API routes.
 
-Every print start and positive heating command, on every backend, goes through a [safety gate](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#print-and-heating-safety): the server inspects the exact G-code it will start, checks each heater target against hardware and material ceilings, checks that the printer is ready, and asks a human to confirm through MCP elicitation. Turning a heater off (`temperature: 0`), `pause_print`, and `cancel_print` are never gated. `resume_print` reheats and moves the printer, so it only resumes a job this server inspected and started.
+Every print start and positive heating command, on every backend, goes through a [safety gate](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#print-and-heating-safety): the server inspects the exact G-code it will start, checks each heater target against hardware and material ceilings, checks that the printer is ready, and asks a human to confirm through MCP elicitation. Turning a heater off (`temperature: 0`), `pause_print`, and `cancel_print` are never gated. `resume_print` reheats and moves the printer, so it only resumes a job this server inspected and started, and asks a person first.
 
 #### get_printer_status
 
@@ -480,7 +480,7 @@ Pause the current print. Pausing is never gated. Routes: OctoPrint `POST /api/jo
 
 #### resume_print
 
-Resume a paused print. Resuming reheats and moves the printer, so the server resumes only a job it inspected and started itself, and only after a fresh report that the same job is paused. A job started at the printer, from another app, or before the server restarted is refused; resume it at the printer. OctoPrint drops a resume sent while it is still pausing, so the server waits for a settled pause (`job.stage` "Pausing" means not yet). Routes: OctoPrint `{"command":"pause","action":"resume"}`, Moonraker `POST /printer/print/resume`, PrusaLink `PUT /api/v1/job/<id>/resume`, Duet `M24`, and Repetier `continueJob`.
+Resume a paused print. Resume reheats and moves the printer, so it is gated like a print start. It resumes only the job this server instance inspected and started, after a fresh report that the same job is paused, and after a person confirms through MCP elicitation (unless the server sets `PRINT_REQUIRE_CONFIRMATION=0`). OctoPrint, Klipper and Duet re-download the file and compare its SHA-256 with the inspected bytes before asking; PrusaLink, Repetier and Creality have no download route here, so the job is matched by name only. The printer is read again after the confirmation. Cancelling the job, or a report that it ended, retires it, so a later job that reuses the name is never resumed. A job started at the printer, from another app, or before the server restarted is refused; resume it at the printer. Duet's download route needs the Duet Software Framework, so a standalone board's resume is refused. The result's `bytesVerified` says whether the bytes were re-read. OctoPrint drops a resume sent while it is still pausing, so the server waits for a settled pause (`job.stage` "Pausing" means not yet). Routes: OctoPrint `{"command":"pause","action":"resume"}`, Moonraker `POST /printer/print/resume`, PrusaLink `PUT /api/v1/job/<id>/resume`, Duet `M24`, and Repetier `continueJob`.
 
 #### counterpart_printer_info
 
@@ -815,7 +815,7 @@ Design parts from scratch in Autodesk Fusion through [faust-machines/fusion360-m
 
 #### fusion_mcp_status
 
-Report `configured`, `connected`, `addinReachable`, `fusionRunning`, the Fusion server's `tools` with their schemas, `launched`, `pin` (the faust-machines commit), and `error` when the server could not start. `connected` is true only when the add-in answered its ping. With `launch: true` and Fusion not running on this Mac, it runs `open -a "Autodesk Fusion"` and waits up to 90 s for the add-in.
+Report `configured`, `connected`, `addinReachable`, `fusionRunning`, the Fusion server's `tools` with their schemas, `launched`, `pin` (the faust-machines commit), and `error` when the server could not start. `addinReachable` means the add-in answered its own `ping` within 2 s on `FUSION_MCP_PORT` (default 9877, because Blender's MCP addon holds 9876). `connected` is true only when the add-in also answered through the Fusion server. With `launch: true` and Fusion not running on this Mac, it runs `open -a "Autodesk Fusion" --env FUSION_MCP_PORT=<port>` and waits up to 90 s for the add-in.
 
 ```json
 { "launch": true }

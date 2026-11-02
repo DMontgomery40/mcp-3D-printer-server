@@ -377,7 +377,8 @@ test("upload without print stays unguarded and keeps the requested name", async 
 // ---- pause_print / resume_print (counterpart/1) ----
 // Pause is never gated. Resume reheats and moves the printer, so it only
 // resumes a job this adapter instance inspected and started, after a fresh
-// report that the same job is paused.
+// report that the same job is paused, with its bytes re-read where the
+// firmware can download them, and after human confirmation.
 
 /** Firmware responses once the checked job is paused; routes follow each firmware's API docs. */
 const PAUSED = {
@@ -401,6 +402,48 @@ const PAUSED = {
   },
 };
 
+/** The same job printing, and the printer after it ended, for the resume-record lifecycle. */
+const RUNNING = {
+  octoprint: (name, req) => {
+    if (req.url === "/api/job" && req.method === "GET") return { state: "Printing", job: { file: { name, path: name, origin: "local" } }, progress: { completion: 12 } };
+    if (req.url === "/api/printer") return { state: { text: "Printing", flags: { operational: true, printing: true } } };
+  },
+  klipper: (name, req) => {
+    if (req.url.startsWith("/printer/objects/query")) return { result: { status: { webhooks: { state: "ready" }, print_stats: { state: "printing", filename: name } } } };
+  },
+  prusa: (name, req) => {
+    if (req.url === "/api/v1/status") return { printer: { state: "PRINTING" }, job: { id: 7, progress: 12 } };
+    if (req.url === "/api/v1/job" && req.method === "GET") return { id: 7, state: "PRINTING", file: { name: "JOB~1.GCO", display_name: name } };
+  },
+  duet: (name, req) => {
+    if (req.url.startsWith("/rr_model?key=state")) return { key: "state", flags: "d99v", result: { status: "processing" } };
+    if (req.url.startsWith("/rr_model?key=job")) return { key: "job", flags: "d99v", result: { file: { fileName: `0:/gcodes/${name}`, size: 100 }, filePosition: 12 } };
+  },
+  repetier: (name, req) => {
+    if (req.url.includes("a=listPrinter")) return [{ slug: "p", online: 1, active: true, job: name, paused: false }];
+  },
+};
+const ENDED = {
+  octoprint: (name, req) => {
+    if (req.url === "/api/job" && req.method === "GET") return { state: "Operational", job: { file: { name: null } }, progress: { completion: null } };
+    if (req.url === "/api/printer") return { state: { text: "Operational", flags: { operational: true, ready: true } } };
+  },
+  klipper: (name, req) => {
+    if (req.url.startsWith("/printer/objects/query")) return { result: { status: { webhooks: { state: "ready" }, print_stats: { state: "complete", filename: name } } } };
+  },
+  prusa: (name, req) => {
+    if (req.url === "/api/v1/status") return { printer: { state: "FINISHED" }, job: { id: 7, progress: 100 } };
+    if (req.url === "/api/v1/job" && req.method === "GET") return { id: 7, state: "FINISHED", file: { name: "JOB~1.GCO", display_name: name } };
+  },
+  duet: (name, req) => {
+    if (req.url.startsWith("/rr_model?key=state")) return { key: "state", flags: "d99v", result: { status: "idle" } };
+    if (req.url.startsWith("/rr_model?key=job")) return { key: "job", flags: "d99v", result: { file: {}, filePosition: 0 } };
+  },
+  repetier: (name, req) => {
+    if (req.url.includes("a=listPrinter")) return [{ slug: "p", online: 1, active: false, job: "none", paused: false }];
+  },
+};
+
 const CONTROL_ROUTES = {
   octoprint: { pause: (r) => r.method === "POST" && r.url === "/api/job" && /"action":"pause"/.test(r.body), resume: (r) => r.method === "POST" && r.url === "/api/job" && /"action":"resume"/.test(r.body) },
   klipper: { pause: (r) => r.method === "POST" && r.url === "/printer/print/pause", resume: (r) => r.method === "POST" && r.url === "/printer/print/resume" },
@@ -415,13 +458,21 @@ const CONTROL_ROUTES = {
 async function controlPrinter(t, name) {
   const adapter = ADAPTERS[name];
   const requests = [];
-  const current = { mode: "idle", job: "job.gcode" };
+  const current = { mode: "idle", job: "job.gcode", download: SAFE };
   const http = createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const record = { method: req.method, url: req.url, body: Buffer.concat(chunks).toString() };
     requests.push(record);
     const send = (status, payload) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(payload === undefined ? "" : JSON.stringify(payload)); };
+    if (req.method === "GET" && adapter.download?.(req.url)) {
+      res.writeHead(200, { "Content-Type": "application/octet-stream" });
+      return res.end(current.download);
+    }
+    for (const [mode, table] of [["running", RUNNING], ["ended", ENDED]]) {
+      const reply = current.mode === mode ? table[name](current.job, record) : undefined;
+      if (reply !== undefined) return send(200, reply);
+    }
     if (current.mode === "paused") {
       const paused = PAUSED[name](current.job, record, current);
       if (paused !== undefined) return send(200, paused);
@@ -458,7 +509,7 @@ for (const name of Object.keys(PAUSED)) {
 
   test(`${name}: resume_print resumes the checked job only when it is freshly reported paused`, async (t) => {
     const printer = await controlPrinter(t, name);
-    const { impl } = adapterWith(ADAPTERS[name]);
+    const { impl, prompts } = adapterWith(ADAPTERS[name]);
     const started = await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
     assert.equal(started.jobName, "job.gcode", "the print result names the remote job");
     // Not paused: refused.
@@ -476,10 +527,85 @@ for (const name of Object.keys(PAUSED)) {
       await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /still pausing; nothing was sent/);
       printer.current.pausing = false;
     }
+    const promptsBefore = prompts.length;
     const resumed = await impl.resumeJob("127.0.0.1", printer.port, "KEY");
     assert.equal(resumed.jobName, "job.gcode");
+    assert.equal(resumed.bytesVerified, Boolean(ADAPTERS[name].download), "bytes are re-read where the firmware can download them");
+    assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 1);
+    assert.equal(prompts.length, promptsBefore + 1, "resume asks a person, like a print start");
+    assert.match(prompts.at(-1), /^Resume job\.gcode on .*peak nozzle 215°C, bed 60°C.*SHA-256: [0-9a-f]{64}/);
+  });
+
+  test(`${name}: resume_print sends nothing when the person declines, or when the job changes during the prompt`, async (t) => {
+    const printer = await controlPrinter(t, name);
+    let answer = false;
+    let duringPrompt = () => {};
+    const { impl } = adapterWith(ADAPTERS[name], async () => { duringPrompt(); return answer; });
+    answer = true;
+    await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
+    printer.current.mode = "paused";
+    answer = false;
+    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /declined or cancelled.*No command was sent/);
+    // Resumed at the printer while the prompt was open.
+    answer = true;
+    duringPrompt = () => { printer.current.mode = "running"; };
+    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /not a paused job; nothing was sent/);
+    // Replaced by another paused job while the prompt was open: refused, and this job's record is retired.
+    printer.current.mode = "paused";
+    duringPrompt = () => { printer.current.job = "other.gcode"; };
+    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /does not match the job this server started.*nothing was sent/);
+    printer.current.job = "job.gcode";
+    duringPrompt = () => {};
+    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /only resumes a job this server instance inspected and started/);
+    assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 0);
+  });
+
+  test(`${name}: resume_print with PRINT_REQUIRE_CONFIRMATION=0 skips only the prompt`, async (t) => {
+    process.env.PRINT_REQUIRE_CONFIRMATION = "0";
+    t.after(() => { delete process.env.PRINT_REQUIRE_CONFIRMATION; });
+    const printer = await controlPrinter(t, name);
+    const { impl, prompts } = adapterWith(ADAPTERS[name]);
+    await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
+    printer.current.mode = "paused";
+    await impl.resumeJob("127.0.0.1", printer.port, "KEY");
+    assert.equal(prompts.length, 0);
     assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 1);
   });
+
+  test(`${name}: a cancelled or finished checked job is never resumed, even when a later job reuses its name`, async (t) => {
+    const printer = await controlPrinter(t, name);
+    const { impl } = adapterWith(ADAPTERS[name]);
+    await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
+    await impl.cancelJob("127.0.0.1", printer.port, "KEY");
+    printer.current.mode = "paused";
+    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /only resumes a job this server instance inspected and started/);
+    // Seen running, then reported ended: the record is retired.
+    printer.current.mode = "idle";
+    await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
+    printer.current.mode = "running";
+    assert.equal((await impl.observedProgress("127.0.0.1", printer.port, "KEY")).state, "printing");
+    printer.current.mode = "ended";
+    assert.match((await impl.observedProgress("127.0.0.1", printer.port, "KEY")).state, /^(idle|finished)$/);
+    printer.current.mode = "paused";
+    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /only resumes a job this server instance inspected and started/);
+    assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 0);
+  });
+
+  if (ADAPTERS[name].download) {
+    test(`${name}: resume_print refuses when the printer's copy is no longer the inspected bytes`, async (t) => {
+      const printer = await controlPrinter(t, name);
+      const { impl, prompts } = adapterWith(ADAPTERS[name]);
+      await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
+      printer.current.mode = "paused";
+      printer.current.download = UNSAFE;
+      const before = prompts.length;
+      await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /no longer the file this server inspected.*nothing was sent/);
+      assert.equal(prompts.length, before, "nobody is asked to confirm a job that will be refused");
+      printer.current.download = SAFE;
+      await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /only resumes a job this server instance inspected and started/, "a mismatch retires the record");
+      assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 0);
+    });
+  }
 }
 
 test("Creality pause/resume need a detected Moonraker; without one nothing is sent", async (t) => {

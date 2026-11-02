@@ -425,7 +425,8 @@ export function mapBambu(raw: any, observedAt: string, options: { connected: boo
   }
   return progressResult(observedAt, state, {
     job: job(state, {
-      name: nonEmptyText(raw.subtask_name) ?? nonEmptyText(raw.gcode_file),
+      // subtask_name is the project name; a raw G-code print reports only its file path.
+      name: nonEmptyText(raw.subtask_name) ?? remoteJobName(raw.gcode_file),
       id: taskId && taskId !== "0" ? taskId : undefined,
       progress: percent(raw.mc_percent),
       // mc_remaining_time is in minutes.

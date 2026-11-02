@@ -81,7 +81,7 @@ export class CounterpartService {
       return mapBambu(status?.raw, new Date().toISOString(), { connected: status?.connected === true, model: process.env.BAMBU_MODEL });
     }
     try {
-      return await generic.counterpartProgress(target.host, target.port, target.apiKey);
+      return await generic.observedProgress(target.host, target.port, target.apiKey);
     } catch (error) {
       if (unreachable(error)) return progressResult(new Date().toISOString(), "offline", { problems: [] });
       throw error;

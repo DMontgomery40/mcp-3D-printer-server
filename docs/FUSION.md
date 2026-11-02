@@ -36,11 +36,14 @@ and that commit pins `mcp>=1.0,<2`.
    | `FUSION_MCP_ARGS` | `["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]` (the default when unset) |
    | `FUSION_MCP_TIMEOUT_MS` | Optional, default `180000`. The first start downloads the pinned server |
    | `FUSION_MCP_HOST` | Optional, default `localhost`. Passed through to the Fusion server |
+   | `FUSION_MCP_PORT` | `9877` (the default). Blender's MCP addon holds 9876, the add-in's own default |
 
-   `FUSION_MCP_PORT` (default 9876) is passed through too. Blender's MCP
-   addon also listens on 9876 by default, so if you run both, move one of
-   them: set `FUSION_MCP_PORT` for the Fusion server and the add-in, or
-   `BLENDER_PORT` for Blender.
+   The bridge passes `FUSION_MCP_PORT` to the Fusion server, but the add-in
+   reads it from Fusion's environment, and an app opened from the Dock gets
+   no shell environment. `fusion_mcp_status` with `launch: true` opens Fusion
+   with `open -a "Autodesk Fusion" --env FUSION_MCP_PORT=9877`. To open it
+   yourself on that port, run `launchctl setenv FUSION_MCP_PORT 9877` once
+   per login, then start Fusion.
 4. Open Fusion and open or create any design once (**File → New Design**);
    see [the bootstrap gap](#the-bootstrap-gap-issue-12) below.
 
@@ -58,8 +61,8 @@ the Fusion server started and the add-in answered.
 | Check and print | `get_stl_info`, `lay_flat`, `slice_stl`, … | The usual path, with every print safety check |
 
 `fusion_mcp_status` checks the add-in by sending it the protocol's `ping`
-over TCP and requiring its `pong`, so another program on the same port
-(such as Blender's addon) is not mistaken for Fusion. `fusionRunning` comes
+over TCP and requiring its `pong` within a 2 s hard deadline, so another
+program on the port (such as Blender's addon) is not mistaken for Fusion. `fusionRunning` comes
 from the Fusion process on macOS. Elsewhere, or when `FUSION_MCP_HOST` is
 another computer, it is whether the add-in answered.
 

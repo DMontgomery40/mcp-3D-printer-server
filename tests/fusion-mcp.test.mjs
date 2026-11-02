@@ -12,7 +12,8 @@ import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { FUSION_MCP_DEFAULT_ARGS, FUSION_MCP_PINNED_COMMIT } from "../dist/fusion-mcp-bridge.js";
+import { spawn } from "node:child_process";
+import { FUSION_ADDIN_DEFAULT_PORT, FUSION_MCP_DEFAULT_ARGS, FUSION_MCP_PINNED_COMMIT, fusionLaunchArguments } from "../dist/fusion-mcp-bridge.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE = path.join(ROOT, "tests", "fixtures", "fusion-mcp-server.mjs");
@@ -47,6 +48,11 @@ async function start(t, { mode = "normal", configured = true, port } = {}) {
 }
 
 const text = (result) => result.content?.find((entry) => entry.type === "text")?.text ?? "";
+
+test("Fusion's add-in port defaults to 9877, off Blender's 9876, and launches pass it to Fusion", () => {
+  assert.equal(FUSION_ADDIN_DEFAULT_PORT, 9877);
+  assert.deepEqual(fusionLaunchArguments(9877), ["-a", "Autodesk Fusion", "--env", "FUSION_MCP_PORT=9877"]);
+});
 
 test("the pinned faust-machines command is the default FUSION_MCP_ARGS", () => {
   assert.equal(FUSION_MCP_PINNED_COMMIT, "19b9f1e95192");
@@ -119,6 +125,7 @@ test("one persistent Fusion session serves status, calls, a new design and an ex
   assert.equal(log.filter((entry) => entry.event === "spawn").length, 1, "the client is kept for the life of the server");
   assert.equal(log.find((entry) => entry.event === "spawn").printerSecretPresent, false, "printer credentials never reach Fusion");
   assert.equal(log.find((entry) => entry.event === "spawn").fusionHost, "127.0.0.1", "FUSION_MCP_HOST passes through");
+  assert.equal(log.find((entry) => entry.event === "spawn").fusionPort, port, "the faust server dials the port the bridge probes");
   assert.equal(log.filter((entry) => entry.name === "create_sketch").length, 1, "calls are never replayed");
 });
 
@@ -178,4 +185,60 @@ test("Blender's addon on the shared default port is not mistaken for the Fusion 
   const status = (await call("fusion_mcp_status")).structuredContent;
   assert.equal(status.addinReachable, false);
   assert.equal(status.connected, false);
+});
+
+test("a listener that trickles bytes cannot hold the add-in probe past its 2 s deadline", async (t) => {
+  const server = net.createServer((socket) => {
+    socket.on("error", () => {});
+    const timer = setInterval(() => { if (!socket.destroyed) socket.write(" "); }, 200);
+    socket.on("close", () => clearInterval(timer));
+    t.after(() => { clearInterval(timer); socket.destroy(); });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { call } = await start(t, { port: String(server.address().port), configured: false });
+  const began = Date.now();
+  const status = (await call("fusion_mcp_status")).structuredContent;
+  assert.equal(status.addinReachable, false);
+  assert.ok(Date.now() - began < 6000, `the probe ended after ${Date.now() - began} ms`);
+});
+
+test("closing stdin without a signal shuts the server and its Fusion MCP child down", async (t) => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "fusion-eof-"));
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const logPath = path.join(temp, "fusion.log");
+  const child = spawn(process.execPath, [path.join(ROOT, "dist", "index.js")], {
+    cwd: temp,
+    stdio: ["pipe", "pipe", "ignore"],
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, MCP_TRANSPORT: "stdio", TEMP_DIR: temp, PRINTER_TYPE: "octoprint",
+      FUSION_MCP_COMMAND: process.execPath, FUSION_MCP_ARGS: JSON.stringify([FIXTURE, "normal", logPath]), FUSION_MCP_PORT: "1" },
+  });
+  t.after(() => child.kill("SIGKILL"));
+  let out = "";
+  child.stdout.on("data", (chunk) => { out += chunk; });
+  const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+  const reply = async (id) => {
+    for (let i = 0; i < 300; i += 1) {
+      const line = out.split("\n").find((entry) => entry.includes(`"id":${id}`));
+      if (line) return JSON.parse(line);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`no reply ${id}`);
+  };
+  send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "eof", version: "1" } } });
+  await reply(1);
+  send({ method: "notifications/initialized" });
+  send({ id: 2, method: "tools/call", params: { name: "fusion_mcp_call", arguments: { tool_name: "ping" } } });
+  assert.match(JSON.stringify(await reply(2)), /\*\*ping\*\* OK/);
+  const fusionPid = JSON.parse(readFileSync(logPath, "utf8").split("\n")[0]).pid;
+  const exited = once(child, "exit");
+  child.stdin.end();
+  const [code] = await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error("server did not exit after stdin EOF")), 10000))]);
+  assert.equal(code, 0);
+  for (let i = 0; i < 40; i += 1) {
+    try { process.kill(fusionPid, 0); } catch { return; }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail(`the Fusion MCP child ${fusionPid} outlived the server`);
 });

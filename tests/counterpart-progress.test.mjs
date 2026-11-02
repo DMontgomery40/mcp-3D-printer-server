@@ -180,6 +180,9 @@ test("Bambu: gcode_state map, cancel as 0300400C, HMS codes, severities, urls an
     nozzle_temper: 220.1, nozzle_target_temper: 220, bed_temper: 60, bed_target_temper: 60, chamber_temper: 5,
     ams: { tray_now: "5", ams: [{ id: "1", tray: [{ id: "1", tray_type: "PETG", tray_color: "FF8800FF" }] }] } };
   const printing = valid(mapBambu(raw, AT, { connected: true, model: "p1s" }));
+  // A raw G-code print reports only gcode_file; job.name is its basename, the jobName that upload/start return.
+  const { subtask_name: _project, ...rawGcode } = raw;
+  assert.equal(valid(mapBambu({ ...rawGcode, gcode_file: "cache/checked-123-part.gcode" }, AT, { connected: true })).job.name, "checked-123-part.gcode");
   assert.equal(printing.state, "printing");
   assert.deepEqual(printing.job, { name: "bracket", id: "123456", progress: 40, remainingSec: 1500, layer: 10, totalLayers: 100 });
   assert.equal(printing.temps.chamber, undefined, "P1S reports a constant chamber value");

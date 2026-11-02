@@ -3090,6 +3090,11 @@ class ThreeDPrinterMCPServer {
   private async connectStdio(): Promise<void> {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
+    // A host that disconnects by closing stdin sends no signal. Shut down then,
+    // so the server and its persistent Fusion MCP child do not outlive it.
+    const disconnected = () => { void this.close().finally(() => process.exit(0)); };
+    process.stdin.once("end", disconnected);
+    process.stdin.once("close", disconnected);
     console.error("3D Printer MCP server running on stdio transport");
   }
 
@@ -3215,7 +3220,15 @@ class ThreeDPrinterMCPServer {
     return value;
   }
 
-  async close(): Promise<void> {
+  private closing?: Promise<void>;
+
+  /** Idempotent: a signal and stdin EOF can both arrive. */
+  close(): Promise<void> {
+    this.closing ??= this.closeOnce();
+    return this.closing;
+  }
+
+  private async closeOnce(): Promise<void> {
     await this.printerFactory.disconnectAll();
     await this.fusion.close();
 

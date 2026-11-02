@@ -17,7 +17,7 @@ const tools = [
   { name: "export_f3d", description: "Export the design as a native Fusion 360 archive (.f3d)", inputSchema: { type: "object", properties: { file_path: { type: "string" } } } },
   { name: "create_sketch", description: "Create a new sketch on a plane", inputSchema: { type: "object", properties: { plane: { type: "string", enum: ["xy", "xz", "yz"] } } } },
 ];
-log({ event: "spawn", pid: process.pid, printerSecretPresent: Boolean(process.env.BAMBU_TOKEN || process.env.API_KEY), fusionHost: process.env.FUSION_MCP_HOST ?? null });
+log({ event: "spawn", pid: process.pid, printerSecretPresent: Boolean(process.env.BAMBU_TOKEN || process.env.API_KEY), fusionHost: process.env.FUSION_MCP_HOST ?? null, fusionPort: process.env.FUSION_MCP_PORT ?? null });
 
 /** One-triangle binary STL spanning 20 x 10 x 5 (mm), or 2 x 1 x 0.5 when written in cm. */
 function stl(scale) {
