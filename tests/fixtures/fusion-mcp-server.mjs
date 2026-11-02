@@ -45,8 +45,11 @@ function call(name, args) {
     let result = "None";
     if (code.includes("'mcp3d_new_design'")) result = JSON.stringify({ mcp3d_new_design: true, document: "Untitled", parametric: true });
     if (code.includes("'mcp3d_bodies'")) {
-      const bodies = [{ name: "Bracket", size_cm: [2, 1, 0.5] }];
-      if (mode === "two-bodies") bodies.push({ name: "Lid", size_cm: [2, 1, 0.2] });
+      // The probe must list export_stl's own population: root bodies, then occurrence proxies, hidden or not.
+      if (!code.includes("component.bRepBodies") || !code.includes("component.allOccurrences")) throw new Error("probe does not match _body_by_name");
+      const bodies = [{ name: "Bracket", solid: true, visible: true, size_cm: [2, 1, 0.5] }, { name: "Sketch body", solid: false, visible: true, size_cm: [1, 1, 0] }];
+      if (mode === "two-bodies") bodies.push({ name: "Lid", solid: true, visible: true, size_cm: [2, 1, 0.2] });
+      if (mode === "hidden-duplicate") bodies.unshift({ name: "Bracket", solid: true, visible: false, size_cm: [9, 9, 9] });
       result = JSON.stringify({ mcp3d_bodies: true, bodies });
     }
     if (code.includes("'mcp3d_parameters'")) result = JSON.stringify({ mcp3d_parameters: true, parameters: [{ name: "width", value: 2, expression: "20 mm", unit: "mm", comment: "" }], count: 1 });

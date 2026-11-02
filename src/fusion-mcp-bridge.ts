@@ -368,22 +368,23 @@ export class FusionMcpBridge {
     }
     if (args.body_name !== undefined) textArgument(args.body_name, "body_name");
 
-    // Bodies and their bounding boxes in Fusion's internal centimetres.
+    // The bodies export_stl can resolve by name, in its own order (_body_by_name, addon/server/command_handler.py
+    // at the pin): root bodies, then each occurrence's proxies, hidden or not. Sizes are in Fusion's centimetres,
+    // in root space like the exported mesh. `component` is the root component in execute_code.
     const probe = await this.invoke("execute_code", { code: [
       "import json",
       "bodies = []",
-      "for comp in design.allComponents:",
-      "    for b in comp.bRepBodies:",
-      "        if b.isSolid and b.isVisible:",
-      "            bb = b.boundingBox",
-      "            bodies.append({'name': b.name, 'size_cm': [bb.maxPoint.x - bb.minPoint.x, bb.maxPoint.y - bb.minPoint.y, bb.maxPoint.z - bb.minPoint.z]})",
+      "for b in list(component.bRepBodies) + [p for o in component.allOccurrences for p in o.bRepBodies]:",
+      "    bb = b.boundingBox",
+      "    bodies.append({'name': b.name, 'solid': b.isSolid, 'visible': b.isVisible, 'size_cm': [bb.maxPoint.x - bb.minPoint.x, bb.maxPoint.y - bb.minPoint.y, bb.maxPoint.z - bb.minPoint.z]})",
       "json.dumps({'mcp3d_bodies': True, 'bodies': bodies})",
     ].join("\n") }, deadline.remaining(), signal);
     if (probe.isError) {
       if (noActiveDesign(probe)) throw new FusionError(NO_ACTIVE_DESIGN_HELP);
       throw new FusionError(`Fusion could not list the design's bodies: ${resultText(probe).slice(0, 600) || "no details"}`);
     }
-    const bodies = (executeCodeJson(probe, "mcp3d_bodies").bodies as { name: string; size_cm: number[] }[] | undefined) ?? [];
+    const everyBody = (executeCodeJson(probe, "mcp3d_bodies").bodies as { name: string; solid: boolean; visible: boolean; size_cm: number[] }[] | undefined) ?? [];
+    const bodies = everyBody.filter((entry) => entry.solid === true && entry.visible === true);
     const bodyName = args.body_name as string | undefined;
     const body = bodyName ? bodies.find((entry) => entry.name === bodyName) : bodies.length === 1 ? bodies[0] : undefined;
     if (!body) {
@@ -392,7 +393,11 @@ export class FusionMcpBridge {
         ? `The design has ${bodies.length} visible solid bodies (${bodies.map((entry) => entry.name).join(", ")}); pass body_name.`
         : "The design has no visible solid body to export.");
     }
-    if (bodies.filter((entry) => entry.name === body.name).length > 1) throw new FusionError(`Several bodies are named "${body.name}"; rename them in Fusion so the export is unambiguous.`);
+    // export_stl takes the first body with this name, hidden or not, so the name must be unique among all of them.
+    // This also refuses copies of an instanced component, which share their bodies' names.
+    if (everyBody.filter((entry) => entry.name === body.name).length > 1) {
+      throw new FusionError(`Several bodies are named "${body.name}" (including hidden ones and component copies); rename them in Fusion so the export is unambiguous.`);
+    }
 
     const id = randomUUID();
     const staged = { stl: path.join(outputDir, `.mcp3d-${id}.stl`), f3d: path.join(outputDir, `.mcp3d-${id}.f3d`) };

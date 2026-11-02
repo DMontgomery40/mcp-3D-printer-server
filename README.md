@@ -835,7 +835,7 @@ Open a new parametric design document, so the Fusion tools have an active design
 
 #### fusion_mcp_export
 
-Write `<name>.stl` (from `export_stl`), `<name>.f3d` (from `export_f3d`), and `<name>.parameters.json` (the design's user parameters) into `output_dir`, and return their absolute paths as `stl`, `f3d`, and `parameters`. The STL is one body: the only visible solid body, or `body_name`. It is checked as a finite triangle mesh, and `stlUnits` reports whether its numbers are millimetres. Existing files are never overwritten, and a failed export publishes nothing.
+Write `<name>.stl` (from `export_stl`), `<name>.f3d` (from `export_f3d`), and `<name>.parameters.json` (the design's user parameters) into `output_dir`, and return their absolute paths as `stl`, `f3d`, and `parameters`. The STL is one body: the only visible solid body, or `body_name`, whose name must be unique across all bodies, hidden ones and component copies included. It is checked as a finite triangle mesh, and `stlUnits` reports whether its numbers are millimetres. Existing files are never overwritten, and a failed export publishes nothing.
 
 ```json
 { "output_dir": "/path/to/project", "name": "bracket" }

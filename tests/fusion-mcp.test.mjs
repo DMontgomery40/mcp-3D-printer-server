@@ -156,6 +156,13 @@ test("fusion_mcp_export needs body_name for several bodies, warns on centimetre 
   result = await two.call("fusion_mcp_export", { output_dir: two.temp, name: "../escape" });
   assert.match(text(result), /plain file name/);
 
+  // export_stl would take the hidden root "Bracket" first, so the visible one's name is ambiguous.
+  const hidden = await start(t, { port, mode: "hidden-duplicate" });
+  result = await hidden.call("fusion_mcp_export", { output_dir: hidden.temp, name: "part" });
+  assert.equal(result.isError, true);
+  assert.match(text(result), /Several bodies are named "Bracket" \(including hidden ones/);
+  assert.equal(hidden.requests().filter((entry) => entry.name === "export_stl").length, 0, "nothing is exported");
+
   const cm = await start(t, { port, mode: "stl-cm" });
   result = await cm.call("fusion_mcp_export", { output_dir: cm.temp, name: "part" });
   assert.notEqual(result.isError, true, text(result));

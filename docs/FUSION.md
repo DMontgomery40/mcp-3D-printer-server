@@ -67,7 +67,10 @@ from the Fusion process on macOS. Elsewhere, or when `FUSION_MCP_HOST` is
 another computer, it is whether the add-in answered.
 
 `fusion_mcp_export` exports one body as the STL: the only visible solid body,
-or the one named in `body_name`. It stages the files, checks that Fusion wrote
+or the one named in `body_name`. `export_stl` picks the first body with that
+name, hidden or not, so the name must be unique across every body, including
+hidden ones and copies of an instanced component; otherwise rename it in
+Fusion. It stages the files, checks that Fusion wrote
 them, validates the STL as a finite triangle mesh, and only then publishes all
 three. Existing files are never overwritten, and on any failure nothing is
 left behind. The parameters file holds the design's user parameters (`name`,
