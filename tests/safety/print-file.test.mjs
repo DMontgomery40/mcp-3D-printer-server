@@ -517,3 +517,108 @@ for(const model of ['X2D','H2D','H2D Pro']) test(`${model} L-1 preheat keeps eve
 test('H2C still rejects unassigned-nozzle preheat without a verified vendor form', async t => {
   await assert.rejects(inspect(t,header('H2C','PETG;PETG','0.4;0.4')+'M620.17 T0 S230 L-1\n',{model:'h2c'}),/position -1 has no declared material/);
 });
+
+// Studio v02.09.01.70, GCodeWriter::set_temperature: LayerChange emits
+// M104 M S<target> with an optional T tool. The bare M is not a heat target.
+test('Studio 2.9 layer-change M104 M retains independent temperature checks',async t=>{
+  for(const [name,model,nozzles,command] of [
+    ['P1S','p1s','0.4','M104 M S210'],
+    ['A1','a1','0.4','M104 M S210'],
+    ['X2D','x2d','0.4;0.4','M104 M S210 T1'],
+  ]) {
+    const result=await inspect(t,header(name,'PLA',nozzles)+command+'\n',{model});
+    assert.equal(result.maxNozzleTemperature,210);
+  }
+  await assert.rejects(inspect(t,header()+'M104 M S400\n'),/temperature|limit/i);
+  await assert.rejects(inspect(t,header('X2D','ABS;PLA','0.4;0.4')+'T0\nM104 M S290 T1\n',{model:'x2d'}),/PLA|temperature|limit/i);
+});
+test('Studio layer-change marker rejects numeric flags, extra forms and missing targets',async t=>{
+  for(const command of ['M104 M1 S210','M104 M0 S210','M104 M','M104 M R210','M104 M S210 R220','M104 M M S210','M104 M S210 A','M104 M S210 N0','M109 M S210','M140 M S60','M104 M S210 T4'])
+    await assert.rejects(inspect(t,header()+command+'\n'),/temperature|parameter|target|nozzle|command/i,command);
+});
+
+test('H2C vendor per-variant first-layer temperatures resolve for a single filament',async t=>{
+  const project={
+    printer_model:'Bambu Lab H2C',nozzle_diameter:['0.4','0.4'],filament_type:['PLA'],
+    filament_extruder_variant:['Direct Drive Standard','Direct Drive High Flow','Direct Drive E3D High Flow'],
+    filament_self_index:['1','1','1'],
+    nozzle_temperature_initial_layer:['220','220','220'],
+  };
+  const entries={'Metadata/project_settings.config':project,
+    'Metadata/plate_1.gcode':h2cHeader()+'; filament_self_index = 1\n; filament_extruder_variant = \"Direct Drive Standard\"\n; EXECUTABLE_BLOCK_START\n'+h2cStartup+'; MACHINE_START_GCODE_END\nG1 X10 Y10 E1\n'};
+  const result=await inspect(t,'',{model:'h2c'},entries);
+  assert.equal(result.maxNozzleTemperature,220);
+});
+// Bambu Studio v02.08.02.61 (926a7192574bcb9b3a732e1ec59a46d79cb45466):
+// PrintConfig.cpp get_filament_config_idx and Print.cpp full_print_config.
+// The project rows are keyed by filament_self_index + filament_extruder_variant.
+const h2cVariantFixture=(materials=['PLA'],selected=['Direct Drive Standard'],targets=[220])=>({
+  'Metadata/project_settings.config':{
+    printer_model:'Bambu Lab H2C',nozzle_diameter:['0.4','0.4'],filament_type:materials,
+    filament_self_index:materials.flatMap((_,i)=>[String(i+1),String(i+1),String(i+1)]),
+    filament_extruder_variant:materials.flatMap(()=>['Direct Drive Standard','Direct Drive High Flow','Direct Drive E3D High Flow']),
+    nozzle_temperature_initial_layer:materials.flatMap((_,i)=>[String(targets[i]),String(targets[i]+5),String(targets[i]+10)]),
+  },
+  'Metadata/plate_1.gcode':header('H2C',materials.join(';'),'0.4;0.4')+
+    '; filament_self_index = '+materials.map((_,i)=>i+1).join(';')+'\n'+
+    '; filament_extruder_variant = '+selected.map(v=>JSON.stringify(v)).join(';')+'\n'+
+    '; nozzle_temperature_initial_layer = '+targets.map((v,i)=>v+(selected[i]==='Direct Drive Standard'?0:selected[i]==='Direct Drive High Flow'?5:10)).join(';')+'\n'+
+    '; EXECUTABLE_BLOCK_START\nM104 O-80 A\n; MACHINE_START_GCODE_END\n',
+});
+test('H2C resolves distinct variant temperatures by filament index and selected variant',async t=>{
+  for(const selected of ['Direct Drive Standard','Direct Drive High Flow','Direct Drive E3D High Flow']) {
+    const result=await inspect(t,'',{model:'h2c'},h2cVariantFixture(['PLA'],[selected]));
+    assert.equal(result.maxNozzleTemperature,selected==='Direct Drive Standard'?140:selected==='Direct Drive High Flow'?145:150);
+  }
+  const entries=h2cVariantFixture(['PLA','PA-CF'],['Direct Drive High Flow','Direct Drive E3D High Flow'],[220,310]);
+  const result=await inspect(t,'',{model:'h2c'},entries);
+  assert.equal(result.maxNozzleTemperature,240);
+  assert.deepEqual(result.materials,['PLA','PA']);
+  // Row order is not a filament index. Reorder all three parallel arrays.
+  const project=entries['Metadata/project_settings.config'];
+  for(const key of ['filament_self_index','filament_extruder_variant','nozzle_temperature_initial_layer']) project[key].reverse();
+  assert.equal((await inspect(t,'',{model:'h2c'},entries)).maxNozzleTemperature,240);
+});
+test('H2C rejects missing ambiguous contradictory or malformed variant temperature evidence',async t=>{
+  const mutations=[
+    p=>delete p.filament_self_index,
+    p=>delete p.filament_extruder_variant,
+    p=>p.filament_self_index[0]='0',
+    p=>p.filament_self_index[0]='2',
+    p=>p.filament_extruder_variant[0]='unknown',
+    p=>p.filament_extruder_variant[1]='Direct Drive Standard',
+    p=>p.filament_extruder_variant[0]='Direct Drive High Flow',
+    p=>p.nozzle_temperature_initial_layer.pop(),
+    p=>p.nozzle_temperature_initial_layer[0]='NaN',
+    p=>p.nozzle_temperature_initial_layer[0]='221',
+  ];
+  for(const mutate of mutations) {
+    const entries=h2cVariantFixture();mutate(entries['Metadata/project_settings.config']);
+    await assert.rejects(inspect(t,'',{model:'h2c'},entries),/temperature|variant|index|metadata/i);
+  }
+  for(const key of ['filament_self_index','filament_extruder_variant']) {
+    const entries=h2cVariantFixture();entries['Metadata/plate_1.gcode']=entries['Metadata/plate_1.gcode'].replace(new RegExp('; '+key+'[^\\n]*\\n'),'');
+    await assert.rejects(inspect(t,'',{model:'h2c'},entries),/variant|index|metadata/i);
+  }
+});
+test('H2C selected variant agrees with supplied logical extruder and flow mapping',async t=>{
+  for(const [volume,variant] of [['0','Direct Drive Standard'],['1','Direct Drive High Flow'],['2','Direct Drive Standard'],['5','Direct Drive E3D High Flow']]) {
+    const entries=h2cVariantFixture(['PLA'],[variant]);
+    entries['Metadata/plate_1.gcode']='; filament_map = 2\n; physical_extruder_map = 1,0\n; extruder_type = Bowden,Direct Drive\n; filament_volume_map = '+volume+'\n'+entries['Metadata/plate_1.gcode'];
+    await assert.doesNotReject(inspect(t,'',{model:'h2c'},entries));
+    for(const bad of ['4','99','-1',volume==='0'?'5':'0']) {
+      if(volume==='2' && bad==='0') continue; // Both select Standard.
+      const conflicting={...entries,'Metadata/plate_1.gcode':entries['Metadata/plate_1.gcode'].replace('filament_volume_map = '+volume,'filament_volume_map = '+bad)};
+      await assert.rejects(inspect(t,'',{model:'h2c'},conflicting),/variant|mapping/);
+    }
+  }
+});
+test('H2C selected variant bases retain independent material and hardware ceilings',async t=>{
+  // Derived target is safe (200), but the PLA base (280) is not.
+  for(const [materials,selected,targets] of [
+    [['PLA'],['Direct Drive Standard'],[280]],
+    [['PLA','PA-CF'],['Direct Drive High Flow','Direct Drive Standard'],[280,310]],
+    [['PA-CF'],['Direct Drive Standard'],[400]],
+    [['PLA'],['Direct Drive Standard'],[-1]],
+  ]) await assert.rejects(inspect(t,'',{model:'h2c'},h2cVariantFixture(materials,selected,targets)),/temperature|limit|material/i);
+});

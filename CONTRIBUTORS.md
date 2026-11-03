@@ -63,3 +63,7 @@ Special thanks to the [FULU Foundation](https://www.fulu.org/), [Louis Rossmann]
 ## Dependency maintenance
 
 Thank you to the [MCP TypeScript SDK contributors](https://github.com/modelcontextprotocol/typescript-sdk/graphs/contributors) and [Axios contributors](https://github.com/axios/axios/graphs/contributors) for the compatible 1.32.2 and 1.21.0 releases validated in this project.
+
+Thanks again to [Patrick Juchli](https://github.com/patrickjuchli) and the basic-ftp maintainers for the [6.2.4 listing correction](https://github.com/patrickjuchli/basic-ftp/releases/tag/v6.2.4) included in the prepared 6.2.5 dependency update. Offline regression and package validation cover this update; publication is pending.
+
+Thanks to [Steve Pritchard (sjpritchard)](https://github.com/sjpritchard) for the official H2C first-layer temperature-table report in [bambu-printer-mcp #81](https://github.com/DMontgomery40/bambu-printer-mcp/issues/81). Its safety-preserving correction is ported here and checked with isolated Studio output; publication of this port is pending.

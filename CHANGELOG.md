@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Accept Bambu Studio 2.9 layer-temperature changes (`M104 M S<temperature>` with an optional `T` selector) in the Bambu file inspector. Preserve hardware/material ceilings, tool validation, and rejection of numeric markers, other heaters and extra parameters. Reproduced using isolated Studio 02.09.01.70 output; no physical print was run. This ports the fix prepared in [bambu-printer-mcp #97](https://github.com/DMontgomery40/bambu-printer-mcp/pull/97).
+
+- Update `basic-ftp` to 6.2.5, including its 6.2.4 fix for directory listings containing inherited-property fact names. Offline listing reproduction fails with 6.2.3 and preserves the file name and size with 6.2.5; no printer was contacted.
+
+- Resolve H2C first-layer temperature tables by the selected filament index and extruder variant instead of treating every variant row as a filament. Preserve unique bindings, header agreement and independent base/offset ceilings. Ports the correction reported by [Steve Pritchard (sjpritchard)](https://github.com/DMontgomery40/bambu-printer-mcp/issues/81); an unchanged Studio 2.9 H2C slice passes offline inspection after reproducing the failure.
+
 ## [1.2.25] – 2026-11-02
 
 ### Fixed

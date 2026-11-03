@@ -43,6 +43,60 @@ function consistent<T>(values: unknown[], convert: (v: unknown)=>T|undefined, fi
   if (converted.some(value=>JSON.stringify(value)!==JSON.stringify(converted[0]))) return fail(`contradictory ${field} metadata`);
   return converted[0]!;
 }
+/** Bambu Studio keeps filament options per variant in the project, but writes
+ * one selected row per filament in the plate header (Print::full_print_config).
+ * Match the declared 1-based self index and variant, never truncate the table
+ * or borrow the slicer's row-zero fallback for a missing selection.
+ */
+function firstLayerTemperatures(project:Metadata, headers:Metadata[], count:number):number[] {
+  const key='nozzle_temperature_initial_layer';
+  const field='first-layer nozzle temperature';
+  const temperatures=(value:unknown):number[]|undefined=>{
+    const entries=list(value);
+    return entries.length && entries.every(v=>NUMBER.test(v) && Number.isFinite(Number(v)))?entries.map(Number):undefined;
+  };
+  const perFilament=(value:unknown)=>{
+    const values=temperatures(value);return values?.length===count?values:undefined;
+  };
+  const selectedValues=metadataValues(headers,[key]);
+  if(project[key]===undefined) return consistent(selectedValues,perFilament,field);
+  if(project.filament_extruder_variant===undefined && project.filament_self_index===undefined)
+    return consistent([project[key],...selectedValues],perFilament,field);
+
+  const table=temperatures(project[key]);
+  const variants=list(project.filament_extruder_variant);
+  const ids=list(project.filament_self_index);
+  const validVariant=(value:string)=>/^(Direct Drive|Bowden) (Standard|High Flow|Hybrid|TPU High Flow|E3D High Flow)$/.test(value);
+  if(!table || variants.length!==table.length || ids.length!==table.length ||
+     variants.some(v=>!validVariant(v)) || ids.some(id=>!/^[1-9]\d*$/.test(id) || Number(id)>count))
+    return fail(`unknown or malformed ${field} variant table`);
+  const selectedVariants=consistent(metadataValues(headers,['filament_extruder_variant']),value=>{
+    const values=list(value);return values.length===count && values.every(validVariant)?values:undefined;
+  },'selected filament extruder variant');
+  const selectedIds=consistent(metadataValues(headers,['filament_self_index']),value=>{
+    const values=list(value);return values.length===count && values.every((id,index)=>id===String(index+1))?values:undefined;
+  },'selected filament self index');
+  // These are logical extruders: physical_extruder_map is used for spool
+  // routing, not this variant lookup. Hybrid selects the Standard variant.
+  const mappingKeys=['filament_map','extruder_type','filament_volume_map'];
+  if(mappingKeys.every(key=>metadataValues(headers,[key]).length)) {
+    const selection=(key:string)=>consistent(metadataValues(headers,[key]),value=>{
+      const entries=list(value);return entries.length?entries:undefined;
+    },`selected ${key.replace(/_/g,' ')}`);
+    const map=selection('filament_map');const types=selection('extruder_type');const volumes=selection('filament_volume_map');
+    const flows:Record<string,string>={'0':'Standard','1':'High Flow','2':'Standard','3':'TPU High Flow','5':'E3D High Flow'};
+    if(map.length!==count || volumes.length!==count || map.some(id=>!/^[1-9]\d*$/.test(id) || Number(id)>types.length) ||
+       volumes.some(v=>!Object.prototype.hasOwnProperty.call(flows,v)) || types.some(v=>!['Direct Drive','Bowden'].includes(v)) ||
+       selectedVariants.some((variant,i)=>variant!==`${types[Number(map[i])-1]} ${flows[volumes[i]]}`))
+      return fail('contradictory selected filament extruder variant mapping');
+  }
+  const resolved=selectedIds.map((id,index)=>{
+    const rows=ids.flatMap((candidate,row)=>candidate===id && variants[row]===selectedVariants[index]?[row]:[]);
+    if(rows.length!==1) return fail(`ambiguous or missing ${field} variant for filament ${id}`);
+    return table[rows[0]];
+  });
+  return consistent([resolved,...selectedValues],perFilament,field);
+}
 function stripComments(line: string): string {
   let clean=''; let depth=0;
   for(const char of line) {
@@ -301,7 +355,14 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
         continue;
       }
       if(['M104','M109','M140','M190','M141','M191'].includes(code)) {
-        const args=parameters(argumentsText,'A');
+        const args=parameters(argumentsText,code==='M104'?'AM':'A');
+        // Studio 2.9's GCodeWriter marks layer-temperature changes with bare M.
+        // Accept only its exact S-target / optional T form; targets and tool
+        // selectors still pass through the independent thermal checks below.
+        if(args.has('M')) {
+          if(!Number.isNaN(args.get('M')!) || !args.has('S') || [...args.keys()].some(key=>!'MST'.includes(key))) fail('unsupported M104 layer-change temperature parameters');
+          args.delete('M');
+        }
         // Official A1 and A1 mini start G-code waits with M109 S<target> H<limit>
         // (S25 H140, S100 H170, S220 H300). H is not a heater target: S stays the
         // checked target, so H is accepted only within those vendor bounds.
@@ -310,9 +371,7 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
           // first-layer targets. Check every base and derived target, never use
           // editable maxima or an unchecked offset as thermal evidence.
           if(code!=='M104' || !h2cStartup(index) || args.size!==2 || args.get('O')!==-80 || !Number.isNaN(args.get('A')!)) fail('unsupported H2C startup offset parameters');
-          const targets=consistent(metadataValues(metadata,['nozzle_temperature_initial_layer']),value=>{
-            const values=list(value);return values.length===materials.length && values.every(v=>NUMBER.test(v) && Number.isFinite(Number(v)))?values.map(Number):undefined;
-          },'first-layer nozzle temperature');
+          const targets=firstLayerTemperatures(project,headers,materials.length);
           for(let position=0;position<targets.length;position++) {
             validateTemperature('nozzle',targets[position],model,[materials[position]]);
             const preheat=Math.max(0,targets[position]-80);
