@@ -193,7 +193,7 @@ What each backend reads and sends differs. See [printer backend setup](https://g
 
 ## FULU and open-source printing
 
-[FULU OrcaSlicer-bambulab](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) is a first-class slicer target for Bambu Lab projects (`SLICER_TYPE=orcaslicer-bambulab`; aliases include `fulu-orca` and `orca-studio`), and the default slicer when `PRINTER_TYPE=bambu` and no slicer is configured. `slice_stl` and `print_3mf` auto-slicing use its project command line, and `check_fulu_orca_setup` inspects the install and runtime payload.
+[FULU OrcaSlicer-bambulab](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) is a first-class slicer target for Bambu Lab projects (`SLICER_TYPE=orcaslicer-bambulab`; aliases include `fulu-orca` and `orca-studio`). Choose it with `SLICER_TYPE=orcaslicer-bambulab`: Bambu printers default to Bambu Studio, because FULU v1.0.0's command line segfaults on every slice until [FULU #56](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/56) and [#57](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/57) are released. `slice_stl` and `print_3mf` auto-slicing use its project command line, and `check_fulu_orca_setup` inspects the install and runtime payload.
 
 The optional FULU **BambuNetwork bridge** is a separate runtime. `fulu_bambu_network_rpc` can probe it and send guarded RPC calls, but the server never switches a print from its local MQTT and FTPS path to BambuNetwork or the cloud on its own.
 

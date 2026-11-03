@@ -36,7 +36,7 @@ Set `SLICER_TYPE` in the server environment, or pass `slicer_type` to a tool.
 
 The environment variable accepts every alias. A tool's `slicer_type` argument accepts the canonical names plus `fulu_orca`, `fulu-orca`, `orca-studio`, and `orca_bambulab`.
 
-When `SLICER_TYPE` is not set, the server uses `orcaslicer-bambulab` if `PRINTER_TYPE=bambu`, and `prusaslicer` otherwise.
+When `SLICER_TYPE` is not set, the server uses `bambustudio` if `PRINTER_TYPE=bambu`, and `prusaslicer` otherwise. FULU OrcaSlicer-bambulab is chosen with `SLICER_TYPE=orcaslicer-bambulab`: its v1.0.0 command line segfaults on every slice until [FULU #56](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/56) and [#57](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/57) are released.
 
 ### Where the server looks for the slicer
 

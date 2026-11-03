@@ -161,7 +161,9 @@ function defaultBambuStudioPath(): string {
 }
 
 const DEFAULT_SLICER_TYPE = normalizeSlicerType(
-  process.env.SLICER_TYPE || (DEFAULT_TYPE.toLowerCase() === "bambu" ? "orcaslicer-bambulab" : "prusaslicer")
+  // Bambu Studio for Bambu printers, as in bambu-printer-mcp: FULU OrcaSlicer-bambulab v1.0.0's CLI
+  // segfaults on every slice (FULU #56/#57 open), so it is chosen explicitly, not by default.
+  process.env.SLICER_TYPE || (DEFAULT_TYPE.toLowerCase() === "bambu" ? "bambustudio" : "prusaslicer")
 );
 const DEFAULT_SLICER_PATH =
   process.env.SLICER_PATH ||

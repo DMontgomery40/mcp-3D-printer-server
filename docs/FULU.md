@@ -18,7 +18,7 @@ FULU_ORCA_PLUGIN_DIR=/path/to/FULU/runtime/payload
 BAMBU_MODEL=p1s
 ```
 
-Accepted aliases include `fulu_orca`, `fulu-orca`, `orca-studio`, and `orca_bambulab`. For Bambu printers, this is the default slicer when `SLICER_TYPE` is not set.
+Accepted aliases include `fulu_orca`, `fulu-orca`, `orca-studio`, and `orca_bambulab`. Set `SLICER_TYPE` to choose it: Bambu printers default to Bambu Studio, because FULU v1.0.0's command line segfaults on every slice until [FULU #56](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/56) and [#57](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/57) are released.
 
 - `slice_stl` runs the FULU/Orca project command line (`--slice 0 --export-3mf`) with your model and nozzle's machine preset, resolved from the FULU installation's own profile tree, to produce a sliced Bambu 3MF. `SLICER_PROFILE` is a process profile only; see [Bambu-compatible slicing](./SLICING.md#bambu-compatible-slicing).
 - `print_3mf` can auto-slice an unsliced 3MF through FULU OrcaSlicer-bambulab, then inspect, confirm, upload, and start the sliced project through this server's local Bambu print path. A failed slice never uploads the original.

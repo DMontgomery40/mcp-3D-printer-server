@@ -174,6 +174,19 @@ test("slice_stl never passes the raw inherited machine preset to the CLI (P1S re
   assert.equal(args.at(-1), SAMPLE_STL);
 });
 
+test("a Bambu printer with no SLICER_TYPE slices with Bambu Studio, as bambu-printer-mcp does", async (t) => {
+  // FULU OrcaSlicer-bambulab v1.0.0's CLI segfaults on every slice (FULU #56/#57), so it is no longer the default.
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install, { PRINTER_TYPE: "bambu", SLICER_TYPE: "" });
+  const result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", nozzle_diameter: "0.4", scale: 2 });
+  assert.equal(result.isError, undefined, text(result));
+  await assertSliced(text(result));
+  // Bambu Studio receives every flag unchanged; the Orca route would scale a copy of the mesh and drop --scale.
+  const args = await install.args();
+  assert.equal(args.at(-1), SAMPLE_STL, "the Bambu Studio CLI received the original model");
+  assert.equal(args[args.indexOf("--scale") + 1], "2");
+});
+
 test("slice_stl writes the installed nozzle type into the machine preset so printing can match the printer", async (t) => {
   const install = await createFakeInstall(t);
   const machineOf = async () => {
