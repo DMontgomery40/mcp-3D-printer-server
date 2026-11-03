@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Bambu AMS inventory and tray choice, ported from bambu-printer-mcp:
+  - `get_printer_filaments` reads the AMS from the printer's MQTT report for `PRINTER_TYPE=bambu` instead of refusing. The result carries bambu-printer-mcp's fields unchanged (`trays` with absolute `slot`, `loaded`, `tray_type`, `tray_color`, `tray_info_idx` and the resolved Bambu Studio/Orca filament profile; `summary`; `recommended`; `load_filaments_all`), plus counterpart/1 `slots` for every loaded AMS tray and the external spool (`254`, and `254`/`255` on dual-nozzle printers) with `source: "printer"`. Optional `bambu_model` and `nozzle_diameter` pick model-specific profiles. `counterpart_printer_info` reports `filaments: "ams"` for Bambu.
+  - `print_3mf` accepts `ams_slots`: one tray per used filament in plate order, expanded to the project-level `ams_mapping` from the plate's `filament_ids` and the G-code header, as bambu-printer-mcp does. `ams_mapping` also accepts the project-level array. Tray values are checked (0–15, 128–254, and 255 on dual-nozzle printers), `ams_slots` must name exactly one tray per used filament, and the fresh-state check still compares each mapped tray's material with the file. `use_ams: false` maps every used filament to the external spool of its nozzle on the wire. Counterpart's printer handoff sends exactly these arguments.
+  - Evidence: mocked MQTT reports and FTPS/MQTT dispatch only; no real printer was used.
+
 ### Changed
 
 - Start prints and positive heating without a server-side confirmation prompt, on every printer type. The client's own print action is the approval and the printer runs its own checks, so clients without MCP elicitation support now print and heat normally. `PRINT_REQUIRE_CONFIRMATION` and `BAMBU_REQUIRE_CONFIRMATION` are removed. File inspection, hardware and material ceilings, declared materials, fresh printer state (read, rechecked before upload and again before dispatch) and Bambu identity checks are unchanged. Matches bambu-printer-mcp.
@@ -11,6 +18,7 @@
 
 ### Fixed
 
+- An `ams_mapping` object (and the 3MF's own mapping) is ordered by project filament index, as bambu-printer-mcp orders it. Before, its tray values were sorted, so `{"0": 3, "1": 0}` sent tray 0 for filament 0.
 - Bambu printers slice with Bambu Studio when `SLICER_TYPE` is not set, as bambu-printer-mcp does. The previous default, FULU OrcaSlicer-bambulab, crashes on every command-line slice in its only release (v1.0.0, macOS DMG and Linux builds; fixes in FULU #56 and #57 are not released), so `slice_stl`, estimates and auto-slicing failed for every Bambu user without a slicer setting. FULU's Orca stays fully supported with `SLICER_TYPE=orcaslicer-bambulab`.
 - A relative `TEMP_DIR` (such as `./temp`) is resolved against the server's working directory, as bambu-printer-mcp 1.1.44 does. Bambu Studio fails every 3MF export to a relative output folder ("Project export to temp/…/…_sliced.3mf failed").
 

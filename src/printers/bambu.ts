@@ -7,7 +7,8 @@ import { Client as FTPClient } from "basic-ftp";
 import { BambuClient, PushAllCommand } from "bambu-node";
 import { MAX_PRINT_FILE_BYTES, readSafe3mfArchive } from "../safety/archive.js";
 import { inspectPrintFile, type PrintFileInspection } from "../safety/print-file.js";
-import { normalizeModel, validateTemperature } from "../safety/limits.js";
+import { isDualNozzleModel, normalizeModel, validateTemperature } from "../safety/limits.js";
+import { describeAmsTrayRange, externalTrayForNozzle } from "../ams-mapping.js";
 import {
   manualHeatingRequirements,
   publishBambuCommand,
@@ -41,6 +42,8 @@ export interface BambuPrintOptionsInternal {
   timelapse?: boolean;
   /** Positional mapping: project filament position -> absolute AMS tray (254 = external spool). */
   amsMapping?: number[];
+  /** One absolute tray per used filament in plate order; expanded to the project-level mapping. */
+  amsSlots?: number[];
   md5?: string;
   expectedPeaks?: ExpectedPeakTemperatures;
 }
@@ -51,6 +54,10 @@ interface ProjectFileMetadata {
   plateFileName: string;
   plateInternalPath: string;
   md5: string;
+  /** Project filament count from the plate G-code header (filament_colour, else filament_ids). */
+  projectFilamentCount: number;
+  /** 0-based project filament positions the plate uses, from Metadata/plate_<n>.json filament_ids. */
+  usedFilamentPositions: number[];
 }
 
 const COMMAND_SETTLE_MS = 300;
@@ -74,19 +81,6 @@ function dispatchCheckMs(): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function validateTrayValue(value: unknown, label: string): void {
-  if (
-    !Number.isInteger(value) ||
-    (value as number) < -1 ||
-    ((value as number) > 15 && (value as number) < 128) ||
-    (value as number) > 254
-  ) {
-    throw new Error(
-      `${label} values must be integers in [-1, 15] (absolute tray) or 128-254 (HT/external); got ${String(value)}`
-    );
-  }
 }
 
 class BambuClientStore {
@@ -212,10 +206,37 @@ export class BambuImplementation extends PrinterImplementation {
       throw new Error(`Selected inspected plate ${expectedEntryName} is not present in 3MF. Re-slice that plate.`);
     }
     const gcodeBuffer = await selectedEntry.async("nodebuffer");
+    // The slicer's project filament list length, from the G-code header
+    // (`; filament_colour = #FFFFFF;#FF911A80;...`), scanning only its first 32 KB.
+    let projectFilamentCount = 1;
+    const head = gcodeBuffer.subarray(0, 32 * 1024).toString("utf8");
+    const colourLine = head.match(/;\s*filament_colour\s*=\s*([^\n\r]+)/i);
+    if (colourLine) {
+      projectFilamentCount = colourLine[1].split(";").filter((entry) => entry.trim()).length;
+    } else {
+      const idsLine = head.match(/;\s*filament_ids\s*=\s*([^\n\r]+)/i);
+      if (idsLine) projectFilamentCount = idsLine[1].split(";").filter((entry) => entry.trim()).length;
+    }
+    // The positions the selected plate consumes, from Metadata/plate_<n>.json filament_ids.
+    let usedFilamentPositions: number[] = [];
+    const plateJsonEntry = zip.file(selectedEntry.name.replace(/\.gcode$/i, ".json"));
+    if (plateJsonEntry) {
+      try {
+        const json = JSON.parse(await plateJsonEntry.async("string"));
+        if (Array.isArray(json.filament_ids)) {
+          usedFilamentPositions = json.filament_ids.filter((n: unknown) => Number.isInteger(n));
+        }
+      } catch {
+        // A malformed plate_N.json leaves ams_mapping as the way to map trays.
+      }
+    }
+    if (usedFilamentPositions.length === 0) usedFilamentPositions = [0];
     return {
       plateFileName: path.posix.basename(selectedEntry.name),
       plateInternalPath: selectedEntry.name,
       md5: createHash("md5").update(gcodeBuffer).digest("hex"),
+      projectFilamentCount,
+      usedFilamentPositions,
     };
   }
 
@@ -316,30 +337,8 @@ export class BambuImplementation extends PrinterImplementation {
       throw new Error("Provided checksum does not match the inspected plate G-code.");
     }
 
-    for (const value of options.amsMapping ?? []) validateTrayValue(value, "ams_mapping");
-    const useAMS = options.useAMS !== false;
-    let checkedMapping: number[];
-    if (useAMS) {
-      checkedMapping = (options.amsMapping ?? []).slice();
-    } else {
-      checkedMapping = Array<number>(inspection.materials.length).fill(-1);
-      inspection.usedFilamentPositions.forEach((position) => { checkedMapping[position] = 254; });
-    }
-    for (const position of inspection.usedFilamentPositions) {
-      if (checkedMapping[position] === undefined || checkedMapping[position] < 0) {
-        throw new Error(
-          `Missing physical filament mapping for project filament ${position}. ` +
-          "Pass ams_mapping with a tray for every used project filament, or use_ams:false for the external spool."
-        );
-      }
-    }
-
-    // Wire mapping: position = project filament, value = absolute tray. Never
-    // truncate a checked mapping; pad to the historical five entries.
-    const amsMapping = options.amsMapping && options.amsMapping.length > 0
-      ? Array.from({ length: Math.max(5, options.amsMapping.length) }, (_, i) =>
-          i < options.amsMapping!.length ? options.amsMapping![i] : -1)
-      : [-1, -1, -1, -1, 0];
+    const { baseMapping, amsMapping, useAMS } = this.checkedAmsMapping(model, options, inspection, projectMetadata);
+    const checkedMapping = baseMapping;
 
     const requirements: PrinterStateRequirements = { ...inspection, amsMapping: checkedMapping, useAMS };
     const initialStatus = await this.getSafetyStatus(host, serial, token);
@@ -405,6 +404,77 @@ export class BambuImplementation extends PrinterImplementation {
         chamber: inspection.maxChamberTemperature,
       },
     };
+  }
+
+  /**
+   * The project-level tray mapping for a checked print, built as
+   * bambu-printer-mcp builds it: position = project filament, value = absolute
+   * tray (0-15 AMS, 128+ AMS-HT, 254 external; 255 the right/main external
+   * spool on dual-nozzle printers, -1 unused). ams_mapping is taken as given;
+   * ams_slots supplies one tray per used filament and is expanded against the
+   * plate's filament_ids; use_ams:false maps every used filament to the
+   * external spool of its nozzle. Every used position must end up mapped.
+   * The wire form pads to the historical five entries.
+   */
+  private checkedAmsMapping(
+    model: string,
+    options: BambuPrintOptionsInternal,
+    inspection: PrintFileInspection,
+    projectMetadata: ProjectFileMetadata
+  ): { baseMapping: number[]; amsMapping: number[]; useAMS: boolean } {
+    const dualNozzle = isDualNozzleModel(model);
+    const externalTrays = dualNozzle ? [254, 255] : [254];
+    const useAMS = options.useAMS !== false;
+    const validate = (value: unknown, label: string): void => {
+      if (!Number.isInteger(value) || (value as number) < -1 ||
+          ((value as number) > 15 && (value as number) < 128) || (value as number) > (dualNozzle ? 255 : 254)) {
+        throw new Error(`${label} values must be integers in ${describeAmsTrayRange({ dualNozzle })}; got ${String(value)}`);
+      }
+    };
+    let baseMapping: number[];
+    if (options.amsMapping && options.amsMapping.length > 0) {
+      for (const value of options.amsMapping) validate(value, "ams_mapping");
+      baseMapping = options.amsMapping.slice();
+    } else if (options.amsSlots && options.amsSlots.length > 0) {
+      for (const value of options.amsSlots) validate(value, "ams_slots");
+      const positions = projectMetadata.usedFilamentPositions;
+      if (options.amsSlots.length !== positions.length) {
+        throw new Error(
+          `ams_slots length ${options.amsSlots.length} does not match used filament count ${positions.length} ` +
+          `(plate uses positions ${JSON.stringify(positions)}). Provide one tray per used filament, or use ams_mapping for a raw project-level array.`
+        );
+      }
+      baseMapping = Array<number>(Math.max(projectMetadata.projectFilamentCount, ...positions.map((p) => p + 1))).fill(-1);
+      positions.forEach((position, index) => { baseMapping[position] = options.amsSlots![index]; });
+    } else {
+      if (useAMS) {
+        throw new Error(
+          "AMS printing requires ams_slots or ams_mapping for this sliced file. " +
+          `Plate uses project filament positions ${JSON.stringify(inspection.usedFilamentPositions)}; pass one tray per used filament (for example ams_slots: [0]), or use_ams:false for the external spool.`
+        );
+      }
+      const positions = inspection.usedFilamentPositions;
+      baseMapping = Array<number>(Math.max(inspection.materials.length, projectMetadata.projectFilamentCount, ...positions.map((p) => p + 1), 1)).fill(-1);
+      for (const position of positions) {
+        baseMapping[position] = externalTrayForNozzle(inspection.filamentNozzleIndices?.[position], dualNozzle);
+      }
+    }
+    for (const position of inspection.usedFilamentPositions) {
+      if (baseMapping[position] === undefined || baseMapping[position] < 0) {
+        throw new Error(
+          `Missing physical filament mapping for project filament ${position}. ` +
+          "Pass ams_slots (one tray per used filament) or ams_mapping with a tray for every used project filament, or use_ams:false for the external spool."
+        );
+      }
+      if (!useAMS && !externalTrays.includes(baseMapping[position])) {
+        throw new Error(`External-spool printing requires external spool mapping (${externalTrays.join(" or ")}).`);
+      }
+    }
+    const amsMapping = Array.from(
+      { length: Math.max(5, baseMapping.length, projectMetadata.projectFilamentCount) },
+      (_, index) => (index < baseMapping.length ? baseMapping[index] : -1)
+    );
+    return { baseMapping, amsMapping, useAMS };
   }
 
   /**

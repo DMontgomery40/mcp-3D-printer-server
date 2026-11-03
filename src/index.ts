@@ -55,6 +55,8 @@ import {
   inspectFuluOrcaSetup,
   invokeFuluBridgeRpc,
 } from "./fulu-orca.js";
+import { hasAmsMappingInput, normalizeAmsMappingObject, normalizeBridgeAmsTrayValue } from "./ams-mapping.js";
+import { isDualNozzleModel } from "./safety/limits.js";
 import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
 import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "./safety/expected-peaks.js";
 
@@ -505,6 +507,12 @@ function validateBambuModel(model: string): BambuModel {
   return normalized as BambuModel;
 }
 
+/** An inventory model hint: the argument, else BAMBU_MODEL; validated when present, never required. */
+function optionalBambuModelHint(value: unknown): string | undefined {
+  const requested = String(value ?? DEFAULT_BAMBU_MODEL ?? "").trim().toLowerCase();
+  return requested ? validateBambuModel(requested) : undefined;
+}
+
 function resolveBedType(bedType: string | undefined): string {
   const resolved = (bedType || DEFAULT_BED_TYPE).trim().toLowerCase();
   if (!(VALID_BED_TYPES as readonly string[]).includes(resolved)) {
@@ -685,7 +693,8 @@ class ThreeDPrinterMCPServer {
       (printerType) => this.printerFactory.getImplementation(printerType),
       axios.create({ timeout: 10000 }),
       { name: SERVER_NAME, version: SERVER_VERSION },
-      (material) => resolveFilamentProfile(material, defaultFilamentProfileContext())
+      (material) => resolveFilamentProfile(material, defaultFilamentProfileContext()),
+      () => ({ slicerType: DEFAULT_SLICER_TYPE, slicerPath: DEFAULT_SLICER_PATH || undefined })
     );
     this.stlManipulator = new STLManipulator(TEMP_DIR);
 
@@ -878,56 +887,62 @@ class ThreeDPrinterMCPServer {
     this.setupToolHandlers();
   }
 
-  private extractParsedAmsMapping(parsed3MFData: ThreeMFData | undefined): number[] | undefined {
-    if (!parsed3MFData?.slicerConfig?.ams_mapping) {
-      return undefined;
-    }
-
-    const slots = Object.values(parsed3MFData.slicerConfig.ams_mapping).filter(
-      (value): value is number => typeof value === "number"
-    );
-
-    return slots.length > 0 ? slots.sort((a, b) => a - b) : undefined;
-  }
-
+  /**
+   * The AMS choice for a Bambu print, as bambu-printer-mcp's print_3mf resolves
+   * it: the 3MF's own mapping (ordered by project filament index), overridden by
+   * an explicit ams_mapping, which ams_slots (one tray per used filament)
+   * replaces. use_ams:false prints from the external spool. Tray values are
+   * checked here; the adapter expands ams_slots against the inspected plate.
+   */
   private resolveAmsPrintOptions(
     parsed3MFData: ThreeMFData | undefined,
-    args: Record<string, unknown> | undefined
-  ): { useAMS: boolean; amsMapping?: number[] } {
-    let finalAmsMapping = this.extractParsedAmsMapping(parsed3MFData);
-    let useAMS =
-      args?.use_ams !== undefined
-        ? Boolean(args.use_ams)
-        : !!finalAmsMapping && finalAmsMapping.length > 0;
+    args: Record<string, unknown> | undefined,
+    model?: string
+  ): { useAMS: boolean; amsMapping?: number[]; amsSlots?: number[] } {
+    const trayOptions = { dualNozzle: isDualNozzleModel(model) };
+    let finalAmsMapping: number[] | undefined;
+    let finalAmsSlots: number[] | undefined;
+    if (parsed3MFData?.slicerConfig?.ams_mapping) {
+      const slots = normalizeAmsMappingObject(parsed3MFData.slicerConfig.ams_mapping as Record<string, unknown>, "ams_mapping", trayOptions);
+      if (slots.length > 0) finalAmsMapping = slots;
+    }
+    let useAMS = args?.use_ams !== undefined ? Boolean(args.use_ams) : !!finalAmsMapping && finalAmsMapping.length > 0;
+    const hasUserAmsMapping = hasAmsMappingInput(args?.ams_mapping);
+    const hasUserAmsSlots = Array.isArray(args?.ams_slots);
 
-    const override = args?.ams_mapping;
-    if (override !== undefined) {
-      let userMappingOverride: number[] | undefined;
-
-      if (Array.isArray(override)) {
-        userMappingOverride = override.filter((value): value is number => typeof value === "number");
-      } else if (typeof override === "object" && override !== null) {
-        userMappingOverride = Object.values(override as Record<string, unknown>)
-          .filter((value): value is number => typeof value === "number")
-          .sort((a, b) => a - b);
+    if (hasUserAmsMapping) {
+      let userMapping: number[] | undefined;
+      if (Array.isArray(args!.ams_mapping)) {
+        userMapping = (args!.ams_mapping as unknown[]).map((value, index) =>
+          normalizeBridgeAmsTrayValue(value, `ams_mapping[${index}]`, trayOptions));
+      } else if (args!.ams_mapping && typeof args!.ams_mapping === "object") {
+        userMapping = normalizeAmsMappingObject(args!.ams_mapping as Record<string, unknown>, "ams_mapping", trayOptions);
+      } else {
+        throw new Error("ams_mapping must be an array of trays or an object of trays keyed by project filament index.");
       }
-
-      if (userMappingOverride && userMappingOverride.length > 0) {
-        finalAmsMapping = userMappingOverride;
+      if (userMapping.length > 0) {
+        finalAmsMapping = userMapping;
         useAMS = true;
       }
     }
-
+    if (hasUserAmsSlots) {
+      const userSlots = (args!.ams_slots as unknown[]).map((value, index) =>
+        normalizeBridgeAmsTrayValue(value, `ams_slots[${index}]`, trayOptions));
+      if (userSlots.length > 0) {
+        finalAmsSlots = userSlots;
+        finalAmsMapping = undefined;
+        useAMS = true;
+      }
+    }
     if (args?.use_ams === false) {
-      finalAmsMapping = undefined;
+      if (!hasUserAmsMapping) finalAmsMapping = undefined;
+      if (!hasUserAmsSlots) finalAmsSlots = undefined;
       useAMS = false;
     }
-
-    if (!finalAmsMapping || finalAmsMapping.length === 0) {
+    if ((!finalAmsMapping || finalAmsMapping.length === 0) && (!finalAmsSlots || finalAmsSlots.length === 0)) {
       useAMS = false;
     }
-
-    return { useAMS, amsMapping: finalAmsMapping };
+    return { useAMS, amsMapping: finalAmsMapping, amsSlots: finalAmsSlots };
   }
 
   setupResourceHandlers() {
@@ -1252,8 +1267,15 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "get_printer_filaments",
-            description: "Report the loaded filament as one external slot (id \"ext\"). Moonraker printers with Spoolman report the active spool's material, colour and name; other printers report source \"unknown\". Read-only.",
-            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
+            description: "Report the loaded filament. Bambu: the live AMS and external-spool inventory over MQTT, as bambu-printer-mcp reports it (trays with absolute slot, loaded state, material, colour, tray_info_idx and resolved slicer profile path; summary; recommended load_filaments), plus counterpart/1 slots for every loaded tray and external spool (254, and 255 on dual-nozzle printers). Other printers: one external slot (id \"ext\"); Moonraker printers with Spoolman report the active spool's material, colour and name, others source \"unknown\". Read-only.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                ...PRINTER_TARGET_PROPERTIES,
+                bambu_model: { type: "string", description: "Bambu only: optional model hint used to resolve Bambu/Orca filament profile JSONs for each tray (default: BAMBU_MODEL)." },
+                nozzle_diameter: { type: "string", description: "Bambu only: optional nozzle diameter used when resolving model-specific filament profile JSONs (default: 0.4)." },
+              },
+            },
             outputSchema: FILAMENTS_OUTPUT_SCHEMA,
             annotations: { readOnlyHint: true, openWorldHint: true },
           },
@@ -1753,9 +1775,16 @@ class ThreeDPrinterMCPServer {
                 bed_temperature: { type: "number", description: "Override bed temperature (°C)." },
                 support_enabled: { type: "boolean", description: "Override support generation." },
                 ams_mapping: {
-                  type: "object",
-                  description: "Override AMS filament mapping (e.g., {\"Generic PLA\": 0, \"Generic PETG\": 1}).",
-                  additionalProperties: { type: "number" }
+                  anyOf: [
+                    { type: "array", items: { type: "number" } },
+                    { type: "object", additionalProperties: { type: "number" } },
+                  ],
+                  description: "Project-level AMS mapping. Array: position = project filament index, value = absolute AMS tray (0-3 = AMS 0, 4-7 = AMS 1, 8-11 = AMS 2, 12-15 = AMS 3, 128+ = AMS-HT, 254 = external spool, -1 = unused); on dual-nozzle printers (H2D, H2D Pro, H2C, X2D) 254 is the left/deputy nozzle external spool and 255 the right/main one. Object: trays keyed by project filament index (numeric keys first, in order), e.g. {\"0\": 2}. Prefer ams_slots unless you know the project-level layout.",
+                },
+                ams_slots: {
+                  type: "array",
+                  items: { type: "number" },
+                  description: "Preferred AMS input: one absolute tray per USED filament in plate order, e.g. [1] for a single-filament print from AMS 0 slot 1. Use 254 for the external spool (on dual-nozzle printers 254 = left/deputy, 255 = right/main). Expanded to the project-level ams_mapping from the 3MF's plate_N.json and G-code header. Overrides ams_mapping.",
                 },
                 slicer_type: {
                   type: "string",
@@ -1776,7 +1805,7 @@ class ThreeDPrinterMCPServer {
                 },
                 use_ams: {
                   type: "boolean",
-                  description: "Whether to use AMS for the print. Defaults from parsed 3MF mapping when present."
+                  description: "Whether to use the AMS. Defaults to true when ams_slots, ams_mapping or the 3MF's own mapping is present; false prints every used filament from the external spool."
                 },
                 bed_leveling: {
                   type: "boolean",
@@ -2110,8 +2139,13 @@ class ThreeDPrinterMCPServer {
             }));
           }
 
-          case "get_printer_filaments":
-            return structured(await this.counterpart.filaments(target));
+          case "get_printer_filaments": {
+            const filamentOptions = type.toLowerCase() === "bambu" ? {
+              bambuModel: optionalBambuModelHint(args?.bambu_model),
+              nozzleDiameter: String(args?.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER),
+            } : {};
+            return structured(await this.counterpart.filaments(target, filamentOptions));
+          }
 
           case "pause_print":
             return structured(await this.counterpart.pause(target));
@@ -2339,7 +2373,8 @@ class ThreeDPrinterMCPServer {
               }
               const amsOptions = this.resolveAmsPrintOptions(
                 parsedProcess3MF,
-                args as Record<string, unknown> | undefined
+                args as Record<string, unknown> | undefined,
+                processModel
               );
 
               result = await factoryImplementation.print3mf(host, bambuSerial, bambuToken, {
@@ -2667,7 +2702,8 @@ class ThreeDPrinterMCPServer {
                 console.error(`Successfully parsed 3MF file: ${threeMFPath}`);
                 const amsOptions = this.resolveAmsPrintOptions(
                   parsed3MFData,
-                  args as Record<string, unknown> | undefined
+                  args as Record<string, unknown> | undefined,
+                  printModel
                 );
 
                 // --- Prepare Implementation and Print Options --- 

@@ -70,7 +70,10 @@
         "src/counterpart",
         "dist/fusion-mcp-bridge.js",
         "dist/fusion-mcp-bridge.d.ts",
-        "src/fusion-mcp-bridge.ts"
+        "src/fusion-mcp-bridge.ts",
+        "dist/ams-mapping.js",
+        "dist/ams-mapping.d.ts",
+        "src/ams-mapping.ts"
     ],
     "keywords": [
         "mcp",

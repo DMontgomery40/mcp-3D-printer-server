@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readBoundedPrintFile, loadSafe3mfArchive } from './archive.js';
-import { MACHINE_LIMITS, normalizeMaterial, normalizeModel, validateStartupPurgeTemperature, validateTemperature } from './limits.js';
+import { projectFilaments, type ProjectFilament } from '../ams-mapping.js';
+import { MACHINE_LIMITS, isDualNozzleModel, normalizeMaterial, normalizeModel, validateStartupPurgeTemperature, validateTemperature } from './limits.js';
 
 export interface PrintFileInspection {
   model: string;
@@ -16,6 +17,10 @@ export interface PrintFileInspection {
   selectsAms: boolean;
   nozzleTypes?: string[];
   nozzleFlows?: string[];
+  /** Physical nozzle index for each declared filament, composed from the selected plate headers. */
+  filamentNozzleIndices?: number[];
+  /** Every project filament as project_settings.config declares it, for PrintParams.ams_mapping_info. */
+  projectFilaments?: ProjectFilament[];
 }
 type Metadata = Record<string, unknown>;
 const NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
@@ -236,6 +241,23 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
   const bedType=bedValues.length?consistent(bedValues,normalizeBed,'bed type'):undefined;
   if(options.bedType && (!bedType || normalizeBed(options.bedType)!==bedType)) return fail('selected bed type cannot be verified or contradicts the sliced file; re-slice with the intended bed');
   validateBounds(metadata,model,plate);
+  // GCode.cpp uses 1-based filament_map logical extruders and then indexes
+  // physical_extruder_map to select the physical nozzle. Only this selected
+  // plate's headers establish that binding; unsliced project defaults do not.
+  const dualNozzle=isDualNozzleModel(model);
+  const headerMap=(key:string,count:number,low:number,high:number):number[]|undefined=>{
+    const values=metadataValues(headers,[key]);
+    if(!values.length) return undefined;
+    return consistent(values,value=>{
+      const entries=list(value);
+      return entries.length===count && entries.every(v=>NUMBER.test(v) && Number.isInteger(Number(v)) && Number(v)>=low && Number(v)<=high)
+        ? entries.map(Number):undefined;
+    },key.replace(/_/g,' '));
+  };
+  const physicalExtruderMap=headerMap('physical_extruder_map',nozzleDiameters.length,0,dualNozzle?Math.min(nozzleDiameters.length,2)-1:nozzleDiameters.length-1);
+  if(physicalExtruderMap && new Set(physicalExtruderMap).size!==physicalExtruderMap.length) fail('physical extruder map must be a complete permutation');
+  const filamentMap=headerMap('filament_map',materials.length,1,nozzleDiameters.length);
+  const filamentNozzleIndices=filamentMap && physicalExtruderMap ? filamentMap.map(logical=>physicalExtruderMap[logical-1]):undefined;
   const used=new Set<number>();
   const requirePosition=(position:number):number=>{
     if(!Number.isInteger(position)||position<0||position>=materials.length) return fail(`filament/tool position ${position} has no declared material`);
@@ -436,5 +458,5 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
   }
   if(!commandCount) return fail('selected G-code contains no printable commands');
   if(!used.size) materials.forEach((_,index)=>used.add(index));
-  return {model,nozzleDiameters,materials,usedFilamentPositions:[...used].sort((a,b)=>a-b),plateInternalPath,sha256,maxNozzleTemperature,maxBedTemperature,maxChamberTemperature,bedType,selectsAms,nozzleTypes,nozzleFlows};
+  return {model,nozzleDiameters,materials,usedFilamentPositions:[...used].sort((a,b)=>a-b),plateInternalPath,sha256,maxNozzleTemperature,maxBedTemperature,maxChamberTemperature,bedType,selectsAms,nozzleTypes,nozzleFlows,filamentNozzleIndices,...(Array.isArray(project.filament_type)?{projectFilaments:projectFilaments(project)}:{})};
 }

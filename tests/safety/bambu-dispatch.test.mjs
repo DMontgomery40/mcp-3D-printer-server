@@ -409,3 +409,63 @@ test("cancel publishes stop immediately with a string sequence id", async () => 
   assert.equal(events[1].payload.print.command, "stop");
   assert.match(events[1].payload.print.sequence_id, /^\d+$/);
 });
+
+// AMS tray choice, ported from bambu-printer-mcp: ams_slots names one tray per
+// used filament and expands to the project-level ams_mapping.
+async function twoFilamentFixture(t, { used = [1], materials = ["PLA", "PETG"] } = {}) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-ams-slots-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "two.3mf");
+  const content = `; printer_model = Bambu Lab P1S\n; nozzle_diameter = 0.4\n; filament_type = ${materials.join(";")}\n; filament_colour = #FFFFFF;#000000\n; curr_bed_type = Textured PEI Plate\nM104 S240\nM140 S70\nG1 X10 Y10 Z1\n`;
+  const zip = new JSZip();
+  zip.file("3D/3dmodel.model", '<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices/><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>');
+  zip.file("Metadata/plate_1.gcode", content);
+  zip.file("Metadata/plate_1.json", JSON.stringify({ filament_ids: used }));
+  zip.file("Metadata/project_settings.config", JSON.stringify({ printer_model: "p1s", nozzle_diameter: ["0.4"], filament_type: materials, filament_colour: ["#FFFFFF", "#000000"], filament_ids: ["GFL99", "GFG99"], curr_bed_type: "Textured PEI Plate" }));
+  await fs.writeFile(file, await zip.generateAsync({ type: "nodebuffer" }));
+  return file;
+}
+
+const amsStatus = () => safetyStatus({ ams: { ams: [{ id: "0", tray: [{ id: "0", tray_type: "PLA" }, { id: "1", tray_type: "PLA" }, { id: "2", tray_type: "PLA" }, { id: "3", tray_type: "PETG" }] }] } });
+
+test("ams_slots expands one tray per used filament to the project-level ams_mapping", async (t) => {
+  const file = await twoFilamentFixture(t);
+  const { printer, events } = isolatedPrinter(amsStatus());
+  const result = await print3mf(printer, file, { useAMS: true, amsSlots: [3] });
+  const publish = events.find(({ action }) => action === "publish").payload.print;
+  assert.deepEqual(publish.ams_mapping, [-1, 3, -1, -1, -1], "position 1 (the plate's only filament) takes tray 3; padded to five");
+  assert.equal(publish.use_ams, true);
+  assert.deepEqual(result.amsMapping, publish.ams_mapping);
+});
+
+test("ams_slots wins over ams_mapping only when given; ams_mapping is taken as the project-level array", async (t) => {
+  const file = await twoFilamentFixture(t);
+  const { printer, events } = isolatedPrinter(amsStatus());
+  await print3mf(printer, file, { useAMS: true, amsMapping: [0, 3] });
+  assert.deepEqual(events.find(({ action }) => action === "publish").payload.print.ams_mapping, [0, 3, -1, -1, -1]);
+});
+
+for (const [name, options, error] of [
+  ["ams_slots longer than the used filaments", { useAMS: true, amsSlots: [0, 3] }, /ams_slots length 2 does not match used filament count 1/],
+  ["an ams_slots tray outside the AMS range", { useAMS: true, amsSlots: [16] }, /ams_slots values must be integers/],
+  ["the right external spool on a single-nozzle printer", { useAMS: true, amsSlots: [255] }, /ams_slots values must be integers/],
+  ["an AMS print with no tray for the used filament", { useAMS: true }, /requires ams_slots or ams_mapping/],
+  ["an ams_mapping that leaves the used filament unmapped", { useAMS: true, amsMapping: [3, -1] }, /Missing physical filament mapping for project filament 1/],
+  ["a tray of another material", { useAMS: true, amsSlots: [0] }, /material|PETG|PLA/i],
+]) {
+  test(`print3mf refuses ${name} before upload or publish`, async (t) => {
+    const file = await twoFilamentFixture(t);
+    const { printer, events } = isolatedPrinter(amsStatus());
+    await assert.rejects(print3mf(printer, file, options), error);
+    assertNoDispatch(events);
+  });
+}
+
+test("use_ams:false maps every used filament to the external spool on the wire", async (t) => {
+  const file = await twoFilamentFixture(t);
+  const { printer, events } = isolatedPrinter(safetyStatus({ vt_tray: { id: "254", tray_type: "PETG" } }));
+  await print3mf(printer, file, { useAMS: false });
+  const publish = events.find(({ action }) => action === "publish").payload.print;
+  assert.equal(publish.use_ams, false);
+  assert.deepEqual(publish.ams_mapping, [-1, 254, -1, -1, -1]);
+});

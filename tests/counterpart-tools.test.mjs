@@ -247,3 +247,27 @@ test("get_printer_filaments: slots[].profile is the installed slicer profile for
   const configured = await server(t, { PRINTER_TYPE: "octoprint", PRINTER_PORT: octoprint.port, SLICER_TYPE: "prusaslicer", FILAMENT_PROFILE: preset });
   assert.deepEqual((await call(configured.client, "get_printer_filaments")).structuredContent.slots, [{ id: "ext", source: "unknown", profile: preset }]);
 });
+
+// printer-handoff (scan-to-make services/printer-handoff/src/print.ts) chooses a
+// filament only when slice_stl has filament_colours and load_filaments and
+// print_3mf has ams_slots and use_ams; it passes them with bambu-printer-mcp's names.
+test("Bambu: the tool schemas carry the AMS arguments Counterpart's printer handoff sends", async (t) => {
+  const { client } = await server(t, { PRINTER_TYPE: "bambu", BAMBU_SERIAL: "S", BAMBU_TOKEN: "T", BAMBU_MODEL: "p1s" });
+  const tools = new Map((await client.listTools()).tools.map((tool) => [tool.name, tool]));
+  const print = tools.get("print_3mf").inputSchema.properties;
+  for (const key of ["ams_slots", "use_ams", "ams_mapping"]) assert.ok(Object.hasOwn(print, key), `print_3mf.${key}`);
+  assert.deepEqual(print.ams_slots, { type: "array", items: { type: "number" }, description: print.ams_slots.description });
+  assert.deepEqual(print.ams_mapping.anyOf.map((entry) => entry.type), ["array", "object"]);
+  const slice = tools.get("slice_stl").inputSchema.properties;
+  for (const key of ["filament_colours", "load_filaments"]) assert.ok(Object.hasOwn(slice, key), `slice_stl.${key}`);
+  const filaments = tools.get("get_printer_filaments").inputSchema.properties;
+  for (const key of ["bambu_model", "nozzle_diameter"]) assert.ok(Object.hasOwn(filaments, key), `get_printer_filaments.${key}`);
+});
+
+test("Bambu: counterpart_printer_info reports AMS filaments", async () => {
+  const bambu = Object.create((await import("../dist/printers/bambu.js")).BambuImplementation.prototype);
+  bambu.getStatus = async () => ({ connected: true, model: "P1S", serial: "01P00A000000000" });
+  const service = new CounterpartService(() => bambu, axios.create(), { name: "test", version: "0" });
+  const info = await service.printerInfo({ type: "bambu", host: "192.0.2.1", port: "8883", apiKey: "S:T" });
+  assert.equal(info.capabilities.filaments, "ams");
+});
