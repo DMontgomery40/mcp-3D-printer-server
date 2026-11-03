@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -185,6 +185,18 @@ test("a Bambu printer with no SLICER_TYPE slices with Bambu Studio, as bambu-pri
   const args = await install.args();
   assert.equal(args.at(-1), SAMPLE_STL, "the Bambu Studio CLI received the original model");
   assert.equal(args[args.indexOf("--scale") + 1], "2");
+});
+
+test("a relative TEMP_DIR reaches the slicer as an absolute output folder (Bambu Studio fails relative ones)", async (t) => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install, { TEMP_DIR: "server-temp" });
+  const result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", nozzle_diameter: "0.4" });
+  assert.equal(result.isError, undefined, text(result));
+  await assertSliced(text(result));
+  const args = await install.args();
+  const outputDir = args[args.indexOf("--outputdir") + 1];
+  assert.ok(path.isAbsolute(outputDir), `--outputdir ${outputDir} must be absolute`);
+  assert.ok(outputDir.startsWith(path.join(realpathSync(install.root), "server-temp")), outputDir);
 });
 
 test("slice_stl writes the installed nozzle type into the machine preset so printing can match the printer", async (t) => {

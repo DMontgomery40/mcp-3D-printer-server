@@ -5,6 +5,7 @@
 ### Fixed
 
 - Bambu printers slice with Bambu Studio when `SLICER_TYPE` is not set, as bambu-printer-mcp does. The previous default, FULU OrcaSlicer-bambulab, crashes on every command-line slice in its only release (v1.0.0, macOS DMG and Linux builds; fixes in FULU #56 and #57 are not released), so `slice_stl`, estimates and auto-slicing failed for every Bambu user without a slicer setting. FULU's Orca stays fully supported with `SLICER_TYPE=orcaslicer-bambulab`.
+- A relative `TEMP_DIR` (such as `./temp`) is resolved against the server's working directory, as bambu-printer-mcp 1.1.44 does. Bambu Studio fails every 3MF export to a relative output folder ("Project export to temp/…/…_sliced.3mf failed").
 
 ## [1.2.25] – 2026-11-02
 

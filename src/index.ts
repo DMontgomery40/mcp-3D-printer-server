@@ -69,7 +69,10 @@ const DEFAULT_HOST = process.env.PRINTER_HOST || "localhost";
 const DEFAULT_PORT = process.env.PRINTER_PORT || "80";
 const DEFAULT_API_KEY = process.env.API_KEY || "";
 const DEFAULT_TYPE = process.env.PRINTER_TYPE || "octoprint"; // Default to OctoPrint
-const TEMP_DIR = process.env.TEMP_DIR || fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
+// Resolve an explicit TEMP_DIR (e.g. ./temp) against the server's working directory, as
+// dotenv's own .env lookup is: slicer CLIs receive paths under it, and Bambu Studio fails
+// every 3MF export to a relative --outputdir (bambu-printer-mcp 1.1.44 fixed the same).
+const TEMP_DIR = process.env.TEMP_DIR ? path.resolve(process.env.TEMP_DIR) : fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
 
 // Slicer configuration
 const CANONICAL_SLICER_TYPES = [
