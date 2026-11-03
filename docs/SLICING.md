@@ -19,7 +19,7 @@ Model ──► slicer GUI ──► sliced .gcode / .gcode.3mf ──► upload
 STL / 3MF ──► slice_stl ──► slicer CLI ──► .gcode (or sliced .3mf for Bambu) ──► upload_gcode / print_3mf
 ```
 
-Printing a file that is already sliced needs no slicer on the MCP host. Either way, every print start goes through the [print safety gate](./SETUP.md#print-and-heating-safety), including a human confirmation.
+Printing a file that is already sliced needs no slicer on the MCP host. Either way, every print start goes through the [print safety gate](./SETUP.md#print-and-heating-safety).
 
 ## Slicer types and aliases
 
@@ -113,8 +113,8 @@ A template is a saved `.3mf`, `.json`, or `.config` file whose slicer settings a
 
 ## Printing what you sliced
 
-- **G-code (any backend):** `upload_gcode` with `gcode_path` and `print: true` inspects the exact file, checks the printer, asks a human to confirm, and starts it. Without `print`, the file is only uploaded. Printing needs a declared material: `; filament_type` in the G-code or the `material` argument.
-- **Sliced Bambu `.3mf`:** `print_3mf` inspects the selected plate, compares it with a fresh printer report, asks a human to confirm, then uploads the project over FTPS and starts it over MQTT. It works only with `PRINTER_TYPE=bambu`, and `bed_type` must match the plate's bed metadata. The job's nozzle type must also match the printer's reported nozzle: Bambu machine presets assume the stock nozzle (stainless steel on P1S, P1P, and A1; hardened steel on X1C and X1E), so if you upgraded yours, slice with `nozzle_type` (or set `BAMBU_NOZZLE_TYPE`). After the print command, the server watches the printer's reports and says whether it started, stayed silent, or was refused by the firmware.
+- **G-code (any backend):** `upload_gcode` with `gcode_path` and `print: true` inspects the exact file, checks the printer, and starts it. Without `print`, the file is only uploaded. Printing needs a declared material: `; filament_type` in the G-code or the `material` argument.
+- **Sliced Bambu `.3mf`:** `print_3mf` inspects the selected plate, compares it with a fresh printer report, then uploads the project over FTPS and starts it over MQTT. It works only with `PRINTER_TYPE=bambu`, and `bed_type` must match the plate's bed metadata. The job's nozzle type must also match the printer's reported nozzle: Bambu machine presets assume the stock nozzle (stainless steel on P1S, P1P, and A1; hardened steel on X1C and X1E), so if you upgraded yours, slice with `nozzle_type` (or set `BAMBU_NOZZLE_TYPE`). After the print command, the server watches the printer's reports and says whether it started, stayed silent, or was refused by the firmware.
 - **Check first:** `confirm_temperatures` reports every heater target in a G-code file (`S` and `R` forms, tool-addressed, RepRapFirmware `G10`/`M568`, and Klipper `SET_HEATER_TEMPERATURE`). An expected temperature matches only when it equals the file's highest target, returned as `peak`. It does not change the file.
 
 ### `print_3mf` auto-slicing
@@ -125,9 +125,9 @@ Layer height, temperatures, and other slicer settings are baked into the sliced 
 
 ### `process_and_print_stl`
 
-This one-call pipeline extends the model's base (`extension_inches`, converted at 25.4 mm per inch), slices it, and prints it through the same checked gate as `upload_gcode` and `print_3mf`, including the human confirmation. If you pass `extruder_temp` or `bed_temp`, each must equal the sliced job's highest target (`S` and `R` forms, every tool); otherwise nothing is uploaded. Pass `material` when the sliced G-code has no `filament_type` metadata. For a Bambu printer with a Bambu-compatible slicer, the sliced `.3mf` goes through the `print_3mf` checks.
+This one-call pipeline extends the model's base (`extension_inches`, converted at 25.4 mm per inch), slices it, and prints it through the same checked gate as `upload_gcode` and `print_3mf`. If you pass `extruder_temp` or `bed_temp`, each must equal the sliced job's highest target (`S` and `R` forms, every tool); otherwise nothing is uploaded. Pass `material` when the sliced G-code has no `filament_type` metadata. For a Bambu printer with a Bambu-compatible slicer, the sliced `.3mf` goes through the `print_3mf` checks.
 
-Use the separate `slice_stl`, `confirm_temperatures`, and `upload_gcode` steps when you want to inspect the sliced file before the print is offered for confirmation.
+Use the separate `slice_stl`, `confirm_temperatures`, and `upload_gcode` steps when you want to inspect the sliced file before it prints.
 
 ## Slicing in Docker
 

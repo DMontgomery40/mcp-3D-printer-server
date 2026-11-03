@@ -40,8 +40,8 @@ async function fixture(t, { model = "p1s", nozzle = "0.4", material = "PLA", gco
   return file;
 }
 
-function isolatedPrinter(status = safetyStatus(), confirm = async () => true) {
-  const printer = new BambuImplementation({}, confirm);
+function isolatedPrinter(status = safetyStatus()) {
+  const printer = new BambuImplementation({});
   const events = [];
   printer.ftpUpload = async (_host, _token, file, remote) => events.push({ action: "upload", file, remote, bytes: await fs.readFile(file) });
   printer.ftpDownload = async () => { throw new Error("test download not configured"); };
@@ -135,65 +135,34 @@ test("printer becoming busy during upload stops the final print command", async 
   assert.equal(events.filter(({ action }) => action === "publish").length, 0);
 });
 
-test("a declined human confirmation stops before upload", async (t) => {
+test("a print starts without a server prompt, including after a finished job (no bed check)", async (t) => {
   const file = await fixture(t);
-  const prompts = [];
-  const { printer, events } = isolatedPrinter(safetyStatus(), async (message) => { prompts.push(message); return false; });
-  await assert.rejects(print3mf(printer, file), (error) => {
-    // bambu-printer-mcp #67: a client that supports elicitation can still decline; do not send people looking for another client.
-    assert.match(error.message, /confirmation was declined or cancelled/i);
-    assert.match(error.message, /PRINT_REQUIRE_CONFIRMATION=0 \(or BAMBU_REQUIRE_CONFIRMATION=0\)/);
-    assert.doesNotMatch(error.message, /Use an MCP client with elicitation support/);
-    return true;
-  });
-  assertNoDispatch(events);
-  assert.equal(prompts.length, 1);
-  assert.match(prompts[0], /P1S.*PLA.*nozzle 220°C, bed 60°C.*SHA-256/s);
-  assert.doesNotMatch(prompts[0], /identity chip/);
-});
-
-test("a print without any confirmation callback says confirmation is unavailable", async (t) => {
-  const file = await fixture(t);
-  const { printer, events } = isolatedPrinter();
-  printer.confirm = undefined;
-  await assert.rejects(print3mf(printer, file), /requires an MCP client with elicitation support/);
-  assertNoDispatch(events);
-});
-
-test("the print preflight names nozzles without an identity chip", async () => {
-  const prompts = [];
-  const printer = new BambuImplementation({}, async (message) => { prompts.push(message); return true; });
-  const inspection = { model: "h2d", nozzleDiameters: [0.4, 0.4], materials: ["PLA"], maxNozzleTemperature: 220, maxBedTemperature: 60, maxChamberTemperature: 0, sha256: "0".repeat(64) };
-  const unchipped = { device: { nozzle: { info: [{ id: 0, diameter: 0.4, type: "HS01", stat: 1, sn: "N/A" }, { id: 1, diameter: 0.4, type: "HS01", stat: 1, sn: "N/A" }] } } };
-  await printer.confirmPrintPreflight("094TEST", { raw: { gcode_state: "IDLE", hms: [], ...unchipped } }, inspection);
-  assert.match(prompts[0], /Printer nozzles 0 and 1 report no identity chip, so their diameter and type are the printer's configured settings; confirm they match the installed hotends\./);
-  unchipped.device.nozzle.info[1].sn = "B01";
-  await printer.confirmPrintPreflight("094TEST", { raw: { gcode_state: "IDLE", hms: [], ...unchipped } }, inspection);
-  assert.match(prompts[1], /Printer nozzle 0 reports no identity chip, so its diameter and type are the printer's configured settings; confirm they match the installed hotend\./);
-});
-
-test("confirmation opt-out skips every print prompt, including after a finished job", async (t) => {
-  const file = await fixture(t);
-  for (const [name, value] of [["BAMBU_REQUIRE_CONFIRMATION", "0"], ["PRINT_REQUIRE_CONFIRMATION", "0"]]) {
-    const previous = { BAMBU_REQUIRE_CONFIRMATION: process.env.BAMBU_REQUIRE_CONFIRMATION, PRINT_REQUIRE_CONFIRMATION: process.env.PRINT_REQUIRE_CONFIRMATION };
-    delete process.env.BAMBU_REQUIRE_CONFIRMATION;
-    delete process.env.PRINT_REQUIRE_CONFIRMATION;
-    process.env[name] = value;
-    try {
-      let prompts = 0;
-      const idle = isolatedPrinter(safetyStatus(), async () => { prompts++; return false; });
-      assert.equal((await print3mf(idle.printer, file)).status, "success", `${name}=0 opts out of ordinary prompts`);
-      assert.equal(prompts, 0);
-      const finished = isolatedPrinter(safetyStatus({ state: "FINISH" }), async () => { prompts++; return false; });
-      assert.equal((await print3mf(finished.printer, file)).status, "success", "a finished job prints like idle: no bed prompt");
-      assert.equal(prompts, 0);
-    } finally {
-      for (const [key, old] of Object.entries(previous)) {
-        if (old === undefined) delete process.env[key];
-        else process.env[key] = old;
-      }
-    }
+  for (const state of ["IDLE", "FINISH"]) {
+    const { printer, events } = isolatedPrinter(safetyStatus({ state }));
+    // Nothing may ask: the constructor no longer takes a confirmation callback at all.
+    printer.confirm = async () => { throw new Error("must not prompt"); };
+    const result = await print3mf(printer, file);
+    assert.equal(result.status, "success", `${state} prints without a prompt`);
+    // Fresh state is still read before upload, rechecked, and read again before dispatch.
+    assert.deepEqual(events.map(({ action }) => action), ["status", "status", "upload", "status", "connect", "publish"]);
   }
+});
+
+test("the removed confirmation settings no longer change anything", async (t) => {
+  const file = await fixture(t);
+  const previous = { BAMBU_REQUIRE_CONFIRMATION: process.env.BAMBU_REQUIRE_CONFIRMATION, PRINT_REQUIRE_CONFIRMATION: process.env.PRINT_REQUIRE_CONFIRMATION };
+  t.after(() => {
+    for (const [key, old] of Object.entries(previous)) {
+      if (old === undefined) delete process.env[key];
+      else process.env[key] = old;
+    }
+  });
+  process.env.BAMBU_REQUIRE_CONFIRMATION = "1";
+  process.env.PRINT_REQUIRE_CONFIRMATION = "1";
+  assert.equal((await print3mf(isolatedPrinter().printer, file)).status, "success");
+  const busy = isolatedPrinter(safetyStatus({ state: "RUNNING" }));
+  await assert.rejects(print3mf(busy.printer, file), /state|busy|RUNNING/i);
+  assertNoDispatch(busy.events);
 });
 
 test("an inspected print uploads its private copy when the caller's file changes", async (t) => {
@@ -261,12 +230,18 @@ for (const action of ["stop", "heater-off"]) {
   });
 }
 
-test("stop and heater-off are also immediate while a human confirmation is pending", async (t) => {
+test("stop and heater-off are also immediate while the pre-upload state recheck is pending", async (t) => {
   const file = await fixture(t);
   let answer;
   let markAsked;
   const asked = new Promise((resolve) => { markAsked = resolve; });
-  const { printer, events } = isolatedPrinter(safetyStatus(), () => { markAsked(); return new Promise((resolve) => { answer = resolve; }); });
+  const { printer, events } = isolatedPrinter(safetyStatus());
+  let reads = 0;
+  printer.getSafetyStatus = async () => {
+    events.push({ action: "status" });
+    if (++reads === 2) { markAsked(); await new Promise((resolve) => { answer = resolve; }); }
+    return safetyStatus();
+  };
   const outcome = print3mf(printer, file).then((value) => ({ value }), (error) => ({ error }));
   await asked;
   await printer.cancelJob(host, "", apiKey);
@@ -387,22 +362,21 @@ for (const [component, target, material] of [
   });
 }
 
-test("positive manual heating needs a model, then fresh state and a human confirmation", async () => {
+test("positive manual heating needs a model and fresh state, without a prompt", async () => {
   const noModel = isolatedPrinter();
   await assert.rejects(noModel.printer.setTemperature(host, "", apiKey, "bed", 60, {}), /bambu_model/i);
   assert.deepEqual(noModel.events, []);
 
-  const prompts = [];
-  const { printer, events } = isolatedPrinter(safetyStatus(), async (message) => { prompts.push(message); return true; });
+  const { printer, events } = isolatedPrinter(safetyStatus());
+  printer.confirm = async () => { throw new Error("must not prompt"); };
   const result = await printer.setTemperature(host, "", apiKey, "nozzle", 220, { bambuModel: "p1s", material: "PLA", nozzleDiameter: 0.4 });
   assert.equal(result.command, "M104 T0 S220");
   assert.deepEqual(events.map(({ action }) => action), ["status", "status", "connect", "publish"]);
   assert.equal(events.at(-1).payload.print.param, "M104 T0 S220\n");
-  assert.match(prompts[0], /Heat nozzle on P1S.*220°C.*PLA/);
 
-  const declined = isolatedPrinter(safetyStatus(), async () => false);
-  await assert.rejects(declined.printer.setTemperature(host, "", apiKey, "bed", 60, { bambuModel: "p1s" }), /declined/i);
-  assertNoDispatch(declined.events);
+  const wrongMaterial = isolatedPrinter(safetyStatus());
+  await assert.rejects(wrongMaterial.printer.setTemperature(host, "", apiKey, "nozzle", 280, { bambuModel: "p1s", material: "PLA", nozzleDiameter: 0.4 }), /PLA|material/i);
+  assertNoDispatch(wrongMaterial.events);
 
   const busy = isolatedPrinter(safetyStatus({ state: "RUNNING" }));
   await assert.rejects(busy.printer.setTemperature(host, "", apiKey, "bed", 60, { bambuModel: "p1s" }), /state|idle/i);
@@ -410,7 +384,7 @@ test("positive manual heating needs a model, then fresh state and a human confir
 });
 
 test("heater-off remains available without model, material, state or confirmation", async () => {
-  const { printer, events } = isolatedPrinter(safetyStatus({ state: "FAILED", print_error: 1 }), async () => { throw new Error("must not prompt"); });
+  const { printer, events } = isolatedPrinter(safetyStatus({ state: "FAILED", print_error: 1 }));
   for (const component of ["nozzle", "bed"]) {
     const result = await printer.setTemperature(host, "", apiKey, component, 0);
     assert.equal(result.status, "success");

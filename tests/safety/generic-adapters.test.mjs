@@ -14,7 +14,7 @@ import { PrusaImplementation } from "../../dist/printers/prusa.js";
 import { CrealityImplementation } from "../../dist/printers/creality.js";
 
 // Every adapter talks to a loopback HTTP mock; no printer is contacted.
-for (const name of ["PRINT_REQUIRE_CONFIRMATION", "BAMBU_REQUIRE_CONFIRMATION", "PRINTER_MAX_NOZZLE_TEMP", "PRINTER_MAX_BED_TEMP", "PRINTER_MAX_CHAMBER_TEMP"]) delete process.env[name];
+for (const name of ["PRINTER_MAX_NOZZLE_TEMP", "PRINTER_MAX_BED_TEMP", "PRINTER_MAX_CHAMBER_TEMP"]) delete process.env[name];
 
 const SAFE = "; filament_type = PLA\nM140 S60\nM104 S215\nM190 S60\nM109 S215\nG28\nG1 X10 Y10 E1\nM104 S0\n";
 const UNSAFE = "; filament_type = PLA\nM104 S220\nM104 S400\nM109 R450\nG1 X10 Y10 E1\n";
@@ -157,15 +157,14 @@ function adapterWith(adapter, confirm = async () => true) {
 const mutations = (adapter, requests) => requests.filter((req) => adapter.mutation(req));
 
 for (const [name, adapter] of Object.entries(ADAPTERS)) {
-  test(`${name}: checked upload-and-print inspects, reads state, confirms, then uploads and starts the same bytes`, async (t) => {
+  test(`${name}: checked upload-and-print inspects, reads state twice without a prompt, then uploads and starts the same bytes`, async (t) => {
     const printer = await mockPrinter(t, adapter);
     const file = await gcodeFile(t, SAFE);
     const { impl, prompts } = adapterWith(adapter);
     const result = await impl.uploadFile("127.0.0.1", printer.port, "KEY", file, "job.gcode", true, {});
     assert.equal(result.printRequested, true);
     assert.deepEqual(result.peakTemperatures, { nozzle: 215, bed: 60, chamber: 0 });
-    assert.equal(prompts.length, 1);
-    assert.match(prompts[0], /job\.gcode.*PLA.*nozzle 215°C, bed 60°C.*SHA-256/s);
+    assert.equal(prompts.length, 0, "no confirmation or bed-clearance prompt");
     const writes = mutations(adapter, printer.requests);
     const uploads = writes.filter((req) => req.url.startsWith(adapter.uploadRoute));
     assert.equal(uploads.length, 1);
@@ -205,23 +204,22 @@ for (const [name, adapter] of Object.entries(ADAPTERS)) {
     });
   }
 
-  test(`${name}: a declined confirmation uploads nothing`, async (t) => {
+  test(`${name}: a client that would decline every prompt still prints and heats; removed settings change nothing`, async (t) => {
+    process.env.PRINT_REQUIRE_CONFIRMATION = "1";
+    t.after(() => { delete process.env.PRINT_REQUIRE_CONFIRMATION; });
     const printer = await mockPrinter(t, adapter);
-    const { impl } = adapterWith(adapter, async () => false);
-    await assert.rejects(impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {}), /declined/);
-    await assert.rejects(impl.setTemperature("127.0.0.1", printer.port, "KEY", "bed", 60, {}), (error) => {
-      assert.match(error.message, /declined or cancelled/);
-      // The Bambu-only opt-out does nothing for this printer type.
-      assert.match(error.message, /set PRINT_REQUIRE_CONFIRMATION=0 to skip/);
-      assert.doesNotMatch(error.message, /BAMBU_REQUIRE_CONFIRMATION/);
-      return true;
-    });
-    assert.deepEqual(mutations(adapter, printer.requests), []);
+    const { impl, prompts } = adapterWith(adapter, async () => false);
+    assert.equal((await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {})).status, "success");
+    await impl.setTemperature("127.0.0.1", printer.port, "KEY", "bed", 60, {});
+    assert.equal(prompts.length, 0);
   });
 
-  test(`${name}: printer becoming busy during the confirmation stops the print`, async (t) => {
+  test(`${name}: printer becoming busy before the state recheck stops the print`, async (t) => {
     const printer = await mockPrinter(t, adapter);
-    const { impl } = adapterWith(adapter, async () => { printer.current.state = "busy"; return true; });
+    const { impl } = adapterWith(adapter, async () => { throw new Error("must not prompt"); });
+    const read = impl.readPrinterState.bind(impl);
+    let reads = 0;
+    impl.readPrinterState = async (...args) => { const state = await read(...args); if (++reads === 1) printer.current.state = "busy"; return state; };
     await assert.rejects(impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {}), /not safely idle/);
     assert.deepEqual(mutations(adapter, printer.requests), []);
   });
@@ -241,11 +239,11 @@ for (const [name, adapter] of Object.entries(ADAPTERS)) {
     assert.equal(mutations(adapter, printer.requests).length, 2);
   });
 
-  test(`${name}: positive heating reads state and asks a human first`, async (t) => {
+  test(`${name}: positive heating reads and rechecks state without a prompt`, async (t) => {
     const printer = await mockPrinter(t, adapter);
     const { impl, prompts } = adapterWith(adapter);
     await impl.setTemperature("127.0.0.1", printer.port, "KEY", "extruder", 215, { material: "PLA" });
-    assert.match(prompts[0], /Heat nozzle .* 215°C\? Declared material: PLA/);
+    assert.equal(prompts.length, 0);
     assert.equal(printer.requests.filter((req) => req.method === "GET" && adapter.stateRoute(req.url)).length, 2);
     assert.equal(mutations(adapter, printer.requests).length, 1);
   });
@@ -281,10 +279,8 @@ for (const [name, adapter] of Object.entries(ADAPTERS)) {
 for (const name of ["klipper", "prusa", "creality"]) {
   test(`${name}: a finished-job state prints like idle, with no bed prompt`, async (t) => {
     const adapter = ADAPTERS[name];
-    process.env.PRINT_REQUIRE_CONFIRMATION = "0";
-    t.after(() => { delete process.env.PRINT_REQUIRE_CONFIRMATION; });
     const finished = await mockPrinter(t, adapter, { state: "finished" });
-    const quiet = adapterWith(adapter, async () => { throw new Error("ordinary prompts are opted out"); });
+    const quiet = adapterWith(adapter, async () => { throw new Error("must not prompt"); });
     assert.equal((await quiet.impl.uploadFile("127.0.0.1", finished.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {})).status, "success");
     assert.equal(quiet.prompts.length, 0);
   });
@@ -327,13 +323,19 @@ test("Duet uses verified DSF routes: raw-text /machine/code and PUT /machine/fil
   ]);
 });
 
-test("stop during a pending generic confirmation prevents the upload", async (t) => {
+test("stop during a pending generic state recheck prevents the upload", async (t) => {
   const adapter = ADAPTERS.klipper;
   const printer = await mockPrinter(t, adapter);
   let answer;
   let markAsked;
   const asked = new Promise((resolve) => { markAsked = resolve; });
-  const { impl } = adapterWith(adapter, () => { markAsked(); return new Promise((resolve) => { answer = resolve; }); });
+  const { impl } = adapterWith(adapter);
+  const read = impl.readPrinterState.bind(impl);
+  let reads = 0;
+  impl.readPrinterState = async (...args) => {
+    if (++reads === 2) { markAsked(); await new Promise((resolve) => { answer = resolve; }); }
+    return read(...args);
+  };
   const outcome = impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {}).then((value) => ({ value }), (error) => ({ error }));
   await asked;
   await impl.cancelJob("127.0.0.1", printer.port, "KEY");
@@ -373,7 +375,8 @@ test("upload without print stays unguarded and keeps the requested name", async 
 // Pause is never gated. Resume reheats and moves the printer, so it only
 // resumes a job this adapter instance inspected and started, after a fresh
 // report that the same job is paused, with its bytes re-read where the
-// firmware can download them, and after human confirmation.
+// firmware can download them. Only a firmware that cannot hand the file back
+// asks a person, because the job is then matched by name only.
 
 /** Firmware responses once the checked job is paused; routes follow each firmware's API docs. */
 const PAUSED = {
@@ -527,11 +530,25 @@ for (const name of Object.keys(PAUSED)) {
     assert.equal(resumed.jobName, "job.gcode");
     assert.equal(resumed.bytesVerified, Boolean(ADAPTERS[name].download), "bytes are re-read where the firmware can download them");
     assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 1);
-    assert.equal(prompts.length, promptsBefore + 1, "resume asks a person, like a print start");
-    assert.match(prompts.at(-1), /^Resume job\.gcode on .*peak nozzle 215°C, bed 60°C.*SHA-256: [0-9a-f]{64}/);
+    if (ADAPTERS[name].download) {
+      assert.equal(prompts.length, promptsBefore, "a resume whose bytes were re-read does not ask");
+    } else {
+      assert.equal(prompts.length, promptsBefore + 1, "a resume matched by name only asks a person");
+      assert.match(prompts.at(-1), /^Resume job\.gcode on .*matched by name only.*peak nozzle 215°C, bed 60°C.*SHA-256: [0-9a-f]{64}/);
+    }
   });
 
-  test(`${name}: resume_print sends nothing when the person declines, or when the job changes during the prompt`, async (t) => {
+  if (ADAPTERS[name].download) test(`${name}: resume_print of a re-read job never asks, even from a client that would decline`, async (t) => {
+    const printer = await controlPrinter(t, name);
+    const { impl, prompts } = adapterWith(ADAPTERS[name], async () => false);
+    await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
+    printer.current.mode = "paused";
+    assert.equal((await impl.resumeJob("127.0.0.1", printer.port, "KEY")).bytesVerified, true);
+    assert.equal(prompts.length, 0);
+    assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 1);
+  });
+
+  if (!ADAPTERS[name].download) test(`${name}: resume_print sends nothing when the person declines, or when the job changes during the prompt`, async (t) => {
     const printer = await controlPrinter(t, name);
     let answer = false;
     let duringPrompt = () => {};
@@ -561,20 +578,8 @@ for (const name of Object.keys(PAUSED)) {
       printer.current.mode = "paused";
     };
     printer.current.mode = "paused";
-    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /ended on .* while the confirmation was open; nothing was sent/);
+    await assert.rejects(impl.resumeJob("127.0.0.1", printer.port, "KEY"), /ended on .* during the resume checks; nothing was sent/);
     assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 0);
-  });
-
-  test(`${name}: resume_print with PRINT_REQUIRE_CONFIRMATION=0 skips only the prompt`, async (t) => {
-    process.env.PRINT_REQUIRE_CONFIRMATION = "0";
-    t.after(() => { delete process.env.PRINT_REQUIRE_CONFIRMATION; });
-    const printer = await controlPrinter(t, name);
-    const { impl, prompts } = adapterWith(ADAPTERS[name]);
-    await impl.uploadFile("127.0.0.1", printer.port, "KEY", await gcodeFile(t, SAFE), "job.gcode", true, {});
-    printer.current.mode = "paused";
-    await impl.resumeJob("127.0.0.1", printer.port, "KEY");
-    assert.equal(prompts.length, 0);
-    assert.equal(printer.requests.filter(CONTROL_ROUTES[name].resume).length, 1);
   });
 
   test(`${name}: a cancelled or finished checked job is never resumed, even when a later job reuses its name`, async (t) => {

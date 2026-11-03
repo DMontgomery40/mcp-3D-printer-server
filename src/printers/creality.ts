@@ -111,7 +111,7 @@ export class CrealityImplementation extends GenericPrinterImplementation {
     }
     const state = raw.trim().toLowerCase();
     if (IDLE_STATES.has(state)) return { state, ready: true };
-    if (FINISHED_STATES.has(state)) return { state, ready: true, finishedJob: JSON.stringify([state]) };
+    if (FINISHED_STATES.has(state)) return { state, ready: true };
     return { state, ready: false, reason: `state is ${state}` };
   }
 

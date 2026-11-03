@@ -12,7 +12,6 @@ import {
   manualHeatingRequirements,
   publishBambuCommand,
   readFreshPrinterStatus,
-  unchippedNozzles,
   validatePrinterState,
   type PrinterStateRequirements,
 } from "../safety/printer-state.js";
@@ -23,7 +22,6 @@ import {
   withPrinterOperation,
   withPrintSnapshot,
 } from "../safety/artifact.js";
-import { requireHumanConfirmation, type ConfirmHardware } from "../safety/confirmation.js";
 import { installBambuNodeRejectionGuard } from "./bambu-node-guard.js";
 import { assertExpectedPeaks, validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "../safety/expected-peaks.js";
 
@@ -168,34 +166,10 @@ class BambuClientStore {
 export class BambuImplementation extends PrinterImplementation {
   private printerStore: BambuClientStore;
 
-  constructor(apiClient: any, private readonly confirm?: ConfirmHardware) {
+  constructor(apiClient: any) {
     super(apiClient);
     this.printerStore = new BambuClientStore();
   }
-
-  async confirmHardwareAction(message: string, physicalCheck = false): Promise<void> {
-    await requireHumanConfirmation(this.confirm, message, "bambu", physicalCheck);
-  }
-
-  private finishedJobIdentity(status: any): string | undefined {
-    return status.raw.gcode_state === "FINISH"
-      ? JSON.stringify([status.raw.gcode_file, status.raw.subtask_name, status.raw.task_id, status.raw.subtask_id])
-      : undefined;
-  }
-
-  async confirmPrintPreflight(serial: string, status: any, inspection: PrintFileInspection): Promise<string | undefined> {
-    const finishedJob = this.finishedJobIdentity(status);
-    const unchipped = unchippedNozzles(status?.raw);
-    await this.confirmHardwareAction(
-      `Start a checked print on ${inspection.model.toUpperCase()} (${serial})? Nozzles: ${inspection.nozzleDiameters.join(", ")} mm. ` +
-      `Materials: ${inspection.materials.join(", ")}. Peak targets: nozzle ${inspection.maxNozzleTemperature}°C, bed ${inspection.maxBedTemperature}°C, chamber ${inspection.maxChamberTemperature}°C. ` +
-      `File SHA-256: ${inspection.sha256}. Confirm the physical spool labels.` +
-      (unchipped.length ? ` Printer ${unchipped.length === 1 ? `nozzle ${unchipped[0]} reports` : `nozzles ${unchipped.join(" and ")} report`} no identity chip, ` +
-        `so ${unchipped.length === 1 ? "its" : "their"} diameter and type are the printer's configured settings; confirm they match the installed ${unchipped.length === 1 ? "hotend" : "hotends"}.` : "")
-    );
-    return finishedJob;
-  }
-
 
   private async getPrinter(host: string, serial: string, token: string): Promise<BambuClient> {
     return this.printerStore.getPrinter(host, serial, token);
@@ -370,10 +344,9 @@ export class BambuImplementation extends PrinterImplementation {
     const requirements: PrinterStateRequirements = { ...inspection, amsMapping: checkedMapping, useAMS };
     const initialStatus = await this.getSafetyStatus(host, serial, token);
     validatePrinterState(initialStatus, requirements);
-    await this.confirmPrintPreflight(serial, initialStatus, inspection);
-    // Recheck after the human response: the printer may have changed meanwhile.
-    const confirmedStatus = await this.getSafetyStatus(host, serial, token);
-    validatePrinterState(confirmedStatus, requirements);
+    // Recheck before the upload: the printer may have changed meanwhile.
+    const recheckedStatus = await this.getSafetyStatus(host, serial, token);
+    validatePrinterState(recheckedStatus, requirements);
     assertActive();
 
     const remoteFileName = uniquePrintName(options.filePath);
@@ -543,10 +516,6 @@ export class BambuImplementation extends PrinterImplementation {
           ? manualHeatingRequirements(current, model!, nozzleDiameter, material!)
           : { model: model!, nozzleDiameters: [] });
         validateHeatingStatus(await this.getSafetyStatus(host, serial, token));
-        await this.confirmHardwareAction(
-          `Heat ${heater} on ${model!.toUpperCase()} (${serial}) to ${targetTemperature}°C?` +
-          (material && heater === "nozzle" ? ` Declared material: ${material}. Confirm the physical spool label.` : "")
-        );
         assertActive();
         validateHeatingStatus(await this.getSafetyStatus(host, serial, token));
       }
@@ -668,9 +637,8 @@ export class BambuImplementation extends PrinterImplementation {
     }
     const initialStatus = await this.getSafetyStatus(host, serial, token);
     this.validateLoadedGcodeState(initialStatus, inspection);
-    await this.confirmPrintPreflight(serial, initialStatus, inspection);
-    const confirmedStatus = await this.getSafetyStatus(host, serial, token);
-    this.validateLoadedGcodeState(confirmedStatus, inspection);
+    const recheckedStatus = await this.getSafetyStatus(host, serial, token);
+    this.validateLoadedGcodeState(recheckedStatus, inspection);
     assertActive();
     // Start a uniquely named copy of the inspected bytes, never a name that can change.
     const remotePath = path.posix.join(path.posix.dirname(filename), uniquePrintName(filename));

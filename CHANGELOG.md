@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Start prints and positive heating without a server-side confirmation prompt, on every printer type. The client's own print action is the approval and the printer runs its own checks, so clients without MCP elicitation support now print and heat normally. `PRINT_REQUIRE_CONFIRMATION` and `BAMBU_REQUIRE_CONFIRMATION` are removed. File inspection, hardware and material ceilings, declared materials, fresh printer state (read, rechecked before upload and again before dispatch) and Bambu identity checks are unchanged. Matches bambu-printer-mcp.
+- `resume_print` asks a person only when the printer cannot hand the file back for re-reading (PrusaLink, Repetier, Creality), where the job is matched by name only. OctoPrint, Klipper and Duet (DSF) re-read the file, compare its SHA-256 and resume without a prompt. `PRINT_CONFIRMATION_TIMEOUT_MS` now bounds that prompt and the Bambu printer-model prompt.
+- Stop treating a finished job as a bed-clearance case: a printer that reports a finished or cancelled job (Moonraker complete or cancelled, PrusaLink FINISHED or STOPPED, Creality finished, Bambu FINISH) starts the next print like an idle one. Matches bambu-printer-mcp's bed-check removal ([bambu-printer-mcp #90](https://github.com/DMontgomery40/bambu-printer-mcp/pull/90)).
+- Evidence: mocked Bambu MQTT/FTPS boundaries and loopback HTTP printer APIs only; no real printer was used.
+
 ### Fixed
 
 - Bambu printers slice with Bambu Studio when `SLICER_TYPE` is not set, as bambu-printer-mcp does. The previous default, FULU OrcaSlicer-bambulab, crashes on every command-line slice in its only release (v1.0.0, macOS DMG and Linux builds; fixes in FULU #56 and #57 are not released), so `slice_stl`, estimates and auto-slicing failed for every Bambu user without a slicer setting. FULU's Orca stays fully supported with `SLICER_TYPE=orcaslicer-bambulab`.

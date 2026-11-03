@@ -693,7 +693,7 @@ class ThreeDPrinterMCPServer {
     this.setupErrorHandling();
   }
 
-  /** Human MCP elicitation before a print start or positive heating command. */
+  /** Human MCP elicitation for a physical check software cannot make (resuming a job that cannot be re-read). */
   private async confirmHardware(message: string): Promise<boolean> {
     let response;
     const timeout = confirmationTimeoutMs();
@@ -710,7 +710,7 @@ class ThreeDPrinterMCPServer {
         },
       }, { timeout });
     } catch (error) {
-      // A person may take minutes to check the bed; a timeout is not a missing capability.
+      // A person may take minutes to check the printer; a timeout is not a missing capability.
       if ((error as { code?: unknown })?.code === ErrorCode.RequestTimeout) throw new Error(confirmationTimedOut(timeout));
       throw new Error(CONFIRMATION_UNAVAILABLE);
     }
@@ -1086,7 +1086,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "upload_gcode",
-            description: "Upload G-code content or a local G-code file path to the printer. With print=true the exact uploaded bytes are inspected first (every S/R heater target, tool changes, hardware and material ceilings), printer state is checked, and a human confirmation is requested before the print starts.",
+            description: "Upload G-code content or a local G-code file path to the printer. With print=true the exact uploaded bytes are inspected first (every S/R heater target, tool changes, hardware and material ceilings) and printer state is checked before the print starts.",
             inputSchema: {
               type: "object",
               properties: {
@@ -1144,7 +1144,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "start_print",
-            description: "Start printing a G-code file already stored on the printer. The server downloads and inspects the exact file, then starts a uniquely named checked copy after printer-state checks and human confirmation. Printers whose API cannot download files (Repetier, Prusa, Creality) refuse; use upload_gcode with print=true instead.",
+            description: "Start printing a G-code file already stored on the printer. The server downloads and inspects the exact file, then starts a uniquely named checked copy after printer-state checks. Printers whose API cannot download files (Repetier, Prusa, Creality) refuse; use upload_gcode with print=true instead.",
             inputSchema: {
               type: "object",
               properties: {
@@ -1266,14 +1266,14 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "resume_print",
-            description: "Resume a paused print. Resume reheats and moves the printer, so it only resumes a job this server instance inspected and started, and only when the printer freshly reports that job paused. Resume other jobs at the printer.",
+            description: "Resume a paused print. Resume reheats and moves the printer, so it only resumes a job this server instance inspected and started, and only when the printer freshly reports that job paused. When the firmware cannot re-read the file, a person confirms through MCP elicitation first. Resume other jobs at the printer.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
             outputSchema: CONTROL_OUTPUT_SCHEMA,
             annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
           },
           {
             name: "set_printer_temperature",
-            description: "Set the temperature of a printer component. Temperature 0 switches a heater off and is never gated. Positive targets are validated before connecting, limited by independent hardware and material ceilings, require a ready printer and a human confirmation.",
+            description: "Set the temperature of a printer component. Temperature 0 switches a heater off and is never gated. Positive targets are validated before connecting, limited by independent hardware and material ceilings, and require a ready printer.",
             inputSchema: {
               type: "object",
               properties: {
@@ -1709,7 +1709,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "print_3mf",
-            description: "Print a 3MF file on a Bambu Lab printer. The exact selected plate is inspected (model, nozzle, bed type, materials, every heater target) and checked against a fresh MQTT report of the printer's identity, nozzle, state, errors and loaded filament, then a human confirmation is requested before upload and start.",
+            description: "Print a 3MF file on a Bambu Lab printer. The exact selected plate is inspected (model, nozzle, bed type, materials, every heater target) and checked against a fresh MQTT report of the printer's identity, nozzle, state, errors and loaded filament before upload and start.",
             inputSchema: {
               type: "object",
               properties: {
@@ -2373,7 +2373,7 @@ class ThreeDPrinterMCPServer {
             // 3. Upload and print through the adapter's hard safety gate. It
             // inspects the exact bytes sent (S and R targets, tool changes,
             // hardware and material ceilings), requires the expected peaks to
-            // match, reads fresh printer state and asks for human confirmation.
+            // match, and reads fresh printer state.
             // A mismatch refuses before upload; nothing is only logged.
             const filename = path.basename(gcodePath);
             const printResult = await this.uploadGcode(
