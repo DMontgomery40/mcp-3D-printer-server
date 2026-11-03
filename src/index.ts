@@ -33,7 +33,7 @@ import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
-import { CounterpartService, type PrinterTarget } from "./counterpart/service.js";
+import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {
   CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
   CONTROL_OUTPUT_SCHEMA,
@@ -55,8 +55,24 @@ import {
   inspectFuluOrcaSetup,
   invokeFuluBridgeRpc,
 } from "./fulu-orca.js";
-import { hasAmsMappingInput, normalizeAmsMappingObject, normalizeBridgeAmsTrayValue } from "./ams-mapping.js";
+import {
+  bridgeAmsMapping2Entry,
+  bridgeAmsMappingValue,
+  externalTrayForNozzle,
+  hasAmsMappingInput,
+  normalizeAmsMappingObject,
+  normalizeBridgeAmsTrayValue,
+  studioAmsMappingInfo,
+  trayColour,
+} from "./ams-mapping.js";
 import { isDualNozzleModel } from "./safety/limits.js";
+import { BambuNetworkBridge, describeBambuNetworkPrintError, type BridgeJobUpdate } from "./bambu-network-bridge.js";
+import { PRINT_ROUTES, connectionForRoute, routeOf, writeEnvValues, type PrintRoute } from "./counterpart/route.js";
+import { resolveStudioPrintOptions, usedNozzleCount, type CallerPrintOptions } from "./studio-print-options.js";
+import { inspectPrintFile } from "./safety/print-file.js";
+import { validatePrinterState } from "./safety/printer-state.js";
+import { uniquePrintName, withPrinterOperation, withPrintSnapshot } from "./safety/artifact.js";
+import { checkedFile } from "./printers/bambu.js";
 import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
 import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "./safety/expected-peaks.js";
 
@@ -189,6 +205,53 @@ const DEFAULT_BAMBU_TOKEN = process.env.BAMBU_TOKEN || "";
 const DEFAULT_BAMBU_MODEL = process.env.BAMBU_MODEL?.trim().toLowerCase() || "";
 const DEFAULT_BED_TYPE = process.env.BED_TYPE?.trim().toLowerCase() || "textured_plate";
 const DEFAULT_NOZZLE_DIAMETER = process.env.NOZZLE_DIAMETER?.trim() || "0.4";
+// counterpart_print_route changes these at run time (and in the .env file they came from).
+let DEFAULT_BAMBU_CONNECTION_MODE = process.env.BAMBU_DEFAULT_CONNECTION_MODE?.trim().toLowerCase() || "";
+let DEFAULT_BAMBU_CONNECTION_TYPE = process.env.BAMBU_DEFAULT_CONNECTION_TYPE?.trim().toLowerCase() || "";
+const CONNECTION_MODES = ["lan_mqtt_ftps", "bambu_network", "bambu_native", "bambu_connect"];
+
+/**
+ * The one route decision for a Bambu printer, as in bambu-printer-mcp:
+ * print_3mf and every print control (cancel, pause, resume) resolve it here,
+ * so a job is never controlled over a different connection than the one that
+ * started it. Arguments override BAMBU_DEFAULT_CONNECTION_MODE/_TYPE; without
+ * either, direct LAN MQTT/FTPS. The type (lan or cloud) applies to FULU's
+ * BambuNetwork route and defaults to cloud, as bambu-printer-mcp's does.
+ */
+function resolveConnection(args: Record<string, unknown> | undefined): { mode: string; type: string } {
+  const mode = String(args?.connection_mode || DEFAULT_BAMBU_CONNECTION_MODE || "lan_mqtt_ftps").trim().toLowerCase();
+  if (!CONNECTION_MODES.includes(mode)) throw new Error("Unsupported connection_mode.");
+  const type = String(args?.connection_type || DEFAULT_BAMBU_CONNECTION_TYPE || "cloud").trim().toLowerCase();
+  if (!["cloud", "lan"].includes(type)) throw new Error('connection_type must be "cloud" or "lan".');
+  return { mode, type };
+}
+
+/** bambu-printer-mcp's installed-plug-in (X2D native) and Bambu Connect routes are not part of this server. */
+function assertConnectionAvailable(mode: string): void {
+  if (mode === "bambu_native" || mode === "bambu_connect") {
+    throw new Error(
+      `connection_mode ${mode} is not available in mcp-3D-printer-server. Use lan_mqtt_ftps or bambu_network (FULU), ` +
+      `or bambu-printer-mcp for ${mode === "bambu_native" ? "the X2D native route" : "Bambu Connect"}. Nothing was sent.`
+    );
+  }
+}
+
+const CONNECTION_PROPERTIES = {
+  connection_mode: { type: "string", enum: ["lan_mqtt_ftps", "bambu_network"], description: "Bambu only: the connection the print uses (print_3mf) or used (controls). lan_mqtt_ftps is direct LAN MQTT/FTPS (Developer Mode); bambu_network is FULU's authenticated BambuNetwork bridge. Defaults to BAMBU_DEFAULT_CONNECTION_MODE, else lan_mqtt_ftps." },
+  connection_type: { type: "string", enum: ["lan", "cloud"], description: "Bambu only: FULU BambuNetwork connection type. lan is the authenticated local network session; cloud is Bambu Cloud. Defaults to BAMBU_DEFAULT_CONNECTION_TYPE, else cloud." },
+};
+
+/** The Send dialog options a caller set explicitly; the rest resolve as Bambu Studio does (studio-print-options.ts). */
+function callerPrintOptions(args: Record<string, any> | undefined): CallerPrintOptions {
+  const flag = (value: unknown) => value === undefined ? undefined : Boolean(value);
+  const options: CallerPrintOptions = {
+    bedLeveling: flag(args?.bed_leveling),
+    flowCalibration: flag(args?.flow_calibration),
+    vibrationCalibration: flag(args?.vibration_calibration),
+    layerInspect: flag(args?.layer_inspect),
+  };
+  return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) as CallerPrintOptions;
+}
 
 const VALID_BAMBU_MODELS = ["p1s", "p1p", "x1c", "x1e", "a1", "a1mini", "h2d"] as const;
 type BambuModel = typeof VALID_BAMBU_MODELS[number];
@@ -670,6 +733,8 @@ class ThreeDPrinterMCPServer {
   private printerFactory: PrinterFactory;
   private readonly counterpart: CounterpartService;
   private stlManipulator: STLManipulator;
+  /** FULU's BambuNetwork bridge host, started on first use by the bambu_network route. */
+  private bambuNetwork = new BambuNetworkBridge();
   private readonly runtimeConfig: RuntimeConfig;
   private httpRuntime?: { transport: StreamableHTTPServerTransport; httpServer: HttpServer };
 
@@ -943,6 +1008,177 @@ class ThreeDPrinterMCPServer {
       useAMS = false;
     }
     return { useAMS, amsMapping: finalAmsMapping, amsSlots: finalAmsSlots };
+  }
+
+  /**
+   * print_3mf over FULU's BambuNetwork bridge (connection_mode bambu_network),
+   * ported from bambu-printer-mcp: the route a P1S on authorization firmware
+   * without Developer Mode prints through. connection_type lan opens the
+   * plug-in's authenticated local session (start_local_print); cloud sends
+   * through Bambu Cloud (start_print). The shared gates run first: the exact
+   * snapshot bytes are inspected, the AMS mapping checked, and fresh LAN MQTT
+   * state validated before the bridge starts, again immediately before the
+   * print frame, and the job is recorded for a checked resume.
+   */
+  private async print3mfViaBambuNetwork(options: {
+    args: Record<string, any>; host: string; serial: string; token: string; threeMFPath: string;
+    model: string; nozzleDiameters?: number[]; bedType: string; connectionType: string;
+    ams: { useAMS: boolean; amsMapping?: number[]; amsSlots?: number[] };
+  }): Promise<Record<string, unknown>> {
+    const { args, model, bedType, connectionType } = options;
+    const devId = options.serial.trim();
+    const devIp = options.host.trim();
+    const password = options.token.trim();
+    if (!devId || !devIp || devIp === "localhost" || !password) {
+      throw new Error("FULU BambuNetwork printing requires bambu_serial, the printer host and its LAN access code: fresh printer state is checked over MQTT before every bridge print, including cloud dispatch.");
+    }
+    const isLocalBridgePrint = connectionType === "lan";
+    const bridgePrintMethod = isLocalBridgePrint ? "start_local_print" : "start_print";
+    const bridgeMethod = `net.${bridgePrintMethod}`;
+    const plateIndex = 0;
+    const threeMfFilename = path.basename(options.threeMFPath);
+    const projectName = threeMfFilename.replace(/\.3mf$/i, "");
+    const presetName = `${projectName}_plate_${plateIndex + 1}`;
+    const clientJobId = Date.now();
+    const bambu = this.printerFactory.getImplementation("bambu") as unknown as BambuImplementation;
+    const dualNozzle = isDualNozzleModel(model);
+
+    return withPrinterOperation(devIp, devId, (assertActive) => withPrintSnapshot(options.threeMFPath, async (snapshot, retainForDispatchedUpload) => {
+      const inspection = await inspectPrintFile(snapshot, { model, nozzleDiameters: options.nozzleDiameters, plateIndex, bedType });
+      const resumeFile = await checkedFile(inspection, snapshot);
+      // The options Bambu Studio's Send dialog would send; explicit ones win.
+      const studio = resolveStudioPrintOptions(model, callerPrintOptions(args), { usedNozzles: usedNozzleCount(inspection) });
+      const { useAMS, amsSlots } = options.ams;
+      let mapping = options.ams.amsMapping?.slice();
+      if (amsSlots) {
+        if (amsSlots.length !== inspection.usedFilamentPositions.length) throw new Error("ams_slots must supply exactly one physical tray per used filament.");
+        mapping = Array<number>(inspection.materials.length).fill(-1);
+        inspection.usedFilamentPositions.forEach((position, index) => { mapping![position] = amsSlots[index]; });
+      }
+      if (!useAMS) {
+        mapping ??= Array<number>(inspection.materials.length).fill(-1);
+        for (const position of inspection.usedFilamentPositions) {
+          if (mapping[position] === undefined || mapping[position] < 0) {
+            mapping[position] = externalTrayForNozzle(inspection.filamentNozzleIndices?.[position], dualNozzle);
+          }
+          if (mapping[position] !== 254 && !(dualNozzle && mapping[position] === 255)) {
+            throw new Error("use_ams:false requires an external-spool mapping for every used filament.");
+          }
+        }
+      }
+      for (const position of inspection.usedFilamentPositions) {
+        if (mapping?.[position] === undefined || mapping[position] < 0) {
+          throw new Error(`Missing physical filament mapping for project filament ${position}. Pass ams_slots (one tray per used filament), ams_mapping, or use_ams:false for the external spool.`);
+        }
+      }
+      const requirements = { ...inspection, amsMapping: mapping, useAMS };
+      validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
+      const confirmedStatus = await bambu.getSafetyStatus(devIp, devId, password);
+      validatePrinterState(confirmedStatus, requirements);
+      const wireMapping = mapping!.map((value) => bridgeAmsMappingValue(value, dualNozzle));
+      const remoteFileName = uniquePrintName(options.threeMFPath);
+      const checkedName = remoteFileName.replace(/(?:\.gcode)?\.3mf$/i, "");
+      const params: Record<string, unknown> = {
+        dev_id: devId,
+        // The printer reports the task or project name back; both carry the unique
+        // checked name, which binds the job to this inspected artifact for a later resume.
+        task_name: checkedName,
+        project_name: checkedName,
+        preset_name: presetName,
+        filename: snapshot,
+        config_filename: snapshot,
+        plate_index: plateIndex + 1,
+        ftp_folder: "",
+        ftp_file: "",
+        ftp_file_md5: "",
+        nozzle_mapping: "",
+        ams_mapping: JSON.stringify(wireMapping),
+        ams_mapping2: JSON.stringify(mapping!.map((value) => bridgeAmsMapping2Entry(value, dualNozzle))),
+        // Bambu Studio and FULU's slicer send this with every job (get_ams_mapping_result).
+        ams_mapping_info: inspection.projectFilaments?.length
+          ? JSON.stringify(studioAmsMappingInfo(inspection.projectFilaments, mapping!, (tray) => trayColour(confirmedStatus.raw, tray)))
+          : "",
+        nozzles_info: "",
+        connection_type: connectionType,
+        comments: "",
+        origin_profile_id: 0,
+        stl_design_id: 0,
+        origin_model_id: "",
+        print_type: "from_normal",
+        dst_file: remoteFileName,
+        dev_name: "",
+        dev_ip: devIp,
+        use_ssl_for_ftp: true,
+        use_ssl_for_mqtt: true,
+        username: "bblp",
+        password,
+        task_bed_leveling: studio.task_bed_leveling,
+        task_flow_cali: studio.task_flow_cali,
+        task_vibration_cali: studio.task_vibration_cali,
+        task_layer_inspect: studio.task_layer_inspect,
+        task_record_timelapse: args?.timelapse !== undefined ? Boolean(args.timelapse) : false,
+        task_use_ams: useAMS,
+        task_bed_type: bedType,
+        extra_options: "",
+        auto_bed_leveling: studio.auto_bed_leveling,
+        auto_flow_cali: studio.auto_flow_cali,
+        auto_offset_cali: studio.auto_offset_cali,
+        extruder_cali_manual_mode: studio.extruder_cali_manual_mode,
+        task_ext_change_assist: false,
+        try_emmc_print: false,
+      };
+      assertActive();
+      const bridgeOptions = {
+        // Trusted in-process preflight immediately before the print frame.
+        beforeDispatch: async (method: string) => {
+          if (method !== bridgeMethod) return;
+          assertActive();
+          validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
+        },
+        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod) assertActive(); },
+        onDispatched: (method: string) => { if (method === bridgeMethod) retainForDispatchedUpload(); },
+      };
+      let jobUpdates: BridgeJobUpdate[] = [];
+      let bridgeResult: unknown;
+      if (isLocalBridgePrint) {
+        ({ result: bridgeResult, jobUpdates } = await this.bambuNetwork.startLocalPrint(
+          { devId, devIp, username: "bblp", password, useSsl: true },
+          bridgeMethod, { client_job_id: clientJobId, params }, bridgeOptions, assertActive
+        ));
+      } else {
+        ({ result: bridgeResult, jobUpdates } = await this.bambuNetwork.startCloudPrint(devId, bridgeMethod, { client_job_id: clientJobId, params }, bridgeOptions, assertActive));
+      }
+      if (typeof bridgeResult === "object" && bridgeResult !== null && (bridgeResult as { ok?: unknown }).ok === false) {
+        throw new Error(`FULU BambuNetwork bridge method ${bridgeMethod} failed: ${String((bridgeResult as { error?: unknown }).error || "unknown bridge error")}`);
+      }
+      const value = typeof bridgeResult === "object" && bridgeResult !== null ? (bridgeResult as { value?: unknown }).value : undefined;
+      if (typeof value === "number" && value !== 0) {
+        const reported = jobUpdates.filter((update) => update.code !== 0 || update.msg).slice(-3)
+          .map((update) => `status ${update.status}, code ${update.code}${update.msg ? `: ${update.msg}` : ""}`).join("; ");
+        throw new Error(`FULU BambuNetwork bridge method ${bridgeMethod} returned non-zero result ${value}${describeBambuNetworkPrintError(value)}.` +
+          (reported ? ` Plug-in reported: ${reported}.` : ""));
+      }
+      assertActive();
+      // Bambu's plug-in placed the file, so a resume re-reads it if it can and otherwise asks a person.
+      bambu.recordCheckedJob(devIp, devId, remoteFileName, requirements, resumeFile, false);
+      return {
+        status: "success",
+        message: `FULU BambuNetwork ${bridgePrintMethod} command for ${threeMfFilename} sent successfully.`,
+        connectionMode: "bambu_network",
+        connectionType,
+        bridgeMethod,
+        bridgeResult,
+        clientJobId,
+        projectName,
+        plateIndex,
+        bridgePlateIndex: plateIndex + 1,
+        printerJobName: checkedName,
+        useAMS,
+        amsMapping: mapping,
+        sha256: inspection.sha256,
+        params: { ...params, password: "[redacted]" },
+      };
+    }));
   }
 
   setupResourceHandlers() {
@@ -1233,8 +1469,20 @@ class ThreeDPrinterMCPServer {
                 bambu_token: {
                   type: "string",
                   description: "Access token for Bambu Lab printers (default: value from env)"
-                }
+                },
+                ...CONNECTION_PROPERTIES,
               }
+            }
+          },
+          {
+            name: "counterpart_print_route",
+            description: "Counterpart contract (counterpart/1), Bambu: how this server reaches the printer for prints and for Stop/Pause/Resume. route is \"lan\" (the local network) or \"cloud\" (Bambu Cloud through FULU's BambuNetwork bridge); mode and type are BAMBU_DEFAULT_CONNECTION_MODE and BAMBU_DEFAULT_CONNECTION_TYPE as resolved. Pass route to change it: the change applies to the next print and control at once, and is saved to the .env file in this server's working directory when that file exists (savedTo; null otherwise). Sends nothing to the printer.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                route: { type: "string", enum: ["lan", "cloud"], description: "Change the route. Omit to read it." }
+              },
+              additionalProperties: false
             }
           },
           {
@@ -1282,14 +1530,14 @@ class ThreeDPrinterMCPServer {
           {
             name: "pause_print",
             description: "Pause the current print (Bambu Lab, OctoPrint, Klipper/Moonraker, PrusaLink, Duet M25, Repetier, and Creality printers that run Moonraker). Bambu pauses over the same connection that prints. Pause is never gated.",
-            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
+            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES, ...CONNECTION_PROPERTIES } },
             outputSchema: CONTROL_OUTPUT_SCHEMA,
             annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
           },
           {
             name: "resume_print",
             description: "Resume a paused print. Resume reheats and moves the printer, so it only resumes a job this server instance inspected and started, and only when the printer freshly reports that job paused. Bambu re-reads the job over FTPS (or the plate G-code the printer extracted) and compares its SHA-256, and resumes over the same connection that printed. When the file cannot be re-read, a person confirms through MCP elicitation first (Bambu: only for files Bambu's plug-in placed; a file this server uploaded must re-read). Resume other jobs at the printer.",
-            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
+            inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES, ...CONNECTION_PROPERTIES } },
             outputSchema: CONTROL_OUTPUT_SCHEMA,
             annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
           },
@@ -1774,6 +2022,7 @@ class ThreeDPrinterMCPServer {
                 nozzle_temperature: { type: "number", description: "Override nozzle temperature (°C)." },
                 bed_temperature: { type: "number", description: "Override bed temperature (°C)." },
                 support_enabled: { type: "boolean", description: "Override support generation." },
+                ...CONNECTION_PROPERTIES,
                 ams_mapping: {
                   anyOf: [
                     { type: "array", items: { type: "number" } },
@@ -2118,6 +2367,20 @@ class ThreeDPrinterMCPServer {
           type, host, port,
           apiKey: type.toLowerCase() === "bambu" ? `${bambuSerial}:${bambuToken}` : apiKey,
         };
+        // Bambu print controls go over the same connection as the print (resolveConnection);
+        // undefined keeps direct LAN MQTT in BambuImplementation.
+        const bambuControlRoute: BambuControlRoute = (command) => {
+          if (type.toLowerCase() !== "bambu") return undefined;
+          const route = resolveConnection(args);
+          assertConnectionAvailable(route.mode);
+          if (route.mode !== "bambu_network") return undefined;
+          return (assertActive?: () => void, beforeDispatch?: () => Promise<void>) => {
+            const options = { assertDispatchAllowed: () => { extra.signal.throwIfAborted(); assertActive?.(); } };
+            return route.type === "cloud"
+              ? this.bambuNetwork.sendCloudPrintCommand(bambuSerial, command, options, beforeDispatch)
+              : this.bambuNetwork.sendLocalPrintCommand({ devId: bambuSerial, devIp: host, username: "bblp", password: bambuToken, useSsl: true }, command, options, beforeDispatch);
+          };
+        };
         const structured = (value: object) => ({
           content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
           structuredContent: value as Record<string, unknown>,
@@ -2148,10 +2411,32 @@ class ThreeDPrinterMCPServer {
           }
 
           case "pause_print":
-            return structured(await this.counterpart.pause(target));
+            return structured(await this.counterpart.pause(target, bambuControlRoute));
 
           case "resume_print":
-            return structured(await this.counterpart.resume(target));
+            return structured(await this.counterpart.resume(target, bambuControlRoute));
+
+          case "counterpart_print_route": {
+            let savedTo: string | null = null;
+            if (args?.route !== undefined) {
+              if (!PRINT_ROUTES.includes(args.route as PrintRoute)) throw new Error('route must be "lan" or "cloud".');
+              const next = connectionForRoute(args.route as PrintRoute, { mode: DEFAULT_BAMBU_CONNECTION_MODE, type: DEFAULT_BAMBU_CONNECTION_TYPE });
+              // dotenv loaded .env from the working directory at start; a client's own env block has no file to update.
+              const file = path.resolve(process.cwd(), ".env");
+              if (fs.existsSync(file)) {
+                writeEnvValues(file, {
+                  ...(next.mode ? { BAMBU_DEFAULT_CONNECTION_MODE: next.mode } : {}),
+                  ...(next.type ? { BAMBU_DEFAULT_CONNECTION_TYPE: next.type } : {}),
+                });
+                savedTo = file;
+              }
+              DEFAULT_BAMBU_CONNECTION_MODE = next.mode;
+              DEFAULT_BAMBU_CONNECTION_TYPE = next.type;
+            }
+            const connection = resolveConnection({});
+            result = { route: routeOf(connection), mode: connection.mode, type: connection.type, choices: [...PRINT_ROUTES], savedTo };
+            break;
+          }
 
           case "get_printer_status":
             result = await this.getPrinterStatus(host, port, type, apiKey, bambuSerial, bambuToken);
@@ -2204,7 +2489,7 @@ class ThreeDPrinterMCPServer {
             break;
             
           case "cancel_print":
-            result = await this.cancelPrint(host, port, type, apiKey, bambuSerial, bambuToken);
+            result = await this.cancelPrint(host, port, type, apiKey, bambuSerial, bambuToken, bambuControlRoute("stop"));
             break;
             
           case "set_printer_temperature":
@@ -2632,6 +2917,8 @@ class ThreeDPrinterMCPServer {
             const explicitPrintNozzle = optionalNozzleDiameterArg(args?.nozzle_diameter);
             const printNozzle = String(explicitPrintNozzle ?? DEFAULT_NOZZLE_DIAMETER);
             const printPreset = BAMBU_MODEL_PRESETS[printModel]?.(printNozzle);
+            const printConnection = resolveConnection(args);
+            assertConnectionAvailable(printConnection.mode);
 
             let threeMFPath = String(args.three_mf_path);
 
@@ -2734,6 +3021,16 @@ class ThreeDPrinterMCPServer {
                 throw new Error(`Failed during 3MF processing: ${(error as Error).message}`);
             }
                 
+            if (printConnection.mode === "bambu_network") {
+              result = await this.print3mfViaBambuNetwork({
+                args: args as Record<string, any>, host, serial: bambuSerial, token: bambuToken, threeMFPath,
+                model: printModel, nozzleDiameters: requestedPrintNozzles, bedType: printBedType,
+                connectionType: printConnection.type,
+                ams: { useAMS: printOptions.useAMS, amsMapping: printOptions.amsMapping, amsSlots: printOptions.amsSlots },
+              });
+              break;
+            }
+
             // --- Call Implementation (Now variables are in scope) --- 
             try {
                 result = await implementation.print3mf(host, bambuSerial, bambuToken, {
@@ -3040,13 +3337,14 @@ class ThreeDPrinterMCPServer {
     type: string, 
     apiKey: string,
     bambuSerial: string,
-    bambuToken: string
+    bambuToken: string,
+    bambuDispatch?: () => Promise<any>
   ) {
     const implementation = this.printerFactory.getImplementation(type);
     
     if (type.toLowerCase() === "bambu") {
       const bambuApiKey = `${bambuSerial}:${bambuToken}`;
-      return await implementation.cancelJob(host, port, bambuApiKey);
+      return await (implementation as unknown as BambuImplementation).cancelJob(host, port, bambuApiKey, bambuDispatch);
     }
     
     return await implementation.cancelJob(host, port, apiKey);
@@ -3307,6 +3605,7 @@ class ThreeDPrinterMCPServer {
 
   private async closeOnce(): Promise<void> {
     await this.printerFactory.disconnectAll();
+    await this.bambuNetwork.stop();
     await this.fusion.close();
 
     if (this.httpRuntime) {

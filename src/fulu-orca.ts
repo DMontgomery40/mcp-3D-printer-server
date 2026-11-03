@@ -722,3 +722,19 @@ export async function inspectFuluOrcaSetup(options: FuluOrcaSetupOptions): Promi
     ],
   };
 }
+
+/**
+ * The FULU BambuNetwork bridge command this machine's FULU install provides:
+ * FULU_BAMBU_BRIDGE_COMMAND, else the host discovered next to FULU's
+ * OrcaSlicer-bambulab (the same discovery check_fulu_orca_setup reports).
+ * print_3mf's bambu_network route and its controls fall back to it.
+ */
+export function discoveredFuluBridgeCommand(): string | undefined {
+  try {
+    const platform = normalizePlatform(undefined);
+    const slicerPath = resolveSlicerPath(undefined, platform);
+    return defaultBridgeCommand(platform, derivePluginDir(undefined, slicerPath, platform), defaultRuntimeDir(platform));
+  } catch {
+    return undefined;
+  }
+}

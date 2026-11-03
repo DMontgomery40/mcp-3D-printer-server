@@ -73,7 +73,16 @@
         "src/fusion-mcp-bridge.ts",
         "dist/ams-mapping.js",
         "dist/ams-mapping.d.ts",
-        "src/ams-mapping.ts"
+        "src/ams-mapping.ts",
+        "dist/bambu-network-bridge.js",
+        "dist/bambu-network-bridge.d.ts",
+        "src/bambu-network-bridge.ts",
+        "dist/bambu-network-certs.js",
+        "dist/bambu-network-certs.d.ts",
+        "src/bambu-network-certs.ts",
+        "dist/studio-print-options.js",
+        "dist/studio-print-options.d.ts",
+        "src/studio-print-options.ts"
     ],
     "keywords": [
         "mcp",
