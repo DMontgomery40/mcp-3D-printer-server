@@ -236,10 +236,35 @@ function reportedNozzles(raw: Record<string,any>): ReportedNozzle[] {
   return output;
 }
 
-function validateErrors(raw: Record<string,any>, requireIdle: boolean) {
+/**
+ * X2D retains FAILED after a canceled job even with no active print error.
+ * Bambu Studio classifies FAILED as a finished job; its v02.08.02.61
+ * hms_en_20P table (926a7192574bcb9b3a732e1ec59a46d79cb45466)
+ * calls 0300400C "The task was canceled."
+ * Only this observed terminal condition qualifies, never an arbitrary failure.
+ * Callers still validate HMS, identity, hardware and material configuration,
+ * and print dispatch rechecks the identity of the observed job. (As bambu-printer-mcp.)
+ */
+export function isCancelledX2DJob(raw: Record<string, any>, model: string): boolean {
+  return normalizeModel(model) === "x2d" && raw.gcode_state === "FAILED" &&
+    finiteNumber(raw.print_error) === 0 && finiteNumber(raw.fail_reason) === 0x0300400c &&
+    [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
+}
+/** Bambu Studio 2.8.2.61 marks FAILED as finished. Limit P1S recovery to
+ * a named prior job explicitly reporting idle, no print error and no HMS.
+ * Dispatch rechecks the observed job identity. (As bambu-printer-mcp; a stopped
+ * print leaves a P1S in FAILED until the next job.) */
+export function isFinishedP1SJob(raw: Record<string, any>, model: string): boolean {
+  return normalizeModel(model) === "p1s" && raw.gcode_state === "FAILED" && raw.print_type === "idle" &&
+    finiteNumber(raw.print_error) === 0 && Array.isArray(raw.hms) && raw.hms.length === 0 &&
+    [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
+}
+
+function validateErrors(raw: Record<string,any>, requireIdle: boolean, model: string) {
   const state = typeof raw.gcode_state === "string" ? raw.gcode_state.toUpperCase() : "UNKNOWN";
-  if (requireIdle && !["IDLE","FINISH"].includes(state)) throw new Error(`Printer state ${state} is not safely idle.`);
-  if (!requireIdle && !["IDLE","FINISH","RUNNING","PAUSE"].includes(state)) throw new Error(`Printer state ${state} is unknown or failed.`);
+  const terminal = isCancelledX2DJob(raw, model) || isFinishedP1SJob(raw, model);
+  if (requireIdle && !["IDLE","FINISH"].includes(state) && !terminal) throw new Error(`Printer state ${state} is not safely idle.`);
+  if (!requireIdle && !["IDLE","FINISH","RUNNING","PAUSE"].includes(state) && !terminal) throw new Error(`Printer state ${state} is unknown or failed.`);
   if (finiteNumber(raw.print_error) !== 0) throw new Error("Printer reports a print error or did not report its error state.");
   if (!Array.isArray(raw.hms)) throw new Error("Printer HMS error state is missing or malformed.");
   for (const entry of raw.hms) {
@@ -301,7 +326,7 @@ export function validatePrinterState(status: any, requirements: PrinterStateRequ
   const identity = observedIdentity(raw, String(status.serial ?? ""));
   const model = normalizeModel(requirements.model);
   if (!model || !identity.model || model !== identity.model) throw new Error(`Printer model identity mismatch: requested ${requirements.model}, observed ${identity.model ?? "unknown"}.`);
-  validateErrors(raw, requirements.requireIdle !== false);
+  validateErrors(raw, requirements.requireIdle !== false, model);
   if (requirements.requireLoadedFilament && (raw.ams?.tray_now !== undefined || Array.isArray(raw.ams?.ams))) {
     const current = finiteNumber(raw.ams?.tray_now);
     if (current === 255) throw new Error("The nozzle is explicitly reported unloaded. Load the declared filament before starting or resuming this G-code job.");
