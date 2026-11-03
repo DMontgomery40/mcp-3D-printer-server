@@ -61,11 +61,25 @@ export function controlReply(msg: unknown, command: string, sequenceId: string):
   return { accepted: errCode === 0 && !failed, errCode };
 }
 
+/**
+ * The printer's authorization check refused the command (0x05024007-0x0502400B: unsigned, certificate not
+ * trusted, malformed header, signature rejected). On a P1S 01.10.00.00 FULU's plug-in gets 0x0502400A for every
+ * Pause and Stop over LAN and Bambu Cloud, while Bambu Studio and Bambu Handy are accepted.
+ */
+export function isAuthorizationRefusal(errCode: number): boolean {
+  const code = errCode >>> 0;
+  return code >= 0x05024007 && code <= 0x0502400B;
+}
+
 /** Result of a sent control from the printer's answer during the hold; a refusal throws. */
 function controlResult(command: string, route: string, reply: { accepted: boolean; errCode: number } | undefined, attempts: number): Record<string, unknown> {
   const word = `${command[0].toUpperCase()}${command.slice(1)}`;
   if (reply && !reply.accepted) {
-    throw new Error(`The printer refused ${word} over ${route} (error ${(reply.errCode >>> 0).toString(16).toUpperCase().padStart(8, "0")}). Nothing changed on the printer.`);
+    const code = (reply.errCode >>> 0).toString(16).toUpperCase().padStart(8, "0");
+    throw new Error(isAuthorizationRefusal(reply.errCode)
+      ? `The printer refused ${word} (error ${code}): in its current mode it takes Pause, Resume and Stop only from Bambu Studio or Bambu Handy. ` +
+        "Use one of those now. To use them from here, turn on LAN Only and Developer Mode on the printer and choose the Developer Mode connection."
+      : `The printer refused ${word} over ${route} (error ${code}). Nothing changed on the printer.`);
   }
   return { status: "success", attempts, confirmed: Boolean(reply),
     message: reply ? `The printer accepted ${word}.` : `${word} submitted over ${route}. Check printer status to confirm it took effect.` };

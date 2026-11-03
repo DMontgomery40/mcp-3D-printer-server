@@ -133,9 +133,15 @@ test("any other plug-in return is final: the control is never replayed", async t
 
 // Nov 3, the real P1S (cloud-bound, Developer Mode off): every LAN Stop/Pause got a signed reply
 // with err_code 84033546 and Counterpart still said "Stop sent." The refusal must reach the caller.
-test("a control the printer refuses fails with the printer's error code", async t => {
+test("a control the printer's authorization check refuses says which apps it takes controls from, and the way out", async t => {
   const {bridge} = await fakeFuluBridge(t, {FAKE_FULU_REFUSE: "84033546"});
-  await assert.rejects(bridge.sendLocalPrintCommand(LOCAL_PRINTER, "stop", {}, undefined, FAST_CONTROL), /refused Stop over the local network \(error 0502400A\)/);
+  await assert.rejects(bridge.sendLocalPrintCommand(LOCAL_PRINTER, "stop", {}, undefined, FAST_CONTROL),
+    /refused Stop \(error 0502400A\): .*only from Bambu Studio or Bambu Handy.*Developer Mode connection/);
+});
+
+test("any other refusal keeps the printer's own error code", async t => {
+  const {bridge} = await fakeFuluBridge(t, {FAKE_FULU_REFUSE: "50348044"});
+  await assert.rejects(bridge.sendLocalPrintCommand(LOCAL_PRINTER, "stop", {}, undefined, FAST_CONTROL), /refused Stop over the local network \(error 0300400C\)\. Nothing changed/);
 });
 
 test("a control the printer answers is reported as accepted, sent with flag 0", async t => {
@@ -179,7 +185,7 @@ test("a cloud print sends nothing when the plug-in is not signed in", async t =>
 
 test("a cloud control refused by the printer fails with its error code", async t => {
   const {bridge} = await fakeFuluBridge(t, {FAKE_FULU_LOGGED_IN: "1", FAKE_FULU_REFUSE: "84033546"});
-  await assert.rejects(bridge.sendCloudPrintCommand("01PTEST", "pause", {}, undefined, FAST_CONTROL), /refused Pause over Bambu Cloud \(error 0502400A\)/);
+  await assert.rejects(bridge.sendCloudPrintCommand("01PTEST", "pause", {}, undefined, FAST_CONTROL), /refused Pause \(error 0502400A\): .*Developer Mode connection/);
 });
 
 // Nov 3, the real P1S over Bambu Cloud: pause returned -2 while the certificate was still installing;

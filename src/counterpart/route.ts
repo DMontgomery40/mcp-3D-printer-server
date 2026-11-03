@@ -2,22 +2,59 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type PrintRoute = "lan" | "cloud";
-export const PRINT_ROUTES: readonly PrintRoute[] = ["lan", "cloud"];
+/**
+ * lan: the local network through FULU's BambuNetwork bridge (or the configured X2D native or Bambu Connect mode).
+ * cloud: Bambu Cloud through FULU's bridge.
+ * developer: the local network straight to the printer (lan_mqtt_ftps), for a printer in LAN Only + Developer Mode.
+ */
+export type PrintRoute = "lan" | "cloud" | "developer";
+export const PRINT_ROUTES: readonly PrintRoute[] = ["lan", "cloud", "developer"];
 export interface Connection { mode: string; type: string }
 
-/** Bambu Cloud is FULU's BambuNetwork with connection type cloud; every other route is the local network. */
+/** One connection a person can choose, as counterpart_print_route reports it. */
+export interface RouteOption {
+  id: PrintRoute;
+  label: string;
+  available: boolean;
+  /** Why it can't be chosen here, when it can't. */
+  reason?: string;
+  /** What Pause, Resume and Stop do on this connection. */
+  controls: string;
+}
+
+/** Modes that are their own local-network route and stay as configured. */
+const OWN_LOCAL_MODES = new Set(["bambu_native", "bambu_connect"]);
+
 export function routeOf(connection: Connection): PrintRoute {
-  return connection.mode === "bambu_network" && connection.type === "cloud" ? "cloud" : "lan";
+  if (connection.mode === "bambu_network") return connection.type === "cloud" ? "cloud" : "lan";
+  if (connection.mode === "lan_mqtt_ftps") return "developer";
+  return "lan";
+}
+
+/** Every connection, and whether this server can use it (bridgeConfigured: BAMBU_NETWORK_BRIDGE_COMMAND is set). */
+export function routeOptions(current: Connection, bridgeConfigured: boolean): RouteOption[] {
+  const signedControls = "Prints work with Developer Mode off. Printers with Bambu's authorization control (P1S firmware 01.10 and later) " +
+    "refuse Pause, Resume and Stop sent this way; Bambu Studio and Bambu Handy can still send them.";
+  const needsBridge = "Needs FULU's BambuNetwork bridge (BAMBU_NETWORK_BRIDGE_COMMAND).";
+  const ownLocal = OWN_LOCAL_MODES.has(current.mode);
+  return [
+    { id: "lan", label: "Local network", available: bridgeConfigured || ownLocal, ...(bridgeConfigured || ownLocal ? {} : { reason: needsBridge }), controls: signedControls },
+    { id: "cloud", label: "Bambu Cloud", available: bridgeConfigured, ...(bridgeConfigured ? {} : { reason: needsBridge }), controls: signedControls },
+    { id: "developer", label: "Local network, Developer Mode", available: true,
+      controls: "Pause, Resume and Stop go straight to the printer. Turn on LAN Only and Developer Mode on the printer first; Bambu Cloud and Bambu Handy then stop working for it." },
+  ];
 }
 
 /**
- * The configured defaults for a route. Cloud needs FULU's BambuNetwork. The local network keeps the
- * configured mode (direct LAN, X2D native, Bambu Connect or BambuNetwork) and, for BambuNetwork, uses its LAN type.
+ * The configured defaults for a route. Cloud and the local network use FULU's BambuNetwork; an X2D native or
+ * Bambu Connect setup keeps its own mode for the local network. Developer Mode is the direct LAN route.
  */
-export function connectionForRoute(route: PrintRoute, current: Connection): Connection {
+export function connectionForRoute(route: PrintRoute, current: Connection, bridgeConfigured = true): Connection {
+  const option = routeOptions(current, bridgeConfigured).find(item => item.id === route);
+  if (!option?.available) throw new Error(`The ${option?.label ?? route} connection isn't available here. ${option?.reason ?? ""}`.trim());
   if (route === "cloud") return { mode: "bambu_network", type: "cloud" };
-  return current.mode === "bambu_network" ? { mode: "bambu_network", type: "lan" } : current;
+  if (route === "developer") return { mode: "lan_mqtt_ftps", type: "lan" };
+  return OWN_LOCAL_MODES.has(current.mode) ? current : { mode: "bambu_network", type: "lan" };
 }
 
 /** Set KEY=value lines in a dotenv file, keeping every other line and the file's permissions. */

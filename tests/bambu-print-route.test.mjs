@@ -42,10 +42,17 @@ async function server(t, env = {}, { files = {}, preload } = {}) {
 
 const route = async (client, args = {}) => JSON.parse((await client.callTool({ name: "counterpart_print_route", arguments: args })).content[0].text);
 
+const WITH_BRIDGE = { BAMBU_NETWORK_BRIDGE_COMMAND: "/usr/bin/true" };
+
 test("counterpart_print_route reads the route and changes it in the running server and its .env", async (t) => {
   const dotenv = "# printer\nBAMBU_SERIAL=01PTESTSERIAL\nBAMBU_DEFAULT_CONNECTION_MODE=bambu_network\nBAMBU_DEFAULT_CONNECTION_TYPE=lan\nBAMBU_REQUIRE_X=1\n";
-  const { client, directory } = await server(t, {}, { files: { ".env": { text: dotenv, mode: 0o600 } } });
-  assert.deepEqual(await route(client), { route: "lan", mode: "bambu_network", type: "lan", choices: ["lan", "cloud"], savedTo: null });
+  const { client, directory } = await server(t, WITH_BRIDGE, { files: { ".env": { text: dotenv, mode: 0o600 } } });
+  const read = await route(client);
+  assert.deepEqual([read.route, read.mode, read.type, read.savedTo], ["lan", "bambu_network", "lan", null]);
+  assert.deepEqual(read.choices, ["lan", "cloud", "developer"]);
+  assert.deepEqual(read.options.map(option => [option.id, option.label, option.available]),
+    [["lan", "Local network", true], ["cloud", "Bambu Cloud", true], ["developer", "Local network, Developer Mode", true]]);
+  assert.match(read.options[0].controls, /refuse Pause, Resume and Stop/);
 
   const cloud = await route(client, { route: "cloud" });
   assert.deepEqual([cloud.route, cloud.mode, cloud.type], ["cloud", "bambu_network", "cloud"]);
@@ -55,16 +62,26 @@ test("counterpart_print_route reads the route and changes it in the running serv
   assert.equal(fs.statSync(file).mode & 0o777, 0o600, "the file keeps its permissions");
   assert.equal((await route(client)).route, "cloud", "the running server uses the new route");
 
-  assert.equal((await route(client, { route: "lan" })).type, "lan");
+  // Developer Mode is the direct LAN route; choosing the local network again goes back through FULU.
+  const developer = await route(client, { route: "developer" });
+  assert.deepEqual([developer.route, developer.mode, developer.type], ["developer", "lan_mqtt_ftps", "lan"]);
+  assert.match(fs.readFileSync(file, "utf8"), /BAMBU_DEFAULT_CONNECTION_MODE=lan_mqtt_ftps\nBAMBU_DEFAULT_CONNECTION_TYPE=lan/);
+  assert.equal((await route(client, { route: "lan" })).mode, "bambu_network");
   assert.equal(fs.readFileSync(file, "utf8"), dotenv);
 });
 
-test("counterpart_print_route on direct LAN: cloud switches to FULU's bridge, lan keeps the configured mode, no .env is created", async (t) => {
-  const { client, directory } = await server(t, { BAMBU_DEFAULT_CONNECTION_MODE: "lan_mqtt_ftps" });
-  assert.deepEqual([(await route(client)).route, (await route(client)).mode], ["lan", "lan_mqtt_ftps"]);
-  assert.equal((await route(client, { route: "lan" })).mode, "lan_mqtt_ftps");
-  const cloud = await route(client, { route: "cloud" });
-  assert.deepEqual([cloud.route, cloud.mode, cloud.savedTo], ["cloud", "bambu_network", null]);
+test("counterpart_print_route without FULU's bridge: only Developer Mode can be chosen, and no .env is created", async (t) => {
+  // No FULU install to discover either, whatever this machine has.
+  const { client, directory } = await server(t, { BAMBU_DEFAULT_CONNECTION_MODE: "lan_mqtt_ftps", SLICER_PATH: "/nonexistent/OrcaSlicer" });
+  const read = await route(client);
+  assert.deepEqual([read.route, read.mode], ["developer", "lan_mqtt_ftps"]);
+  assert.deepEqual(read.choices, ["developer"]);
+  for (const unavailable of ["cloud", "lan"]) {
+    const refused = await client.callTool({ name: "counterpart_print_route", arguments: { route: unavailable } });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /isn't available here.*BAMBU_NETWORK_BRIDGE_COMMAND/);
+  }
+  assert.equal((await route(client)).mode, "lan_mqtt_ftps", "a refused change keeps the route");
   assert.equal(fs.existsSync(path.join(directory, ".env")), false);
   const refused = await client.callTool({ name: "counterpart_print_route", arguments: { route: "wifi" } });
   assert.equal(refused.isError, true);
