@@ -59,11 +59,6 @@ const MATERIAL_LIMITS: Readonly<Record<string, number>> = {
   HIPS:300, PP:300, POM:250, PET:350, PA:350, PC:350, PPA:350, PPS:350,
   'SUPPORT-PLA':290, 'SUPPORT-PA':350,
 };
-/** Independent nozzle policy ceiling for a declared material, or undefined when unknown. */
-export function materialNozzleCeiling(value: unknown): number | undefined {
-  const material = normalizeMaterial(value);
-  return material ? MATERIAL_LIMITS[material] : undefined;
-}
 export function normalizeMaterial(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const material = value.trim().toUpperCase().replace(/^BAMBU(?: LAB)?\s+/, '').replace(/^GENERIC\s+/, '');
@@ -104,4 +99,10 @@ export function validateTemperature(component: 'nozzle'|'bed'|'chamber', value: 
  * purge form and that no layer/deposition has begun. Never use for manual heat. */
 export function validateStartupPurgeTemperature(value: unknown, model: string, materials: string[]): number {
   return validate('nozzle',value,model,materials,true);
+}
+
+/** Independent nozzle policy ceiling for a declared material, or undefined when unknown. */
+export function materialNozzleCeiling(value: unknown): number | undefined {
+  const material = normalizeMaterial(value);
+  return material ? MATERIAL_LIMITS[material] : undefined;
 }
