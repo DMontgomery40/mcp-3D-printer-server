@@ -35,8 +35,6 @@ export interface GenericPrinterState {
   ready: boolean;
   /** Why the printer is not ready. */
   reason?: string;
-  /** Set when the printer explicitly reports a finished or cancelled job that may still be on the bed. */
-  finishedJob?: string;
 }
 
 export interface HeaterComponent {
@@ -51,8 +49,8 @@ export const REMOTE_DOWNLOAD_TIMEOUT_MS = 120_000;
 /**
  * Shared print and heating gate for non-Bambu adapters. Public mutations
  * validate every input before connecting, inspect the exact bytes that are
- * uploaded, check fresh adapter state, ask a human (MCP elicitation), recheck
- * state and only then dispatch. Heater-off and cancel are never gated.
+ * uploaded, check fresh adapter state, recheck it and only then dispatch.
+ * Heater-off and cancel are never gated.
  */
 /** seenRunning: a report showed this job printing or paused, so a later ended report is about it, not about the previous job. */
 type CheckedJob = { name: string; sha256: string; peaks: GenericPrintInspection["peaks"]; materials: string[]; seenRunning: boolean };
@@ -135,9 +133,9 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
    * Resume reheats and moves the printer, so it is gated like a print start:
    * only the job this server instance inspected and started, only while the
    * printer freshly reports that job paused, with its bytes re-read and
-   * compared where the firmware can download them, and after human
-   * confirmation (unless the server opted out). A stop or heater-off request
-   * in the meantime cancels it.
+   * compared where the firmware can download them. Only when the bytes cannot
+   * be re-read does a person confirm (MCP elicitation). A stop or heater-off
+   * request in the meantime cancels it.
    */
   async resumeJob(host: string, port: string, apiKey: string): Promise<{ status: string; action: "resume"; message: string; jobName: string; bytesVerified: boolean }> {
     if (!(await this.supportsPauseResume(host, port, apiKey)) || !this.rawResumeJob) {
@@ -165,21 +163,23 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
         bytesVerified = true;
       }
       assertActive();
-      await requireHumanConfirmation(
-        this.confirm,
-        `Resume ${checked.name} on ${this.printerLabel} (${host}:${port})? It reheats to its targets (peak nozzle ${checked.peaks.nozzle}°C, ` +
-        `bed ${checked.peaks.bed}°C, chamber ${checked.peaks.chamber}°C) and moves. Materials: ${checked.materials.length ? checked.materials.join(", ") : "none declared"}. ` +
-        `File SHA-256: ${checked.sha256}${bytesVerified ? " (re-read from the printer)" : " (this firmware cannot re-read the file; matched by name)"}. ` +
-        "Confirm the nozzle path is clear and the filament is still loaded.",
-        "generic"
-      );
-      assertActive();
-      // Someone may have resumed or stopped it at the printer while the prompt was open.
+      if (!bytesVerified) {
+        // This firmware cannot hand the file back, so only a person can tell it is still the inspected job.
+        await requireHumanConfirmation(
+          this.confirm,
+          `Resume ${checked.name} on ${this.printerLabel} (${host}:${port})? This firmware cannot re-read the file, so it is matched by name only. ` +
+          `It reheats to its targets (peak nozzle ${checked.peaks.nozzle}°C, bed ${checked.peaks.bed}°C, chamber ${checked.peaks.chamber}°C) and moves. ` +
+          `Materials: ${checked.materials.length ? checked.materials.join(", ") : "none declared"}. Inspected file SHA-256: ${checked.sha256}. ` +
+          "Confirm the paused job is that file, the nozzle path is clear and the filament is still loaded."
+        );
+        assertActive();
+      }
+      // Someone may have resumed or stopped it at the printer meanwhile (for example while a prompt was open).
       await this.assertPausedJob(host, port, apiKey, checked.name);
-      // A progress read during the prompt may have retired this record (the job ended, and a new one
-      // could now be paused under the same name); only the record that was confirmed may be resumed.
+      // A progress read meanwhile may have retired this record (the job ended, and a new one
+      // could now be paused under the same name); only the record that was checked may be resumed.
       if (this.checkedJobs.get(key) !== checked) {
-        throw new Error(`Print safety: ${checked.name} ended on ${this.printerLabel} while the confirmation was open; nothing was sent.`);
+        throw new Error(`Print safety: ${checked.name} ended on ${this.printerLabel} during the resume checks; nothing was sent.`);
       }
       assertActive();
       await this.rawResumeJob!(host, port, apiKey);
@@ -276,12 +276,6 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     validateGenericTemperature(target.heater, value, material ? [material] : undefined);
     return withPrinterOperation(host, key, async (assertActive) => {
       this.assertReady(await this.readPrinterState(host, port, apiKey), "heat");
-      await requireHumanConfirmation(
-        this.confirm,
-        `Heat ${target.heater} on ${this.printerLabel} (${host}:${port}) to ${value}°C?` +
-        (material && target.heater === "nozzle" ? ` Declared material: ${material}. Confirm the loaded filament matches.` : ""),
-        "generic"
-      );
       assertActive();
       this.assertReady(await this.readPrinterState(host, port, apiKey), "heat");
       assertActive();
@@ -393,10 +387,9 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     assertExpectedPeaks(options.expectedPeaks, { nozzle: inspection.peaks.nozzle, bed: inspection.peaks.bed });
     const initial = await this.readPrinterState(host, port, apiKey);
     this.assertReady(initial, "print");
-    await requireHumanConfirmation(this.confirm, this.printPrompt(host, port, remoteName, inspection, initial), "generic");
     assertActive();
-    const confirmed = await this.readPrinterState(host, port, apiKey);
-    this.assertReady(confirmed, "print");
+    const rechecked = await this.readPrinterState(host, port, apiKey);
+    this.assertReady(rechecked, "print");
     assertActive();
 
     const summary = {
@@ -435,16 +428,5 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     const response = await this.rawStartJob(host, port, apiKey, remoteName);
     this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
     return { ...summary, upload, response };
-  }
-
-  private printPrompt(host: string, port: string, remoteName: string, inspection: GenericPrintInspection, state: GenericPrinterState): string {
-    const materials = inspection.materials.length ? inspection.materials.join(", ") : "none declared (no positive nozzle target)";
-    return (
-      `Start a checked print of ${remoteName} on ${this.printerLabel} (${host}:${port})? ` +
-      `Materials: ${materials} (${inspection.materialSource}). Peak targets: nozzle ${inspection.peaks.nozzle}°C, bed ${inspection.peaks.bed}°C, chamber ${inspection.peaks.chamber}°C ` +
-      `(server ceilings ${inspection.ceilings.nozzle}/${inspection.ceilings.bed}/${inspection.ceilings.chamber}°C). File SHA-256: ${inspection.sha256}. ` +
-      "Confirm the loaded filament matches." +
-""
-    );
   }
 }

@@ -1,26 +1,15 @@
-/** Human confirmation for physical printer mutations (print start, positive heating). */
-export type ConfirmHardware = (message: string) => Promise<boolean>;
-export type ConfirmationScope = "bambu" | "generic";
-
 /**
- * Ordinary print/heat prompts are on by default. Only an explicit "0" opts out.
- * PRINT_REQUIRE_CONFIRMATION applies to every printer type; the older
- * BAMBU_REQUIRE_CONFIRMATION applies to Bambu printers only. If any variable
- * relevant to the scope is set to another value, confirmation stays required.
+ * Human confirmation through MCP elicitation. Ordinary print starts, positive
+ * heating and resumes of a re-read job do not ask: the client's own action is
+ * the approval. Only a check that software cannot make asks a person, such as
+ * resuming a job whose file the printer cannot hand back for re-reading.
  */
-export function confirmationOptOut(scope: ConfirmationScope): boolean {
-  const names = scope === "bambu"
-    ? ["BAMBU_REQUIRE_CONFIRMATION", "PRINT_REQUIRE_CONFIRMATION"]
-    : ["PRINT_REQUIRE_CONFIRMATION"];
-  const values = names
-    .map((name) => process.env[name]?.trim())
-    .filter((value): value is string => value !== undefined && value !== "");
-  return values.length > 0 && values.every((value) => value === "0");
-}
+export type ConfirmHardware = (message: string) => Promise<boolean>;
 
 /**
- * How long a human has to answer a confirmation prompt. The MCP SDK's default
- * request timeout (60 s) is too short for someone walking to the printer.
+ * How long a person has to answer a prompt from the server (a resume of a job
+ * that could not be re-read, or the Bambu printer-model prompt). The MCP SDK's
+ * default request timeout (60 s) is too short for someone walking to the printer.
  */
 export function confirmationTimeoutMs(): number {
   const raw = process.env.PRINT_CONFIRMATION_TIMEOUT_MS?.trim();
@@ -35,27 +24,15 @@ export function confirmationTimedOut(timeoutMs: number): string {
 }
 
 export const CONFIRMATION_UNAVAILABLE =
-  "Human hardware confirmation requires an MCP client with elicitation support. For deliberately headless operation, " +
-  "PRINT_REQUIRE_CONFIRMATION=0 (or BAMBU_REQUIRE_CONFIRMATION=0 for Bambu printers) disables ordinary print/heat prompts. No command was sent.";
+  "This step needs a person to confirm a check at the printer, which requires an MCP client with elicitation support. No command was sent.";
 
-/**
- * physicalCheck marks confirmations that software cannot replace (for example
- * clearing hardware errors). Those are required even when prompts are opted out.
- */
-export async function requireHumanConfirmation(
-  confirm: ConfirmHardware | undefined,
-  message: string,
-  scope: ConfirmationScope,
-  physicalCheck = false
-): Promise<void> {
-  if (!physicalCheck && confirmationOptOut(scope)) return;
+/** Ask a person to accept a physical check that software cannot replace. */
+export async function requireHumanConfirmation(confirm: ConfirmHardware | undefined, message: string): Promise<void> {
   if (!confirm) throw new Error(CONFIRMATION_UNAVAILABLE);
   if (!(await confirm(message))) {
-    throw new Error("Hardware safety confirmation was declined or cancelled in the MCP client. No command was sent. " + (physicalCheck
-      ? "This confirmation covers a physical check at the printer and always needs a person to accept it."
-      : "Some clients decline prompts automatically, for example in a non-interactive permission mode. A deliberately headless " +
-        `setup that approves jobs another way can set ${scope === "bambu"
-          ? "PRINT_REQUIRE_CONFIRMATION=0 (or BAMBU_REQUIRE_CONFIRMATION=0)"
-          : "PRINT_REQUIRE_CONFIRMATION=0"} to skip ordinary print and heating prompts.`));
+    throw new Error(
+      "Hardware safety confirmation was declined or cancelled in the MCP client. No command was sent. " +
+      "This confirmation covers a physical check at the printer and always needs a person to accept it."
+    );
   }
 }
