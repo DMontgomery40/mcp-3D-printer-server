@@ -3,7 +3,7 @@ import { OctoPrintImplementation } from "./octoprint.js";
 import { KlipperImplementation } from "./klipper.js";
 import { DuetImplementation } from "./duet.js";
 import { RepetierImplementation } from "./repetier.js";
-import { BambuImplementation } from "./bambu.js";
+import { BambuImplementation, defaultResumeStateDir } from "./bambu.js";
 import { PrusaImplementation } from "./prusa.js";
 import { CrealityImplementation } from "./creality.js";
 import type { ConfirmHardware } from "../safety/confirmation.js";
@@ -27,7 +27,7 @@ export class PrinterFactory {
     this.implementations.set("klipper", new KlipperImplementation(this.apiClient, confirm));
     this.implementations.set("duet", new DuetImplementation(this.apiClient, confirm));
     this.implementations.set("repetier", new RepetierImplementation(this.apiClient, confirm));
-    this.implementations.set("bambu", new BambuImplementation(this.apiClient, confirm));
+    this.implementations.set("bambu", new BambuImplementation(this.apiClient, confirm, { resumeStateDir: defaultResumeStateDir() }));
     this.implementations.set("prusa", new PrusaImplementation(this.apiClient, confirm));
     this.implementations.set("creality", new CrealityImplementation(this.apiClient, confirm));
   }
