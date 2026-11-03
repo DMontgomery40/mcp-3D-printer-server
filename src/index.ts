@@ -1281,14 +1281,14 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "pause_print",
-            description: "Pause the current print (OctoPrint, Klipper/Moonraker, PrusaLink, Duet M25, Repetier, and Creality printers that run Moonraker). Pause is never gated.",
+            description: "Pause the current print (Bambu Lab, OctoPrint, Klipper/Moonraker, PrusaLink, Duet M25, Repetier, and Creality printers that run Moonraker). Bambu pauses over the same connection that prints. Pause is never gated.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
             outputSchema: CONTROL_OUTPUT_SCHEMA,
             annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
           },
           {
             name: "resume_print",
-            description: "Resume a paused print. Resume reheats and moves the printer, so it only resumes a job this server instance inspected and started, and only when the printer freshly reports that job paused. When the firmware cannot re-read the file, a person confirms through MCP elicitation first. Resume other jobs at the printer.",
+            description: "Resume a paused print. Resume reheats and moves the printer, so it only resumes a job this server instance inspected and started, and only when the printer freshly reports that job paused. Bambu re-reads the job over FTPS (or the plate G-code the printer extracted) and compares its SHA-256, and resumes over the same connection that printed. When the file cannot be re-read, a person confirms through MCP elicitation first (Bambu: only for files Bambu's plug-in placed; a file this server uploaded must re-read). Resume other jobs at the printer.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
             outputSchema: CONTROL_OUTPUT_SCHEMA,
             annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },

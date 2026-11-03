@@ -8,6 +8,12 @@
   - `get_printer_filaments` reads the AMS from the printer's MQTT report for `PRINTER_TYPE=bambu` instead of refusing. The result carries bambu-printer-mcp's fields unchanged (`trays` with absolute `slot`, `loaded`, `tray_type`, `tray_color`, `tray_info_idx` and the resolved Bambu Studio/Orca filament profile; `summary`; `recommended`; `load_filaments_all`), plus counterpart/1 `slots` for every loaded AMS tray and the external spool (`254`, and `254`/`255` on dual-nozzle printers) with `source: "printer"`. Optional `bambu_model` and `nozzle_diameter` pick model-specific profiles. `counterpart_printer_info` reports `filaments: "ams"` for Bambu.
   - `print_3mf` accepts `ams_slots`: one tray per used filament in plate order, expanded to the project-level `ams_mapping` from the plate's `filament_ids` and the G-code header, as bambu-printer-mcp does. `ams_mapping` also accepts the project-level array. Tray values are checked (0–15, 128–254, and 255 on dual-nozzle printers), `ams_slots` must name exactly one tray per used filament, and the fresh-state check still compares each mapped tray's material with the file. `use_ams: false` maps every used filament to the external spool of its nozzle on the wire. Counterpart's printer handoff sends exactly these arguments.
   - Evidence: mocked MQTT reports and FTPS/MQTT dispatch only; no real printer was used.
+- Bambu `pause_print` and `resume_print`, and `counterpart_printer_info` reports `pause` and `resume` for Bambu, ported from bambu-printer-mcp:
+  - Pause and stop (`cancel_print`) are never gated. Stop also retires the job's resume record.
+  - Resume keeps bambu-printer-mcp's checked-job safety: only the job this server inspected and started, while a fresh report shows it paused under its unique name, with the fresh-state check repeated. Its bytes are re-read over FTPS (the uploaded 3MF, else the `cache/<name>_plate_<n>.gcode` a P1S extracts from it) and their SHA-256 compared; a changed file retires the record. A file this server uploaded that cannot be re-read refuses the resume. Only a file Bambu's plug-in placed (FULU's BambuNetwork route) that cannot be re-read asks a person through MCP elicitation.
+  - Every MQTT report retires a record whose job ended or was replaced, even when nobody polls.
+  - Checked 3MF prints are started with their unique remote name as `subtask_name`, as bambu-printer-mcp does, so the printer reports back which job is paused.
+  - Evidence: in-process FTPS/MQTT fakes only; no real printer was paused or resumed.
 
 ### Changed
 

@@ -27,7 +27,7 @@ export class PrinterFactory {
     this.implementations.set("klipper", new KlipperImplementation(this.apiClient, confirm));
     this.implementations.set("duet", new DuetImplementation(this.apiClient, confirm));
     this.implementations.set("repetier", new RepetierImplementation(this.apiClient, confirm));
-    this.implementations.set("bambu", new BambuImplementation(this.apiClient));
+    this.implementations.set("bambu", new BambuImplementation(this.apiClient, confirm));
     this.implementations.set("prusa", new PrusaImplementation(this.apiClient, confirm));
     this.implementations.set("creality", new CrealityImplementation(this.apiClient, confirm));
   }

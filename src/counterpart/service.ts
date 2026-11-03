@@ -31,6 +31,14 @@ import {
   type PrinterFilamentInventory,
 } from "../printers/bambu-filaments.js";
 
+/**
+ * The Bambu print-control dispatch for the configured connection (FULU's
+ * BambuNetwork); undefined keeps LAN MQTT. Resume's dispatch receives the
+ * checks to repeat before it sends.
+ */
+export type BambuControlRoute = (command: "stop" | "pause" | "resume") =>
+  ((assertActive?: () => void, beforeDispatch?: () => Promise<void>) => Promise<any>) | undefined;
+
 /** Bambu inventory hints: the model and nozzle select model-specific filament profiles. */
 export interface BambuFilamentOptions {
   bambuModel?: string;
@@ -117,7 +125,7 @@ export class CounterpartService {
       // This server has no Bambu camera path; bambu-printer-mcp does.
       capabilities = {
         progress: true, layers: true, camera: overrideSnapshotUrl() ? "http-snapshot" : "none", filaments: "ams",
-        pause: false, resume: false, cancel: true, print3mf: true, gcode: true,
+        pause: true, resume: true, cancel: true, print3mf: true, gcode: true,
       };
     } else {
       const { host, port, apiKey } = target;
@@ -189,15 +197,19 @@ export class CounterpartService {
     return compact({ slots: profiled });
   }
 
-  async pause(target: PrinterTarget) {
+  /** Bambu: over the route that printed (route), else LAN MQTT. */
+  async pause(target: PrinterTarget, route?: BambuControlRoute) {
     const generic = this.generic(target);
-    if (!generic) throw new Error("Unsupported: pause_print for Bambu printers is provided by bambu-printer-mcp.");
+    if (!generic) return this.bambu(target).pauseJob(target.host, target.port, target.apiKey, route?.("pause"));
     return generic.pauseJob(target.host, target.port, target.apiKey);
   }
 
-  async resume(target: PrinterTarget) {
+  async resume(target: PrinterTarget, route?: BambuControlRoute) {
     const generic = this.generic(target);
-    if (!generic) throw new Error("Unsupported: resume_print for Bambu printers is provided by bambu-printer-mcp.");
+    if (!generic) {
+      const dispatch = route?.("resume");
+      return this.bambu(target).resumeJob(target.host, target.port, target.apiKey, dispatch);
+    }
     return generic.resumeJob(target.host, target.port, target.apiKey);
   }
 
