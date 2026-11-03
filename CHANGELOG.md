@@ -29,6 +29,10 @@
 - Stop treating a finished job as a bed-clearance case: a printer that reports a finished or cancelled job (Moonraker complete or cancelled, PrusaLink FINISHED or STOPPED, Creality finished, Bambu FINISH) starts the next print like an idle one. Matches bambu-printer-mcp's bed-check removal ([bambu-printer-mcp #90](https://github.com/DMontgomery40/bambu-printer-mcp/pull/90)).
 - Evidence: mocked Bambu MQTT/FTPS boundaries and loopback HTTP printer APIs only; no real printer was used.
 
+### Documentation
+
+- README, `docs/FULU.md`, `docs/SETUP.md` and `.env.example` describe Bambu AMS inventory and tray choice, Bambu pause, resume and stop, the connection routes (`BAMBU_DEFAULT_CONNECTION_MODE`, `BAMBU_DEFAULT_CONNECTION_TYPE`, `counterpart_print_route`) and printing and controlling through FULU's BambuNetwork route, including its evidence limits here (a fake FULU host only).
+
 ### Fixed
 
 - An `ams_mapping` object (and the 3MF's own mapping) is ordered by project filament index, as bambu-printer-mcp orders it. Before, its tray values were sorted, so `{"0": 3, "1": 0}` sent tray 0 for filament 0.
