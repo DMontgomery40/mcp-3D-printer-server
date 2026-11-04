@@ -1,0 +1,185 @@
+/**
+ * Manufacturing guidance for agents that design printable models: David Montgomery's FDM design
+ * prompt pack (3 November 2026), verbatim. Served as MCP prompts and a resource; the other printer
+ * MCP (bambu-printer-mcp / mcp-3D-printer-server) serves the same text. Clients choose when to
+ * attach each piece.
+ */
+
+export interface DesignPrompt { name: string; title: string; description: string; text: string }
+
+export const FDM_CORE = `Design the finished object the user wants, with the manufacturing plan as part of the design. Preserve its function, fit, and visual identity. Use your design ability freely to make that outcome practical through geometry, orientation, materials, color placement, supports, and assembly.
+
+Use the actual printer and material context: nozzle arrangement and filament routing, build volume, nozzle and line widths, layer profile, cooling, available filaments, and relevant successful prints or calibration. Missing information is unknown, not a capability the printer automatically has. Use reasonable, labeled assumptions for reversible choices; ask only when an unknown materially changes the result.
+
+Before committing to detailed geometry, choose a plausible way to manufacture and assemble it. For a consequential tradeoff, compare the strongest one-piece approach with a meaningfully different orientation or split. Simple parts do not need a design tournament. Judge total effort to obtain a good finished object: printing, consumed filament, likely rework, support cleanup, assembly, and extra hardware. Respect the user's priorities instead of applying fixed numerical weights.
+
+Keep assembled orientation and print orientation distinct. Preserve critical dimensions and mating surfaces. Account for measurement uncertainty and fit clearance separately; a scan or printed measuring tool does not establish its own accuracy. Use the smallest useful fit sample when uncertainty could otherwise waste a substantial print.
+
+Evaluate printability locally. Distinguish a progressively supported overhang, a bridge anchored at both ends, and a disconnected island. State overhang angles from vertical: 0 degrees is a vertical wall; 90 degrees is a horizontal underside. Convert conventions before setting slicer angles. Use relevant measured capability ahead of generic rules. A 45-degree threshold is not a universal support requirement, and a steep surface is not automatically unprintable. Judge bridge length along the actual unsupported extrusion path, with its anchors, cooling, material, and required underside quality. A feature that survives printing may still miss a cosmetic or dimensional requirement.
+
+Resolve a difficult region with the least disruptive effective change: a better orientation, local geometry, suitable process settings, accessible support, a deliberate breakaway feature, or a split. Supports are an ordinary manufacturing option. Preserve attractive curves and useful complexity when modest support or cleanup achieves them. Check support removal and tool access, especially inside cavities. Avoid changing the whole object to solve a local problem.
+
+Choose layer orientation, material, walls, and joints for the actual loads and environment. Check the load path, flexing features, fastener access, and installation sequence. A reduction in supports or color changes must not silently weaken the part or defeat its fit.
+
+On a shared-nozzle multicolor setup, reason about filament transitions across layers, including support-interface material. Total color count alone is a poor cost estimate. Consider color placement, shallow inlays, separately printed accents, and part orientation while preserving the requested appearance. Separate bodies on one layer-printed plate can still cause repeated swaps. Use the slicer's actual schedule and estimates when available; do not invent a fixed cost per color change.
+
+Use assembly when its benefit is worth the user's additional work. Design alignment, clearance, engagement, and assembly access deliberately. Glue is a valid planned joining method for suitable materials and loads; make joints self-locating and give them useful bonding area. Use mechanical retention when loads, repeated flexing, or serviceability call for it. State needed glue, hardware, tools, and assembly effort plainly. Avoid adding parts when a modest support or a simple one-piece print is the better result.
+
+Verify the chosen geometry in its actual print orientation and inspect the slice when tools permit. Check critical fits, missing or floating features, toolpaths, supports, color assignments, total time, and material consumption. Treat a slicer prediction as a prediction, not a physical test. Fix consequential problems and re-slice relevant changes. Stop when the design meets the brief and no remaining improvement justifies its cost.
+
+Keep the user-facing result short: the recommended design, why its manufacturing approach makes sense, how it prints and assembles, and any consequential unresolved assumption. Distinguish measured dimensions, slicer estimates, and untested predictions. Keep detailed analysis in the working process.`;
+
+export const FDM_MULTICOLOR = `Apply this guidance when multiple colors or support materials share a print.
+
+Preserve the requested visual pattern. Evaluate its colors in build coordinates and across layers before committing to color geometry. On a shared nozzle, a small accent spanning many layers can create more transitions than a large region confined to a few layers. Count the slicer's actual transitions when available, including swaps back to a prior filament and support-interface swaps; color count and colored volume are only screening clues. On printers with multiple nozzles, evaluate each shared melt path; AMS slots are not independent nozzles.
+
+For a costly pattern, consider the most promising alternatives: a different build orientation, color regions confined to fewer layers, shallow face inlays, or separately printed single-color pieces with intentional assembly. A vertical stripe in use may become a low-change feature in a different print orientation. Judge each option against load direction, surface quality, support burden, and the user's exact visual requirements. Finer layers can help an overhang while adding color-change layers; evaluate local adaptive layers and re-slice the combined plan.
+
+Separating color bodies does not by itself eliminate swaps. Check plate scheduling. Single-color plates can remove repeated color changes; by-layer printing of different-color objects together usually cannot. Use sequential object printing only when supported and its clearance constraints are satisfied. Batch copies only when the user wants them.
+
+Use the actual directional flushing matrix and filament compatibility. Purging clears previous material; priming restores consistent extrusion. Track those separately when the slicer does. Flushing into compatible infill or supports may reduce discarded material, but it does not remove switching time, has finite capacity, and can affect appearance or strength. Do not add unnecessary infill or objects merely to hide waste.
+
+Compare the same requested quantity and finish. Report total filament and time across all plates, plus purge, tower, and support quantities only where available without double counting. Unknown metrics remain unknown. Recommend the original multicolor approach when the user values its seamless result enough to justify its cost.`;
+
+export const FDM_ASSEMBLY = `Apply this guidance when a split, insert, or joint may materially improve the result.
+
+Compare assembly against the best practical one-piece approach, including reasonable supports. A split earns its place by improving important surfaces, layer strength, fit, color efficiency, support access, repairability, or bed fit enough to justify handling and joining the pieces. Prefer a one-piece solution when its support cleanup is easier than assembly and the alternatives meet the other important requirements comparably well. Respect an explicit one-piece or no-glue requirement.
+
+Put boundaries where they are structurally sensible and visually deliberate. Use shoulders, keys, overlapping faces, tabs, or pins to locate parts and resist sliding or rotation as appropriate. Include fit clearance, lead-ins, adhesive space where needed, and a feasible insertion path. Check the assembled geometry and the order of operations, not only the separated pieces. Avoid joints whose screws, clamps, or mating faces become inaccessible during assembly.
+
+For suitable lightly loaded rigid details, a locating pocket plus a compatible adhesive can be the simplest reliable solution. For a loaded clamp, a joint under peel or repeated bending, or a serviceable assembly, consider fasteners or mechanically captured geometry. Do not assume a tiny glued butt joint can carry the same load as an intact printed section. Select adhesive from evidence for the actual materials and conditions; superglue is an option, not a universal material property.
+
+State the practical consequence directly: which parts print in which orientations and colors, how they locate, how they are retained, which supplies are needed, and the estimated hands-on work. Keep hands-on time separate from adhesive cure time. Check a small joint sample only when its uncertain fit or strength would change the design decision.`;
+
+export const FDM_AFTER_SLICE = `Review this slice against the user's brief and the selected manufacturing plan. Use the returned slice, geometry, profile, and calibration evidence; do not assume missing metrics are zero.
+
+Check that the actual toolpaths preserve critical features, fit, connected material, intended colors, and load-bearing sections. Inspect consequential first layers, bridges, islands, supported undersides, and removal access. Compare expected total print time, total material across all plates, and manual work with the best credible alternative. Keep purge, prime-tower, support, and model quantities distinct only when the data provides a non-overlapping breakdown.
+
+If the plan is unexpectedly costly or fragile, identify the dominant cause and make the smallest change that preserves the brief. Re-slice after a relevant geometry, orientation, material, or process change. Do not optimize a minor imperfection at the expense of function or appearance, and do not invent a redesign simply to produce criticism.
+
+Return a concise decision: keep, revise, or validate one specific uncertainty. Include the decisive evidence and the exact next action. A clean slice supports a printability prediction; it does not verify physical fit, strength, or bridge quality.`;
+
+export const FDM_CAPABILITY_GUIDANCE = `# Bridges and overhangs: useful capability without arbitrary bans
+
+Load this reference only when the feature matters to the manufacturing decision. These are proposed planning bands, not manufacturer guarantees, support-generation settings, or automatic acceptance/rejection rules.
+
+## Scope and terminology
+
+The provisional baseline is an ordinary modern Bambu P-series-class FDM setup, a 0.4 mm nozzle, a suitable PLA profile, normal planar toolpaths, and effective part cooling. Actual printer/material/profile evidence takes priority. Do not transfer the same expectations unchanged to PETG, flexible materials, a different layer height, or a different cooling arrangement.
+
+Angles in the proposed review bands are measured **from vertical**: a vertical wall is 0 degrees; a horizontal underside is 90 degrees. Source values retain their stated or unresolved convention as noted. Slicer controls and test models can use a different convention. Establish their convention before comparing or entering a value. For a simple planar slope, the angle from the build plate is 90 degrees minus the angle from vertical.
+
+An overhang grows sideways from material below. A conventional bridge has extruded paths anchored at both ends. A disconnected island begins with no suitable underlying material or anchorage. They require different decisions.
+
+## What the retrieved evidence establishes
+
+- Prusa's current modeling documentation gives a general 45–60 degree range depending on nozzle/settings, and describes up to 75 degrees for its specifically named Nextruder/360-degree-cooling machines. That is evidence against a universal 45-degree limit. It does not certify 75 degrees on every Bambu printer. [C1]
+- A Fab Academy 2026 hands-on comparison of Bambu P2S and H2S used matte-white PLA and reported 50 mm unsupported bridge strands without a visible problem. It also reported some drooping above 60 degrees on the overhang test. This is a useful documented result on particular geometry, not a population benchmark or proof of flat mating-surface accuracy. [C2]
+- An MIT HTMAA 2025 P1S characterization reported no noticeable defects on its longest tested bridge, 20 mm, and explicitly left the actual maximum unmeasured. A largest passing sample is not the machine's limit. [C3]
+- Bambu's PETG Basic V3.0 data sheet lists approximately 30 mm maximum bridging length and approximately 70 degrees maximum overhang; its PLA Tough+ V3.0 sheet lists 30 mm and 55 degrees. These are material-specific reference values. The retrieved sheets do not define the overhang angle convention or a bridge sag/finish acceptance criterion, so keep the angle values as reported rather than silently normalizing them. Do not assume the mechanical-specimen print conditions also describe these feature tests. [C4, C5]
+
+The material sheets provide useful 30 mm reference points; the firsthand longer prints show why a published or configured maximum should not become a universal geometric prohibition. Filament formulation matters. Avoid a rule that all PLA must outperform all PETG.
+
+## Proposed review bands
+
+These bands decide how much attention to give a feature. They never force a flat design, a split, supports, or a calibration print by themselves.
+
+| Feature on the provisional PLA setup | Working stance |
+| --- | --- |
+| Progressively supported overhang around 45–60 degrees | Keep an unsupported version as an ordinary candidate. Inspect local curvature, overlap, cooling, and required finish. |
+| Overhang around 60–70 degrees | Retain the shape as a candidate; examine local layer height, geometry, cooling, and relevant prior results more closely. Modest support is also an ordinary option. |
+| Overhang around 70 degrees or more | Require a stronger process/geometry justification to rely on a clean unsupported result. Consider a representative sample when its result would decide between substantially different plans. |
+| Conventional bridge up to about 20 mm | Treat as a plausible ordinary candidate when anchors, toolpaths, and underside requirements are suitable. |
+| Bridge roughly 20–50 mm | Keep bridging as a real design option. Pay more attention to actual unsupported path length, anchorage, width, cooling, and sag acceptance. |
+| Bridge beyond about 50 mm | Keep it in the design space; seek relevant prior evidence or a small representative test before depending on its quality for an expensive or precise part. |
+
+The 60–70-degree and 20–50-mm bands are deliberate engineering priors for this app. They are not claims that a manufacturer has validated the whole interval. A 12 mm bridge can be unacceptable for a tight sliding surface; a much longer one may be adequate above a noncritical cavity. Avoid turning these bands into a hidden \`max_bridge\` or \`max_overhang\` rejection threshold.
+
+## A useful geometric check
+
+For an idealized straight overhang at angle alpha from vertical, layer height h produces a lateral step:
+
+\`step = h * tan(alpha)\`
+
+Using a nominal extrusion width w, a simple projected overlap estimate is:
+
+\`overlap_fraction = max(0, 1 - step / w)\`
+
+For a 60-degree overhang and a 0.45 mm line width:
+
+| Layer height | Lateral step | Nominal overlap |
+| --- | --- | --- |
+| 0.20 mm | 0.346 mm | About 23% |
+| 0.12 mm | 0.208 mm | About 54% |
+
+These values follow from geometry, not a printer test. The model omits bead shape, curved toolpaths, cooling, adhesion, and other effects. It explains why layer height can change the outlook; it cannot prove a print will succeed. Use the actual extrusion widths when known.
+
+Ordinary overhang-layer reasoning does not prescribe the best bridge extrusion. OrcaSlicer's documented thick-bridge mode uses a line height equal to nozzle diameter and trades a rougher surface for stronger, more reliable bridges and potentially longer spans. Inspect the actual selected mode instead of assuming bridge height equals ordinary layer height. [C6]
+
+Reducing layer height throughout a multicolor part can also increase the number of color-change layers. Prefer a local intervention when appropriate and re-slice the whole manufacturing plan to see the tradeoff.
+
+## Local interventions to consider
+
+Keep the intervention proportionate to the specific problem. Useful candidates include changing build orientation, adjusting only a hidden underside, replacing the top of a horizontal hole with a suitable printable roof while preserving its necessary clearance, using local adaptive layers, improving a bridge's anchors or extrusion direction, adding a small removable sacrificial feature, placing accessible support, or splitting at a sensible joint.
+
+Preserve roundness where a mating shaft genuinely needs it. Preserve curves where they matter visually. An unremovable support inside a duct is not a valid plan. Do not trade away layer bonding to improve cooling without considering the part's mechanical job.
+
+Treat the slicer's support-generation thresholds as policy settings, not measured capability. For example, OrcaSlicer's \`max_bridge_length\` decides which anchored spans tree supports leave unsupported. Its configured value does not establish what the machine can physically bridge. [C7]
+
+## What to learn from physical prints
+
+Record the feature and its conditions, not merely a global pass/fail label. Useful evidence includes:
+
+- Largest tested span or angle, plus known failures and untested regions.
+- Actual printer, filament identity, nozzle, layer/line profile, cooling, and build orientation.
+- Bridge direction, width, anchors, and nearby geometry.
+- Whether the criterion was survival, cosmetic quality, measured sag, fit, or load performance.
+
+A small combined coupon at onboarding can complement the printed measuring tool, but it should be optional. Later, print a targeted sample when an important unknown would otherwise put a much larger print at risk. Routine geometry should not repeatedly trigger calibration work.
+
+## Primary sources
+
+[C1] Prusa, Modeling with 3D printing in mind:
+
+https://help.prusa3d.com/article/modeling-with-3d-printing-in-mind_164135
+
+[C2] FabLab Nagoya, Fab Academy 2026 Week 05, firsthand P2S/H2S characterization:
+
+https://fabacademy.org/2026/labs/nagoya/assignments/week05/
+
+[C3] Ryan Hoffman, MIT HTMAA 2025, firsthand P1S characterization:
+
+https://fab.cba.mit.edu/classes/863.25/people/RyanHoffman/week3.html
+
+[C4] Bambu PETG Basic Technical Data Sheet V3.0:
+
+https://store.bblcdn.com/s1/default/cb94589bf7994fdcbfa833badefae9cd/Bambu_PETG_Basic_Technical_Data_Sheet.pdf
+
+[C5] Bambu PLA Tough+ Technical Data Sheet V3.0:
+
+https://store.bblcdn.com/s7/default/80a85371db2e40bda97069d283fed76c/BambuPLA_Tough_TechnicalData_Sheet_%282%29.pdf
+
+[C6] OrcaSlicer bridge settings:
+
+https://github.com/OrcaSlicer/OrcaSlicer/wiki/quality_settings_bridging
+
+[C7] OrcaSlicer advanced support settings:
+
+https://github.com/OrcaSlicer/OrcaSlicer/wiki/support_settings_advanced
+
+All sources inspected 3 November 2026.`;
+
+export const FDM_CAPABILITY_URI = "guidance://fdm/capability-guidance";
+
+export const DESIGN_PROMPTS: DesignPrompt[] = [
+  { name: "fdm_design", title: "Design for FDM printing", text: FDM_CORE,
+    description: "Persistent instructions for every design or model-editing task: plan how the object prints as part of the design, using the actual printer, filaments and slice." },
+  { name: "fdm_multicolor", title: "Multicolour and support materials", text: FDM_MULTICOLOR,
+    description: "Add when several colours or support materials share a print: filament transitions, colour placement, plate scheduling and flushing." },
+  { name: "fdm_assembly", title: "Splits, inserts and joints", text: FDM_ASSEMBLY,
+    description: "Add when a split, accent insert or joint could materially improve the result." },
+  { name: "fdm_after_slice", title: "Review a slice", text: FDM_AFTER_SLICE,
+    description: "A separate review turn after slicing a candidate: keep, revise, or validate one specific uncertainty." },
+];
+
+export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split or joint could help, and fdm_after_slice after slicing a candidate. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang decides the plan and no measured capability is available.";

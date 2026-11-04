@@ -860,6 +860,18 @@ Resources follow the MCP resource protocol. They use the configured `PRINTER_TYP
 
 For example, `printer://192.168.1.100/status` reads the status of the printer at that address.
 
+### Design guidance
+
+The server carries manufacturing judgment for agents that design or edit a model to print. It is served as MCP prompts, so the client attaches each piece when it applies; the server's `instructions` tell any client they exist.
+
+- `fdm_design`: for every design or model-editing task. Plan how the object prints as part of the design: geometry, orientation, supports, colours and assembly, using the actual printer, filaments and slice. It keeps what the person asked for and judges overhangs, bridges and supports locally, with no fixed 45-degree or bridge-length ban.
+- `fdm_multicolor`: when several colours or support materials share a print: filament transitions across layers, colour placement, plate scheduling and flushing.
+- `fdm_assembly`: when a split, accent insert or joint could materially improve the result.
+- `fdm_after_slice`: a separate review turn after `slice_stl`: keep, revise, or validate one specific uncertainty, using the returned slicer report.
+- `guidance://fdm/capability-guidance` (resource): planning bands and sources for bridges and overhangs, for when one decides the plan and there is no measured capability for the printer and material.
+
+bambu-printer-mcp serves the same guidance.
+
 </details>
 
 <details>

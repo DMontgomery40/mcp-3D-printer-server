@@ -68,6 +68,9 @@
         "server.json",
         "dist/counterpart",
         "src/counterpart",
+        "dist/design-guidance.js",
+        "dist/design-guidance.d.ts",
+        "src/design-guidance.ts",
         "dist/fusion-mcp-bridge.js",
         "dist/fusion-mcp-bridge.d.ts",
         "src/fusion-mcp-bridge.ts"

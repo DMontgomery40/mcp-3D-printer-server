@@ -10,6 +10,8 @@ import {
   ReadResourceRequestSchema,
   ListToolsRequestSchema,
   CallToolRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
   ErrorCode,
   McpError
 } from "@modelcontextprotocol/sdk/types.js";
@@ -57,6 +59,7 @@ import {
 } from "./fulu-orca.js";
 import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
 import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "./safety/expected-peaks.js";
+import { DESIGN_PROMPTS, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_URI, SERVER_INSTRUCTIONS } from "./design-guidance.js";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -669,9 +672,11 @@ class ThreeDPrinterMCPServer {
       },
       {
         capabilities: {
+          prompts: {},
           resources: {},
           tools: {}
-        }
+        },
+        instructions: SERVER_INSTRUCTIONS
       }
     );
 
@@ -870,6 +875,7 @@ class ThreeDPrinterMCPServer {
 
   setupHandlers() {
     this.setupResourceHandlers();
+    this.setupPromptHandlers();
     this.setupToolHandlers();
   }
 
@@ -925,6 +931,21 @@ class ThreeDPrinterMCPServer {
     return { useAMS, amsMapping: finalAmsMapping };
   }
 
+  /** The FDM design guidance as MCP prompts: the client decides when to attach each one. */
+  setupPromptHandlers() {
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+      prompts: DESIGN_PROMPTS.map(({ name, title, description }) => ({ name, title, description })),
+    }));
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      const prompt = DESIGN_PROMPTS.find(item => item.name === request.params.name);
+      if (!prompt) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${request.params.name}`);
+      return {
+        description: prompt.description,
+        messages: [{ role: "user" as const, content: { type: "text" as const, text: prompt.text } }],
+      };
+    });
+  }
+
   setupResourceHandlers() {
     // List available resources
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
@@ -941,6 +962,12 @@ class ThreeDPrinterMCPServer {
             name: "3D Printer Files",
             mimeType: "application/json",
             description: "List of files available on the 3D printer"
+          },
+          {
+            uri: FDM_CAPABILITY_URI,
+            name: "FDM bridge and overhang guidance",
+            mimeType: "text/markdown",
+            description: "Planning bands and evidence for bridges and overhangs, for when one decides the plan and no measured capability is available"
           }
         ],
         templates: [
@@ -966,6 +993,9 @@ class ThreeDPrinterMCPServer {
     // Read resource
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const uri = request.params.uri;
+      if (uri === FDM_CAPABILITY_URI) {
+        return { contents: [{ uri, mimeType: "text/markdown", text: FDM_CAPABILITY_GUIDANCE }] };
+      }
       const match = uri.match(/^printer:\/\/([^\/]+)\/(.+)$/);
 
       if (!match) {
