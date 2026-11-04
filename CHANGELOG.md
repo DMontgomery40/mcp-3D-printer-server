@@ -4,7 +4,7 @@
 
 ### Added
 
-- Design guidance for agents that design or edit models to print, served as MCP prompts: `fdm_design`, `fdm_multicolor`, `fdm_assembly` and `fdm_after_slice`, plus the resource `guidance://fdm/capability-guidance` for bridges and overhangs. The server's `instructions` point every client to them. The text is David Montgomery's FDM design prompt pack of 3 November 2026, unchanged; bambu-printer-mcp serves the same guidance. Tested over a real stdio MCP connection; whether an agent follows it is a model behavior, not tested here.
+- Serves design guidance for agents that design or edit models to print as MCP prompts: `fdm_design`, `fdm_multicolor`, `fdm_assembly` and `fdm_after_slice`, plus the resource `guidance://fdm/capability-guidance` for bridges and overhangs. The server's `instructions` point every client to them. The text is David Montgomery's FDM design prompt pack of 3 November 2026, unchanged; bambu-printer-mcp serves the same guidance. Tested over a real stdio MCP connection; whether an agent follows it is a model behavior, not tested here.
 
 ## [1.2.25] – 2026-11-02
 

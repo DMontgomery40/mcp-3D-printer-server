@@ -171,6 +171,9 @@ All sources inspected 3 November 2026.`;
 
 export const FDM_CAPABILITY_URI = "guidance://fdm/capability-guidance";
 
+export const FDM_CAPABILITY_RESOURCE = { uri: FDM_CAPABILITY_URI, name: "FDM bridge and overhang guidance", mimeType: "text/markdown",
+  description: "Planning bands and evidence for bridges and overhangs, for when one is consequential and there is no sufficiently specific measured capability available" };
+
 export const DESIGN_PROMPTS: DesignPrompt[] = [
   { name: "fdm_design", title: "Design for FDM printing", text: FDM_CORE,
     description: "Persistent instructions for every design or model-editing task: plan how the object prints as part of the design, using the actual printer, filaments and slice." },
@@ -179,7 +182,7 @@ export const DESIGN_PROMPTS: DesignPrompt[] = [
   { name: "fdm_assembly", title: "Splits, inserts and joints", text: FDM_ASSEMBLY,
     description: "Add when a split, accent insert or joint could materially improve the result." },
   { name: "fdm_after_slice", title: "Review a slice", text: FDM_AFTER_SLICE,
-    description: "A separate review turn after slicing a candidate: keep, revise, or validate one specific uncertainty." },
+    description: "A separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation: keep, revise, or validate one specific uncertainty." },
 ];
 
-export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split or joint could help, and fdm_after_slice after slicing a candidate. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang decides the plan and no measured capability is available.";
+export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split or joint could help, and fdm_after_slice as a separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang is consequential and there is no sufficiently specific measured capability available.";
