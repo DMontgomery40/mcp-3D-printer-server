@@ -36,6 +36,7 @@ import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
+import { PRINT_QUALITY_PROPERTIES, withPrintQuality } from "./slicer/print-quality.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
 import { annotateTools } from "./tool-annotations.js";
@@ -384,6 +385,7 @@ const SLICE_TOOL_PROPERTIES = {
   min_save: { type: "boolean", description: "Bambu-compatible slicing: write a smaller output 3MF (--min-save)." },
   skip_modified_gcodes: { type: "boolean", description: "Bambu-compatible slicing: ignore custom G-code embedded in an input 3MF (--skip-modified-gcodes)." },
   slice_plate: { type: "number", description: "Bambu-compatible slicing: plate number to slice; 0 slices all plates (default)." },
+  ...PRINT_QUALITY_PROPERTIES,
   layer_height: {
     type: "number", exclusiveMinimum: 0, maximum: 2,
     description: "Layer height in mm, written over the selected process profile (Orca/Bambu Studio layer_height; PrusaSlicer --layer-height). Not mapped for Cura.",
@@ -904,7 +906,7 @@ class ThreeDPrinterMCPServer {
     if (!args?.stl_path) {
       throw new Error("Missing required parameter: stl_path");
     }
-    const processOverrides = parseProcessOverrides(args);
+    const processOverrides = parseProcessOverrides(withPrintQuality(args, Number(args.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER)));
     const slicerType = normalizeSlicerType(String(args.slicer_type || DEFAULT_SLICER_TYPE));
     const explicitModel =
       typeof args.bambu_model === "string" && args.bambu_model.trim() ? args.bambu_model : undefined;

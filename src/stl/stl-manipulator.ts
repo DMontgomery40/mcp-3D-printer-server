@@ -1317,7 +1317,7 @@ export class STLManipulator extends EventEmitter {
           case 'cura':
             if (Object.keys(orcaProcessOverrides(processOverrides)).length) {
               throw new SlicerError('preparation',
-                'layer_height, wall_loops, sparse_infill_density and the support settings are not mapped for Cura; set them in the Cura definition passed as slicer_profile.',
+                'quality, strength, layer_height, wall_loops, sparse_infill_density and the support settings are not mapped for Cura; set them in the Cura definition passed as slicer_profile.',
                 { slicerType, slicerPath });
             }
             // CuraEngine CLI args are different, often requiring -s for settings

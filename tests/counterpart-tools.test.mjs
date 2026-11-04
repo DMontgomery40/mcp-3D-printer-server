@@ -74,7 +74,7 @@ test("every counterpart/1 tool declares an outputSchema with an object root", as
     assert.equal(tool.outputSchema?.type, "object", name);
   }
   const slice = tools.find((entry) => entry.name === "slice_stl");
-  for (const key of ["layer_height", "wall_loops", "sparse_infill_density"]) assert.ok(slice.inputSchema.properties[key], key);
+  for (const key of ["quality", "strength", "layer_height", "wall_loops", "sparse_infill_density"]) assert.ok(slice.inputSchema.properties[key], key);
   assert.ok(tools.find((entry) => entry.name === "slice_with_template").inputSchema.properties.layer_height);
 });
 
