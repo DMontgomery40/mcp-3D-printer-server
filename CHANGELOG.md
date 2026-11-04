@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.29] – 2026-11-04
+
+### Changed
+
+- With no method given, a FULU print over Bambu Cloud goes the way Bambu Studio sends it to a cloud-bound printer it can reach on the LAN (`PrintJob.cpp`): `start_local_print_with_record`, which uploads to the printer over the LAN and records the task in the account, in the account's cloud session. When that fails before the print command (the plug-in's `-2010` to `-2140` preparation results, other than a missing or oversized file), the same checked job goes once through `start_print`, with the printer checked again first. Any other failure may have reached the printer and is not sent again. A printer that reports no storage goes straight to `start_print`, as in Studio. Same change as bambu-printer-mcp 1.1.55. On a P1S with firmware 01.10.00.00, `start_print` alone returns `-3120`, HTTP 403 "internal blocking", every time. Errors name `-2120`, `-2130` and `-3120`. Checked with the stand-in host and intercepted transports only; not yet on a printer.
+
 ## [1.2.28] – 2026-11-04
 
 ### Added

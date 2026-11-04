@@ -23,8 +23,16 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const LOCAL_CONNECT_STATUS = ["ok", "failed", "lost"];
 // bambu_networking.hpp BAMBU_NETWORK_ERR_PRINT_LP_PUBLISH_MSG_FAILED.
 const LOCAL_PRINT_PUBLISH_FAILED = -4030;
+// A with-record send falls back to start_print only on its own preparation failures (the plug-in's
+// PRINT_WR_* results, -2010 to -2140: project, upload, task record, FTPS), which come before the print
+// command, so the printer has no job. Any other result may have reached the printer and is never
+// replayed. Of those, Studio also stops on a file missing or too large (should_stop_without_fallback).
+const WITH_RECORD_PREPARATION_FAILURE = (value: number) => value <= -2010 && value >= -2140 && value !== -2040 && value !== -2100;
 // bambu_networking.hpp print errors that name a recoverable cause.
 const BAMBU_NETWORK_PRINT_ERRORS: Record<number, string> = {
+  [-2120]: "Bambu Cloud refused to create the print task",
+  [-2130]: "FTPS upload to the printer failed",
+  [-3120]: "Bambu Cloud refused to create the print task",
   [-4010]: "the file exceeds the 1 GB upload limit",
   [-4020]: "FTPS upload to the printer failed",
   [LOCAL_PRINT_PUBLISH_FAILED]: "the networking plug-in could not send the print command to the printer over MQTT",
@@ -853,10 +861,24 @@ export class BambuNetworkBridge {
     }
   }
 
-  /** A cloud print method (start_print) in a cloud session, so the plug-in has the printer's state. */
+  /**
+   * A cloud print in a cloud session, so the plug-in has the printer's state. With a fallback this is
+   * Bambu Studio's order for a cloud-bound printer it can also reach on the LAN (PrintJob.cpp,
+   * SendAttemptRoute::LanWithRecord, then ::Cloud): start_local_print_with_record, then start_print
+   * when the first failed before its print command was sent. `firstFailure` is the first method's result.
+   */
   async startCloudPrint(devId: string, method: string, payload: JsonObject, options: BambuNetworkBridgeOptions = {},
-    assertActive: () => void = () => {}, timing: Readonly<CloudTiming> = CLOUD_PRINT_TIMING): Promise<{ result: unknown; jobUpdates: BridgeJobUpdate[] }> {
-    return await this.withCloudSession(devId, options, assertActive, timing, async session => ({ result: await this.callWithAgent(method, payload, options), jobUpdates: session.jobUpdates }));
+    assertActive: () => void = () => {}, timing: Readonly<CloudTiming> = CLOUD_PRINT_TIMING, fallbackMethod?: string
+  ): Promise<{ result: unknown; jobUpdates: BridgeJobUpdate[]; firstFailure?: number }> {
+    return await this.withCloudSession(devId, options, assertActive, timing, async session => {
+      const result = await this.callWithAgent(method, payload, options);
+      const value = bridgeNumericResult(result);
+      if (!fallbackMethod || value === undefined || !WITH_RECORD_PREPARATION_FAILURE(value)) return { result, jobUpdates: session.jobUpdates };
+      options.trace?.({ step: "fallback", from: method, to: fallbackMethod, result: value });
+      const params = (payload as { params?: JsonObject }).params;
+      const fallbackPayload = params ? { ...payload, params: { ...params, comments: `failed(${value})` } } : payload;
+      return { result: await this.callWithAgent(fallbackMethod, fallbackPayload, options), jobUpdates: session.jobUpdates, firstFailure: value };
+    });
   }
 
   /**

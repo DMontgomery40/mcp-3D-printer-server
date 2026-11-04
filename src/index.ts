@@ -75,7 +75,7 @@ import { BambuNetworkBridge, describeBambuNetworkPrintError, type BridgeJobUpdat
 import { PRINT_ROUTES, connectionForRoute, routeOf, routeOptions, writeEnvValues, type PrintRoute } from "./counterpart/route.js";
 import { resolveStudioPrintOptions, usedNozzleCount, type CallerPrintOptions } from "./studio-print-options.js";
 import { inspectPrintFile } from "./safety/print-file.js";
-import { validatePrinterState } from "./safety/printer-state.js";
+import { externalStorageState, validatePrinterState } from "./safety/printer-state.js";
 import { uniquePrintName, withPrinterOperation, withPrintSnapshot } from "./safety/artifact.js";
 import { checkedFile } from "./printers/bambu.js";
 import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
@@ -1074,8 +1074,10 @@ class ThreeDPrinterMCPServer {
       throw new Error("FULU BambuNetwork printing requires bambu_serial, the printer host and its LAN access code: fresh printer state is checked over MQTT before every bridge print, including cloud dispatch.");
     }
     const isLocalBridgePrint = connectionType === "lan";
-    const bridgePrintMethod = isLocalBridgePrint ? "start_local_print" : "start_print";
-    const bridgeMethod = `net.${bridgePrintMethod}`;
+    // Bambu Studio sends a cloud-bound printer it can reach on the LAN with record first, in the cloud
+    // session, then start_print (PrintJob.cpp). This server always has the printer's IP and access code.
+    let bridgeMethod = isLocalBridgePrint ? "net.start_local_print" : "net.start_local_print_with_record";
+    let cloudFallbackMethod = isLocalBridgePrint ? undefined : "net.start_print";
     const { plateIndex } = options;
     const threeMfFilename = path.basename(options.threeMFPath);
     const projectName = threeMfFilename.replace(/\.3mf$/i, "");
@@ -1116,6 +1118,11 @@ class ThreeDPrinterMCPServer {
       validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
       const confirmedStatus = await bambu.getSafetyStatus(devIp, devId, password);
       validatePrinterState(confirmedStatus, requirements);
+      if (cloudFallbackMethod && externalStorageState(confirmedStatus.raw) !== "normal") {
+        // Studio sends straight through the cloud when the printer has no storage for the LAN upload.
+        bridgeMethod = cloudFallbackMethod;
+        cloudFallbackMethod = undefined;
+      }
       const wireMapping = mapping!.map((value) => bridgeAmsMappingValue(value, dualNozzle));
       const remoteFileName = uniquePrintName(options.threeMFPath);
       const checkedName = remoteFileName.replace(/(?:\.gcode)?\.3mf$/i, "");
@@ -1172,22 +1179,28 @@ class ThreeDPrinterMCPServer {
       const bridgeOptions = {
         // Trusted in-process preflight immediately before the print frame.
         beforeDispatch: async (method: string) => {
-          if (method !== bridgeMethod) return;
+          if (method !== bridgeMethod && method !== cloudFallbackMethod) return;
           assertActive();
           validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
         },
-        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod) assertActive(); },
-        onDispatched: (method: string) => { if (method === bridgeMethod) retainForDispatchedUpload(); },
+        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) assertActive(); },
+        onDispatched: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) retainForDispatchedUpload(); },
       };
       let jobUpdates: BridgeJobUpdate[] = [];
       let bridgeResult: unknown;
+      let firstAttempt = "";
       if (isLocalBridgePrint) {
         ({ result: bridgeResult, jobUpdates } = await this.bambuNetwork.startLocalPrint(
           { devId, devIp, username: "bblp", password, useSsl: true },
           bridgeMethod, { client_job_id: clientJobId, params }, bridgeOptions, assertActive
         ));
       } else {
-        ({ result: bridgeResult, jobUpdates } = await this.bambuNetwork.startCloudPrint(devId, bridgeMethod, { client_job_id: clientJobId, params }, bridgeOptions, assertActive));
+        let firstFailure: number | undefined;
+        ({ result: bridgeResult, jobUpdates, firstFailure } = await this.bambuNetwork.startCloudPrint(devId, bridgeMethod, { client_job_id: clientJobId, params }, bridgeOptions, assertActive, undefined, cloudFallbackMethod));
+        if (firstFailure !== undefined) {
+          bridgeMethod = cloudFallbackMethod!;
+          firstAttempt = ` It first tried net.start_local_print_with_record, as Bambu Studio does, which returned ${firstFailure}${describeBambuNetworkPrintError(firstFailure)}.`;
+        }
       }
       if (typeof bridgeResult === "object" && bridgeResult !== null && (bridgeResult as { ok?: unknown }).ok === false) {
         throw new Error(`FULU BambuNetwork bridge method ${bridgeMethod} failed: ${String((bridgeResult as { error?: unknown }).error || "unknown bridge error")}`);
@@ -1197,14 +1210,14 @@ class ThreeDPrinterMCPServer {
         const reported = jobUpdates.filter((update) => update.code !== 0 || update.msg).slice(-3)
           .map((update) => `status ${update.status}, code ${update.code}${update.msg ? `: ${update.msg}` : ""}`).join("; ");
         throw new Error(`FULU BambuNetwork bridge method ${bridgeMethod} returned non-zero result ${value}${describeBambuNetworkPrintError(value)}.` +
-          (reported ? ` Plug-in reported: ${reported}.` : ""));
+          (reported ? ` Plug-in reported: ${reported}.` : "") + firstAttempt);
       }
       assertActive();
       // Bambu's plug-in placed the file, so a resume re-reads it if it can and otherwise asks a person.
       bambu.recordCheckedJob(devIp, devId, remoteFileName, requirements, resumeFile, false);
       return {
         status: "success",
-        message: `FULU BambuNetwork ${bridgePrintMethod} command for ${threeMfFilename} sent successfully.`,
+        message: `FULU BambuNetwork ${bridgeMethod.replace(/^net\./, "")} command for ${threeMfFilename} sent successfully.${firstAttempt}`,
         connectionMode: "bambu_network",
         connectionType,
         bridgeMethod,
