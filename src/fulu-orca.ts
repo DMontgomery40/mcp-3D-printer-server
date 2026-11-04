@@ -600,7 +600,7 @@ export async function invokeFuluBridgeRpc(options: FuluBridgeRpcOptions): Promis
   if (printMethod) {
     throw new Error(
       `Print safety: raw FULU bridge print method "${method}" is disabled because it would start an uninspected job ` +
-      "without the thermal, model, nozzle, printer-state and human-confirmation checks. Use print_3mf for a checked LAN print."
+      "without the thermal, model, nozzle and printer-state checks. Use print_3mf for a checked LAN print."
     );
   }
 
@@ -711,7 +711,7 @@ export async function inspectFuluOrcaSetup(options: FuluOrcaSetupOptions): Promi
     notes: [
       "Slicing support uses FULU OrcaSlicer-bambulab CLI output as a sliced 3MF.",
       "Bambu print start still enforces BAMBU_MODEL before generating or sending project G-code.",
-      "Raw bridge print methods are disabled; print_3mf inspects the exact plate, checks the live printer and asks for human confirmation.",
+      "Raw bridge print methods are disabled; print_3mf inspects the exact plate and checks the live printer.",
       "The FULU BambuNetwork bridge is a separate runtime from the LAN MQTT/FTPS path; use bridge probing to verify that runtime before relying on cloud behavior.",
       ...(platform === "darwin"
         ? ["FULU macOS release bundles may ship the bridge dylib and host shims before the Linux plugin .so payload is present; missing linux-plugin entries mean the slicer can still be tested, but the BambuNetwork bridge is not fully ready."]
@@ -721,4 +721,20 @@ export async function inspectFuluOrcaSetup(options: FuluOrcaSetupOptions): Promi
         : []),
     ],
   };
+}
+
+/**
+ * The FULU BambuNetwork bridge command this machine's FULU install provides:
+ * FULU_BAMBU_BRIDGE_COMMAND, else the host discovered next to FULU's
+ * OrcaSlicer-bambulab (the same discovery check_fulu_orca_setup reports).
+ * print_3mf's bambu_network route and its controls fall back to it.
+ */
+export function discoveredFuluBridgeCommand(): string | undefined {
+  try {
+    const platform = normalizePlatform(undefined);
+    const slicerPath = resolveSlicerPath(undefined, platform);
+    return defaultBridgeCommand(platform, derivePluginDir(undefined, slicerPath, platform), defaultRuntimeDir(platform));
+  } catch {
+    return undefined;
+  }
 }

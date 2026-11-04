@@ -56,6 +56,7 @@ export interface CounterpartCapabilities {
   progress: boolean;
   layers: boolean;
   camera: CameraCapability;
+  cameraStream?: boolean;
   filaments: FilamentCapability;
   pause: boolean;
   resume: boolean;
@@ -78,11 +79,12 @@ export interface CounterpartPrinterInfo {
 }
 
 export interface FilamentSlot {
-  id: "ext";
+  /** "ext" for a single-spool printer; Bambu: the absolute AMS tray ("0"-"15", "128"+) or external spool ("254", "255"). */
+  id: string;
   material?: string;
   color?: string;
   name?: string;
-  source: "spoolman" | "unknown";
+  source: "spoolman" | "printer" | "unknown";
   /** Absolute path of the slicer filament profile for this material, as slice_stl's load_filaments takes it. */
   profile?: string;
 }
@@ -144,6 +146,7 @@ export const PRINTER_INFO_OUTPUT_SCHEMA = {
         progress: { type: "boolean" },
         layers: { type: "boolean" },
         camera: { type: "string", enum: ["bambu-tcp", "rtsp", "http-snapshot", "none"] },
+        cameraStream: {type: "boolean"},
         filaments: { type: "string", enum: ["ams", "single", "none"] },
         pause: { type: "boolean" },
         resume: { type: "boolean" },
@@ -204,11 +207,16 @@ export const CAMERA_SNAPSHOT_OUTPUT_SCHEMA = {
   },
 } as const;
 
-/** outputSchema for get_printer_filaments in this server: one external slot. */
+/**
+ * outputSchema for get_printer_filaments: one external slot, or for Bambu every
+ * loaded AMS tray and external spool plus bambu-printer-mcp's inventory fields
+ * (trays, summary, recommended, load_filaments_all), which keep its nulls.
+ */
 export const FILAMENTS_OUTPUT_SCHEMA = {
   type: "object",
   required: ["slots"],
   properties: {
+    trays: { type: "array", description: "Bambu only: bambu-printer-mcp's AMS tray list (slot = ams_id * 4 + tray_id), empty trays included.", items: { type: "object" } },
     slots: {
       type: "array",
       items: {
@@ -219,7 +227,7 @@ export const FILAMENTS_OUTPUT_SCHEMA = {
           material: { type: "string" },
           color: { type: "string" },
           name: { type: "string" },
-          source: { type: "string", enum: ["spoolman", "unknown"] },
+          source: { type: "string", enum: ["spoolman", "printer", "unknown"] },
           profile: {
             type: "string",
             description: "Absolute path of the installed slicer filament profile for this slot's material, which slice_stl accepts as load_filaments. Omitted when none resolves.",

@@ -26,7 +26,7 @@ async function server(t, env = {}, { preload, elicitation } = {}) {
     command: process.execPath, args: [...(preload ? ["--import", preload] : []), path.join(root, "dist/index.js")], cwd,
     env: {
       ...process.env, MCP_TRANSPORT: "stdio", PRINTER_TYPE: "bambu", PRINTER_HOST: "127.0.0.1", API_KEY: "",
-      BAMBU_MODEL: "", BAMBU_SERIAL: "", BAMBU_TOKEN: "", BAMBU_REQUIRE_CONFIRMATION: "", PRINT_REQUIRE_CONFIRMATION: "", PRINT_CONFIRMATION_TIMEOUT_MS: "", BAMBU_DISPATCH_CHECK_MS: "0",
+      BAMBU_MODEL: "", BAMBU_SERIAL: "", BAMBU_TOKEN: "", PRINT_CONFIRMATION_TIMEOUT_MS: "", BAMBU_DISPATCH_CHECK_MS: "0",
       PRINTER_MAX_NOZZLE_TEMP: "", PRINTER_MAX_BED_TEMP: "", PRINTER_MAX_CHAMBER_TEMP: "", ...env,
     },
     stderr: "pipe",
@@ -187,57 +187,45 @@ test("set_printer_temperature rejects nonfinite and string targets before any pr
   assert.deepEqual((await events()).map(({ action }) => action), ["publish"], "heater-off is never gated");
 });
 
-test("print_3mf asks a human before upload; decline and clients without elicitation send nothing", async (t) => {
+test("print_3mf starts without a server prompt, with or without elicitation support", async (t) => {
   const file = await bambuProject(t);
-  for (const [name, options, extraEnv, expectation] of [
-    ["accepted", { elicitation: accept }, {}, "print"],
-    ["declined", { elicitation: decline }, {}, /confirmation was declined/i],
-    ["no elicitation support", {}, {}, /elicitation support.*PRINT_REQUIRE_CONFIRMATION=0/i],
-    ["headless opt-out", {}, { PRINT_REQUIRE_CONFIRMATION: "0" }, "print"],
-    ["legacy Bambu opt-out", {}, { BAMBU_REQUIRE_CONFIRMATION: "0" }, "print"],
+  for (const [name, options, extraEnv] of [
+    ["client with elicitation", { elicitation: true }, {}],
+    ["client that declines every prompt", { elicitation: decline }, {}],
+    ["client without elicitation support", {}, {}],
+    ["removed confirmation settings are ignored", {}, { PRINT_REQUIRE_CONFIRMATION: "1", BAMBU_REQUIRE_CONFIRMATION: "1" }],
   ]) {
     await t.test(name, async (t) => {
+      const prompts = [];
+      const elicitation = options.elicitation
+        ? async (request) => { prompts.push(request.params.message); return options.elicitation === true ? accept() : options.elicitation(); }
+        : undefined;
       const { preload, events } = await bambuBoundaries(t);
-      const client = await server(t, { ...bambuEnv, ...extraEnv }, { preload, ...options });
+      const client = await server(t, { ...bambuEnv, ...extraEnv }, { preload, elicitation });
       const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file } });
-      const actions = (await events()).map(({ action }) => action);
-      if (expectation === "print") {
-        assert.notEqual(result.isError, true, errorText(result));
-        assert.deepEqual(actions, ["status", "status", "upload", "status", "publish"]);
-      } else {
-        assert.equal(result.isError, true);
-        assert.match(errorText(result), expectation);
-        assert.deepEqual(actions, ["status"], "only the preflight status read may happen");
-      }
+      assert.notEqual(result.isError, true, errorText(result));
+      assert.deepEqual((await events()).map(({ action }) => action), ["status", "status", "upload", "status", "publish"]);
+      assert.deepEqual(prompts, [], "no confirmation or bed-clearance prompt");
     });
   }
 });
 
-test("confirmation prompts wait for a slow human and report a timeout as a timeout", async (t) => {
-  const { confirmationTimeoutMs } = await import(pathToFileURL(path.join(root, "dist/safety/confirmation.js")).href);
+test("prompts that remain wait for a slow human and report a timeout as a timeout", async () => {
+  const { confirmationTimeoutMs, confirmationTimedOut } = await import(pathToFileURL(path.join(root, "dist/safety/confirmation.js")).href);
   const saved = process.env.PRINT_CONFIRMATION_TIMEOUT_MS;
-  delete process.env.PRINT_CONFIRMATION_TIMEOUT_MS;
-  assert.equal(confirmationTimeoutMs(), 600_000, "default must outlast the SDK's 60 s request timeout");
-  if (saved !== undefined) process.env.PRINT_CONFIRMATION_TIMEOUT_MS = saved;
-  const file = await bambuProject(t);
-  const slowAccept = async () => { await new Promise((resolve) => setTimeout(resolve, 1500)); return accept(); };
-  for (const [name, timeout, expectation] of [["answered in time", "4000", "print"], ["no answer in time", "1000", /No confirmation was received within 1 seconds; nothing was sent/]]) {
-    await t.test(name, async (t) => {
-      const { preload, events } = await bambuBoundaries(t);
-      const client = await server(t, { ...bambuEnv, PRINT_CONFIRMATION_TIMEOUT_MS: timeout }, { preload, elicitation: slowAccept });
-      const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file } }, undefined, { timeout: 30000 });
-      const actions = (await events()).map(({ action }) => action);
-      if (expectation === "print") {
-        assert.notEqual(result.isError, true, errorText(result));
-        assert.ok(actions.includes("publish"));
-      } else {
-        assert.equal(result.isError, true);
-        assert.match(errorText(result), expectation);
-        assert.doesNotMatch(errorText(result), /elicitation support/, "a timeout must not tell users to disable prompts");
-        assert.deepEqual(actions, ["status"], "only the preflight status read may happen");
-      }
-    });
+  try {
+    delete process.env.PRINT_CONFIRMATION_TIMEOUT_MS;
+    assert.equal(confirmationTimeoutMs(), 600_000, "default must outlast the SDK's 60 s request timeout");
+    process.env.PRINT_CONFIRMATION_TIMEOUT_MS = "1000";
+    assert.equal(confirmationTimeoutMs(), 1000);
+    process.env.PRINT_CONFIRMATION_TIMEOUT_MS = "999";
+    assert.equal(confirmationTimeoutMs(), 600_000, "out-of-range values fall back to the default");
+  } finally {
+    if (saved === undefined) delete process.env.PRINT_CONFIRMATION_TIMEOUT_MS;
+    else process.env.PRINT_CONFIRMATION_TIMEOUT_MS = saved;
   }
+  assert.match(confirmationTimedOut(1000), /No confirmation was received within 1 seconds; nothing was sent/);
+  assert.doesNotMatch(confirmationTimedOut(1000), /elicitation support|REQUIRE_CONFIRMATION/);
 });
 
 test("print_3mf never uploads the original project when auto-slicing fails or the selected plate is missing", async (t) => {
@@ -303,13 +291,13 @@ test("generic upload_gcode print, start_print and heating go through the gate en
 
   const printed = await client.callTool({ name: "upload_gcode", arguments: { filename: "a.gcode", gcode: pla, print: true } });
   assert.notEqual(printed.isError, true, errorText(printed));
-  assert.equal(prompts.length, 1);
   const upload = mock.requests.find((request) => request.method === "POST");
   assert.ok(upload.body.includes('filename="a.gcode"') && upload.body.includes("M109 S215") && upload.body.includes('name="print"'));
 
   const heat = await client.callTool({ name: "set_printer_temperature", arguments: { component: "extruder", temperature: 210, material: "PLA" } });
   assert.notEqual(heat.isError, true, errorText(heat));
   assert.deepEqual(JSON.parse(mock.requests.at(-1).body), { command: "target", targets: { tool0: 210 } });
+  assert.deepEqual(prompts, [], "neither the print nor the heating command asks");
 });
 
 test("generic remote start on an adapter without a download route is refused before contacting it", async (t) => {

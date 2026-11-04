@@ -36,7 +36,7 @@ const rawPrinter = (publish) => {
 test('accepts observed model aliases and a manually declared external material', () => {
   assert.doesNotThrow(() => check(fresh()));
   assert.doesNotThrow(() => check(fresh({model_id:undefined,model:'Bambu Lab A1 mini'}), req({model:'a1mini'})));
-  assert.doesNotThrow(() => check(fresh({model_id:undefined,model:'H2D Pro'}), req({model:'h2dpro',nozzleDiameters:[]})));
+  assert.doesNotThrow(() => check(fresh({model_id:undefined,model:'H2D Pro'}), req({model:'h2dpro',nozzleDiameters:[],verifyMaterials:false})));
 });
 test('rejects missing, stale, future and synthetic telemetry provenance', () => {
   for(const observation of [undefined,{source:'configured',requestedAt:Date.now(),receivedAt:Date.now()}, {source:'mqtt',requestedAt:1,receivedAt:2}, {source:'mqtt',requestedAt:Date.now()+5000,receivedAt:Date.now()+5000}, {source:'mqtt',requestedAt:Date.now(),receivedAt:Date.now()-1}]) {
@@ -61,10 +61,10 @@ test('diameter must be reported and match; bed-only state reads may omit diamete
 });
 test('matches used nozzles by index rather than accepting one matching nozzle among multiple', () => {
   const status = fresh({model_id:'O1D',nozzle_diameter:undefined,device:{nozzle:{info:[{id:0,diameter:0.4,type:'HH01',stat:0},{id:1,diameter:0.6,type:'HS01',stat:0}]}}});
-  assert.doesNotThrow(() => check(status,req({model:'h2d',nozzleDiameters:[0.4,0.6]})));
+  assert.doesNotThrow(() => check(status,req({model:'h2d',nozzleDiameters:[0.4,0.6],verifyMaterials:false})));
   assert.throws(() => check(status,req({model:'h2d',nozzleDiameters:[0.4,0.4]})), /nozzle|diameter/i);
   assert.throws(() => check(status,req({model:'h2d',nozzleDiameters:[0.4]})), /nozzle|ambiguous/i);
-  assert.doesNotThrow(() => check(status,req({model:'h2d',nozzleDiameters:[0.6],usedNozzleIndices:[1],nozzleFlows:['Standard']})));
+  assert.doesNotThrow(() => check(status,req({model:'h2d',nozzleDiameters:[0.6],usedNozzleIndices:[1],nozzleFlows:['Standard'],verifyMaterials:false})));
   assert.throws(() => check(status,req({model:'h2d',nozzleDiameters:[0.6],usedNozzleIndices:[1],nozzleFlows:['High Flow']})), /flow/i);
 });
 test('reported type, flow, absent or abnormal multi nozzle state cannot contradict job', () => {
@@ -201,7 +201,7 @@ test('old raw observations and fresh partial error reports cannot satisfy a new 
 
 test('a scalar file diameter is accepted only when every fresh physical nozzle matches', () => {
   const device={nozzle:{info:[{id:0,diameter:0.4,type:'HH01',stat:0},{id:1,diameter:0.4,type:'HH01',stat:0}]}};
-  assert.doesNotThrow(() => check(fresh({model_id:'O1D',device}),req({model:'h2d'})));
+  assert.doesNotThrow(() => check(fresh({model_id:'O1D',device}),req({model:'h2d',verifyMaterials:false})));
 });
 test('modern external spool reports cannot be hidden by a matching legacy tray field', () => {
   assert.throws(() => check(fresh({vt_tray:{tray_type:'PLA'},vir_slot:[{id:'254',tray_type:'PETG'}]})),/material/i);
@@ -288,8 +288,14 @@ test('official H2C and H2D Pro returned serials agree with declared identity and
   for(const [prefix,model,modelId,other] of [['31B','h2c','O1C2','O1E'],['239','h2dpro','O1E','O1C2']]) {
     const serial=prefix+'TEST';
     const status=fresh({model_id:modelId,modules:[{name:'ota',sn:serial}]},{serial});
-    assert.doesNotThrow(()=>check(status,req({model,serial,nozzleDiameters:[]})));
+    assert.doesNotThrow(()=>check(status,req({model,serial,nozzleDiameters:[],verifyMaterials:false})));
     assert.throws(()=>check(fresh({model_id:other,modules:[{name:'ota',sn:serial}]},{serial}),req({model,serial,nozzleDiameters:[]})),/identity|conflict|model/i);
     assert.throws(()=>check(fresh({model_id:undefined}),req({model,serial,nozzleDiameters:[]})),/identity|model/i);
   }
 });
+
+// Dual-nozzle printers report one virtual external slot per nozzle, numbered as Bambu
+// Studio's VIRTUAL_TRAY_MAIN_ID (255, right/main) and VIRTUAL_TRAY_DEPUTY_ID (254, left/deputy).
+const dualNozzleInfo={nozzle:{info:[{id:0,diameter:0.4,type:'HH01',stat:0},{id:1,diameter:0.4,type:'HH01',stat:0}]}};
+const x2d=(vir_slot,raw={})=>fresh({model_id:undefined,model:'X2D',device:dualNozzleInfo,ams:{ams:[{id:'0',tray:[0,1,2,3].map(id=>({id:String(id),tray_type:'PLA'}))}]},...(vir_slot===undefined?{}:{vir_slot}),...raw});
+const x2dReq=(extra={})=>req({model:'x2d',nozzleDiameters:[0.4,0.4],materials:['PLA','PLA','PLA','PLA','PLA'],useAMS:true,amsMapping:[0,1,2,3,255],filamentNozzleIndices:[0,0,0,0,0],...extra});

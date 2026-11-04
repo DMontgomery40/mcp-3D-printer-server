@@ -3,7 +3,7 @@ import { OctoPrintImplementation } from "./octoprint.js";
 import { KlipperImplementation } from "./klipper.js";
 import { DuetImplementation } from "./duet.js";
 import { RepetierImplementation } from "./repetier.js";
-import { BambuImplementation } from "./bambu.js";
+import { BambuImplementation, defaultResumeStateDir } from "./bambu.js";
 import { PrusaImplementation } from "./prusa.js";
 import { CrealityImplementation } from "./creality.js";
 import type { ConfirmHardware } from "../safety/confirmation.js";
@@ -21,13 +21,13 @@ export class PrinterFactory {
   private implementations: Map<string, PrinterImplementation> = new Map();
   private apiClient = axios.create({ timeout: 10000 });
 
-  /** confirm is the human (MCP elicitation) confirmation used before prints and positive heating. */
+  /** confirm is the human (MCP elicitation) confirmation for physical checks software cannot make, such as resuming a job that cannot be re-read. */
   constructor(confirm?: ConfirmHardware) {
     this.implementations.set("octoprint", new OctoPrintImplementation(this.apiClient, confirm));
     this.implementations.set("klipper", new KlipperImplementation(this.apiClient, confirm));
     this.implementations.set("duet", new DuetImplementation(this.apiClient, confirm));
     this.implementations.set("repetier", new RepetierImplementation(this.apiClient, confirm));
-    this.implementations.set("bambu", new BambuImplementation(this.apiClient, confirm));
+    this.implementations.set("bambu", new BambuImplementation(this.apiClient, confirm, { resumeStateDir: defaultResumeStateDir() }));
     this.implementations.set("prusa", new PrusaImplementation(this.apiClient, confirm));
     this.implementations.set("creality", new CrealityImplementation(this.apiClient, confirm));
   }

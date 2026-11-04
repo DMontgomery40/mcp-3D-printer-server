@@ -39,7 +39,7 @@ Thank you to everyone who builds, tests, reports problems, and shares real print
 
 | Contributor | Contribution |
 | --- | --- |
-| [Raza Sharif (razashariff)](https://github.com/razashariff) | Proposes cryptographic signing, replay protection, and agent identity checks before print commands in [#13](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/13). Signing is not implemented; since 1.2.10, every print start and positive heating command requires human confirmation through MCP elicitation, and printed files are inspected before dispatch. |
+| [Raza Sharif (razashariff)](https://github.com/razashariff) | Proposes cryptographic signing, replay protection, and agent identity checks before print commands in [#13](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/13). Signing is not implemented; printed files are inspected and printer state is checked before every print start and positive heating command. The human confirmation added in 1.2.10 was removed for print starts and heating after 1.2.25. |
 | [DarkCraven (sweidinger)](https://github.com/sweidinger) | Requests Klipper print-job status (progress, file, times) beyond Moonraker's `/printer/info` in [#12](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/12). Not yet implemented. |
 | [Hex (hexatriene)](https://github.com/hexatriene) | Proposes migrating Bambu support to `bambu-js` v3 for H2D support and FTP operations in [#10](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/10). Closed without merging; the server keeps `bambu-node` for MQTT and uses `basic-ftp` directly for uploads. |
 | [Jean-Laurent de Morlhon (jeanlaurent)](https://github.com/jeanlaurent) | Proposes Docker support in [#2](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/2). Closed without merging; the repository's Docker setup was later fixed in #3. |
@@ -63,3 +63,7 @@ Special thanks to the [FULU Foundation](https://www.fulu.org/), [Louis Rossmann]
 ## Dependency maintenance
 
 Thank you to the [MCP TypeScript SDK contributors](https://github.com/modelcontextprotocol/typescript-sdk/graphs/contributors) and [Axios contributors](https://github.com/axios/axios/graphs/contributors) for the compatible 1.32.2 and 1.21.0 releases validated in this project.
+
+Thanks again to [Patrick Juchli](https://github.com/patrickjuchli) and the basic-ftp maintainers for the [6.2.4 listing correction](https://github.com/patrickjuchli/basic-ftp/releases/tag/v6.2.4) included in the prepared 6.2.5 dependency update. Offline regression and package validation cover this update; publication is pending.
+
+Thanks to [Steve Pritchard (sjpritchard)](https://github.com/sjpritchard) for the official H2C first-layer temperature-table report in [bambu-printer-mcp #81](https://github.com/DMontgomery40/bambu-printer-mcp/issues/81). Its safety-preserving correction is ported here and checked with isolated Studio output; publication of this port is pending.

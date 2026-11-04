@@ -18,17 +18,18 @@ FULU_ORCA_PLUGIN_DIR=/path/to/FULU/runtime/payload
 BAMBU_MODEL=p1s
 ```
 
-Accepted aliases include `fulu_orca`, `fulu-orca`, `orca-studio`, and `orca_bambulab`. For Bambu printers, this is the default slicer when `SLICER_TYPE` is not set.
+Accepted aliases include `fulu_orca`, `fulu-orca`, `orca-studio`, and `orca_bambulab`. Set `SLICER_TYPE` to choose it: Bambu printers default to Bambu Studio, because FULU v1.0.0's command line segfaults on every slice until [FULU #56](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/56) and [#57](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/57) are released.
 
 - `slice_stl` runs the FULU/Orca project command line (`--slice 0 --export-3mf`) with your model and nozzle's machine preset, resolved from the FULU installation's own profile tree, to produce a sliced Bambu 3MF. `SLICER_PROFILE` is a process profile only; see [Bambu-compatible slicing](./SLICING.md#bambu-compatible-slicing).
-- `print_3mf` can auto-slice an unsliced 3MF through FULU OrcaSlicer-bambulab, then inspect, confirm, upload, and start the sliced project through this server's local Bambu print path. A failed slice never uploads the original.
+- `print_3mf` can auto-slice an unsliced 3MF through FULU OrcaSlicer-bambulab, then inspect, upload, and start the sliced project through this server's local Bambu print path. A failed slice never uploads the original.
 - `check_fulu_orca_setup` checks the FULU executable, the platform runtime payload, the setup commands, and optionally the BambuNetwork bridge handshake.
 - `fulu_bambu_network_rpc` calls the FULU bridge protocol for diagnostics. Raw print methods are refused.
+- With `connection_mode: "bambu_network"` (or `BAMBU_DEFAULT_CONNECTION_MODE=bambu_network`), `print_3mf`, `cancel_print`, `pause_print` and `resume_print` go through FULU's bridge: see [print and control through FULU's BambuNetwork route](#print-and-control-through-fulus-bambunetwork-route).
 
 What stays deliberately explicit:
 
-- The server's Bambu print path is local MQTT plus FTPS. It still needs `PRINTER_HOST`, `BAMBU_SERIAL`, and `BAMBU_TOKEN`.
-- FULU's BambuNetwork bridge is a separate runtime. The server can inspect it, probe it, and send guarded RPC calls, but it never silently switches a print from local LAN control to BambuNetwork or cloud control.
+- The server's default Bambu print path is local MQTT plus FTPS. Every route, the bridge included, still needs `PRINTER_HOST`, `BAMBU_SERIAL`, and `BAMBU_TOKEN`: fresh printer state is read over LAN MQTT before every print.
+- FULU's BambuNetwork bridge is a separate runtime. The server uses it only when the route says so (`connection_mode`, `BAMBU_DEFAULT_CONNECTION_MODE`, or `counterpart_print_route`); it never switches routes on its own.
 - `BAMBU_MODEL` stays mandatory for Bambu print operations, because a wrong machine preset can produce dangerous G-code.
 
 ## Current status
@@ -37,7 +38,7 @@ This integration has been bench-tested against FULU macOS release artifacts with
 
 - **Bambu Studio still works as a fallback.** With `SLICER_TYPE=bambustudio` and `SLICER_PATH=/Applications/BambuStudio.app/Contents/MacOS/BambuStudio`, the same Benchy 3MF sliced into a printable Bambu project. This is the known-good command-line path while FULU's platform packaging settles.
 - **macOS FULU CLI slicing is not proven.** On the test Mac, the FULU arm64 and x86_64 macOS bundles hit the same command-line slicing problem: one run crashed with `SIGSEGV` inside OrcaSlicer's CLI processing, and repeated attempts left uninterruptible macOS processes that ignored `SIGKILL`. `check_fulu_orca_setup` can inspect the bundle and bridge payload, but treat macOS FULU CLI slicing as unfinished until FULU ships a stable macOS command-line runtime. GUI slicing and export are unaffected.
-- **Linux bridge probing works with FULU's v1.0.0 host.** In the maintainer's x86-64 Linux test container (QEMU emulation), FULU's v1.0.0 Linux host loaded the 02.05.02.58 networking plug-in, and `check_fulu_orca_setup` reported a ready bridge through the default command and through the documented `cat` wrapper. A host launched directly returned exit code 101 with its explanation, and a missing plug-in folder returned the `file open failed` explanation. No printer was contacted: this server has no bridge print path.
+- **Linux bridge probing works with FULU's v1.0.0 host.** In the maintainer's x86-64 Linux test container (QEMU emulation), FULU's v1.0.0 Linux host loaded the 02.05.02.58 networking plug-in, and `check_fulu_orca_setup` reported a ready bridge through the default command and through the documented `cat` wrapper. A host launched directly returned exit code 101 with its explanation, and a missing plug-in folder returned the `file open failed` explanation. No printer was contacted by those probes. The bridge print and control route came later, ported from bambu-printer-mcp (see below); this server has tested it only against a fake FULU host.
 - **Windows needs testers.** The WSL 2 setup path, payload checks, and bridge command shape are represented here, but the full Windows path still needs real reports that exercise `install_runtime.ps1`, `verify_runtime.ps1`, bridge probing, CLI slicing, and a known-safe print workflow.
 
 Please report your OS, CPU architecture, FULU release asset name, the `check_fulu_orca_setup` result, the slicer's stderr, and whether the Bambu Studio fallback works for the same model.
@@ -148,6 +149,27 @@ A safe diagnostic call:
 ```
 
 The server exposes the bridge for diagnostics without pretending a cloud print can be safely inferred from a local filename.
+
+## Print and control through FULU's BambuNetwork route
+
+This route is ported from [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp/blob/main/docs/FULU.md#print-through-the-bridge), where it printed on the maintainer's P1S with Developer Mode off. Bambu firmware with authorization control (01.08.05 and later on the P1 series) refuses third-party LAN commands with HMS 0500-0500-0001-0007 unless LAN Only Mode and Developer Mode are on. FULU's networking plug-in signs and encrypts commands as Bambu Studio does, so the printer accepts them. The trade-off is that this route depends on Bambu's closed networking plug-in. This server has run it only against a fake FULU host that reproduces the real host's behaviour; it has not printed on real hardware here.
+
+Configure it in the server environment:
+
+| Setting | Purpose |
+|---|---|
+| `BAMBU_DEFAULT_CONNECTION_MODE` | `lan_mqtt_ftps` (default: direct LAN MQTT/FTPS) or `bambu_network` (FULU's bridge). bambu-printer-mcp's `bambu_native` (X2D) and `bambu_connect` modes are refused here. |
+| `BAMBU_DEFAULT_CONNECTION_TYPE` | For `bambu_network`: `lan` (the plug-in's authenticated local session) or `cloud` (Bambu Cloud; needs a signed-in agent). Default `cloud`, as in bambu-printer-mcp. |
+| `BAMBU_NETWORK_BRIDGE_COMMAND` | The trusted host command. Falls back to `FULU_BAMBU_BRIDGE_COMMAND`, then to the host `check_fulu_orca_setup` discovers next to FULU's OrcaSlicer-bambulab. |
+| `BAMBU_NETWORK_CONFIG_DIR` | Writable agent config folder, which also holds `control-trace.log`. Default `~/.config/mcp-3d-printer-server/bambu-network`. |
+| `BAMBU_NETWORK_COUNTRY_CODE`, `BAMBU_NETWORK_USER_INFO`, `BAMBU_NETWORK_CERT_DIR` | Region (default `US`), optional `net.change_user` JSON for cloud sign-in, and an optional certificate folder. By default the server writes Bambu's public `printer.cer` and `slicer_base64.cer` (pinned by SHA-256) to `cert` inside the config folder; LAN sessions need `printer.cer`. |
+| `PJARCZAK_BAMBU_PLUGIN_DIR` | The networking plug-in folder (`libbambu_networking.so`, `libBambuSource.so`); on Linux the server passes their absolute paths to the host. |
+
+`counterpart_print_route` reads the route and changes it (`{"route": "lan"}` or `{"route": "cloud"}`) in the running server and in the `.env` file in its working directory. Arguments override the defaults per call: `print_3mf`, `cancel_print`, `pause_print` and `resume_print` take `connection_mode` and `connection_type`. A job is always controlled over the connection that printed it, so Stop and Pause for a FULU print never fall back to plain MQTT.
+
+**Printing.** `print_3mf` with `bambu_network` runs the same gate as the LAN path first: it inspects a private snapshot of the sliced plate, checks the AMS mapping (`ams_slots`, `ams_mapping`, or `use_ams: false` for the external spool), and validates a fresh LAN MQTT report twice. Then it opens the plug-in's own session. For `lan` the server connects with the access code, installs the printer's certificate and waits for the connection, as Bambu Studio does, and sends `net.start_local_print`; a synchronous `-4030` ("send msg failed", nothing published) is retried once after another certificate exchange. For `cloud` it sends `net.start_print` after the printer's cloud session and certificate. The fresh MQTT report is checked again immediately before the print frame. The job carries Bambu Studio's `ams_mapping`, `ams_mapping2` and `ams_mapping_info`, the Send dialog's calibration options as Bambu Studio resolves them for the model, and the server's unique `checked-…` name as the task name, which binds a later `resume_print` to the inspected file. A non-zero plug-in result is an error that names the code and the plug-in's last messages. Success means the plug-in accepted the job; check `counterpart_print_progress` or `get_printer_status` to see the printer start it.
+
+**Stop, Pause, Resume.** Over `bambu_network`, each control opens the plug-in's authenticated session, sends the command, and stays connected until the printer answers. A refusal fails with the printer's `err_code` (for example `0502400A`); a `-4` or `-4030` send is retried after reinstalling the certificate, three tries in all; any other plug-in result is final and never replayed. Every FULU event and send in a control session is appended to `control-trace.log` in the config folder, without the access code. Resume keeps the checked-job rules in the [README](../README.md#resume_print): Bambu's plug-in placed the file, so a resume re-reads it over FTPS when it can, and asks a person through MCP elicitation when it cannot.
 
 ## Upstream bugs and workarounds
 

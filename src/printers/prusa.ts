@@ -232,7 +232,6 @@ export class PrusaImplementation extends GenericPrinterImplementation {
         state,
         ready,
         reason: ready ? undefined : `printer.state is ${state}`,
-        finishedJob: ready && (state === "FINISHED" || state === "STOPPED") ? JSON.stringify([state, data?.job?.id ?? null]) : undefined,
       };
     }
     const flags = data?.state?.flags;

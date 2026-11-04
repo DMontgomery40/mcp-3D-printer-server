@@ -1,7 +1,7 @@
 import fs from "fs";
 import FormData from "form-data";
 import { isAxiosError } from "axios";
-import { GenericPrinterImplementation, type GenericPrinterState, type SnapshotCandidate } from "./generic-base.js";
+import { GenericPrinterImplementation, type GenericPrinterState, type SnapshotCandidate, type CameraCandidate } from "./generic-base.js";
 import type { CounterpartProgress, FilamentSlot, PrinterIdentity } from "../counterpart/contract.js";
 import { finiteNumber, nonEmptyText } from "../counterpart/contract.js";
 import { mapMoonraker } from "../counterpart/progress.js";
@@ -66,11 +66,19 @@ export class KlipperImplementation extends GenericPrinterImplementation {
    * path relative to the host. https://moonraker.readthedocs.io/en/latest/external_api/webcams/
    */
   async snapshotCandidates(host: string, port: string, apiKey: string): Promise<SnapshotCandidate[]> {
+    return (await this.cameraCandidates(host, port, apiKey)).filter(candidate => candidate.transport === "http-snapshot");
+  }
+
+  async cameraCandidates(host: string, port: string, apiKey: string): Promise<CameraCandidate[]> {
     const data = (await this.apiClient.get(`http://${host}:${port}/server/webcams/list`, this.authHeaders(apiKey))).data;
     const webcams = Array.isArray(data?.result?.webcams) ? data.result.webcams : [];
     return webcams
-      .filter((webcam: any) => webcam?.enabled !== false && nonEmptyText(webcam?.snapshot_url))
-      .map((webcam: any) => ({ url: String(webcam.snapshot_url).trim(), source: "moonraker-webcam", configured: true }));
+      .filter((webcam: any) => webcam?.enabled !== false)
+      .flatMap((webcam: any) => [
+        ...(nonEmptyText(webcam?.stream_url)
+          ? [{url: String(webcam.stream_url).trim(), snapshotUrl: nonEmptyText(webcam?.snapshot_url), unsupportedStream: /webrtc|hls/i.test(String(webcam?.service ?? "")), transport: "http-mjpeg" as const}] : []),
+        ...(nonEmptyText(webcam?.snapshot_url) ? [{url: String(webcam.snapshot_url).trim(), transport: "http-snapshot" as const}] : []),
+      ].map(candidate => ({...candidate, source: "moonraker-webcam", configured: true})));
   }
 
   /**
@@ -175,11 +183,7 @@ export class KlipperImplementation extends GenericPrinterImplementation {
     if (!["standby", "complete", "cancelled"].includes(job)) {
       return { state, ready: false, reason: `print_stats.state is ${job}` };
     }
-    return {
-      state,
-      ready: true,
-      finishedJob: job === "standby" ? undefined : JSON.stringify([job, status?.print_stats?.filename ?? null]),
-    };
+    return { state, ready: true };
   }
 
   protected async downloadRemoteFile(host: string, port: string, apiKey: string, filename: string, destination: string): Promise<void> {

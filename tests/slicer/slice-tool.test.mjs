@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,7 +141,7 @@ async function assertSliced(outputPath) {
 }
 
 async function assertNotExecuted(install) {
-  assert.equal(existsSync(install.capture), false, "the slicer must not run when preparation fails");
+  assert.equal(existsSync(path.join(install.root, "args.json")), false, "the slicer must not run when preparation fails");
 }
 
 test("slice_stl never passes the raw inherited machine preset to the CLI (P1S regression)", async (t) => {
@@ -172,6 +172,31 @@ test("slice_stl never passes the raw inherited machine preset to the CLI (P1S re
   assert.deepEqual(JSON.parse(await fs.readFile(filaments[0], "utf8")).nozzle_temperature, ["220"]);
   assert.ok(args.includes("--allow-newer-file"));
   assert.equal(args.at(-1), SAMPLE_STL);
+});
+
+test("a Bambu printer with no SLICER_TYPE slices with Bambu Studio, as bambu-printer-mcp does", async (t) => {
+  // FULU OrcaSlicer-bambulab v1.0.0's CLI segfaults on every slice (FULU #56/#57), so it is no longer the default.
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install, { PRINTER_TYPE: "bambu", SLICER_TYPE: "" });
+  const result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", nozzle_diameter: "0.4", scale: 2 });
+  assert.equal(result.isError, undefined, text(result));
+  await assertSliced(text(result));
+  // Bambu Studio receives every flag unchanged; the Orca route would scale a copy of the mesh and drop --scale.
+  const args = await install.args();
+  assert.equal(args.at(-1), SAMPLE_STL, "the Bambu Studio CLI received the original model");
+  assert.equal(args[args.indexOf("--scale") + 1], "2");
+});
+
+test("a relative TEMP_DIR reaches the slicer as an absolute output folder (Bambu Studio fails relative ones)", async (t) => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install, { TEMP_DIR: "server-temp" });
+  const result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", nozzle_diameter: "0.4" });
+  assert.equal(result.isError, undefined, text(result));
+  await assertSliced(text(result));
+  const args = await install.args();
+  const outputDir = args[args.indexOf("--outputdir") + 1];
+  assert.ok(path.isAbsolute(outputDir), `--outputdir ${outputDir} must be absolute`);
+  assert.ok(outputDir.startsWith(path.join(realpathSync(install.root), "server-temp")), outputDir);
 });
 
 test("slice_stl writes the installed nozzle type into the machine preset so printing can match the printer", async (t) => {
@@ -335,7 +360,7 @@ test("slice_stl maps Bambu CLI options and routes generic OrcaSlicer only with a
   for (const model of ["p1s", "p2s", "h2d", "h2s", "h2c", "a1mini"]) {
     assert.ok(sliceTool.inputSchema.properties.bambu_model.enum.includes(model), `slice_stl must accept ${model}`);
   }
-  for (const option of ["bed_type", "load_filaments", "filament_colours", "orient", "arrange", "slice_plate", "template_name"]) {
+  for (const option of ["bed_type", "load_filaments", "filament_colours", "orient", "arrange", "slice_plate", "template_name", "pause_at_layers"]) {
     assert.ok(sliceTool.inputSchema.properties[option], `slice_stl must expose ${option}`);
   }
 
@@ -346,7 +371,7 @@ test("slice_stl maps Bambu CLI options and routes generic OrcaSlicer only with a
   assert.equal(result.isError, undefined, text(result));
   let args = await install.args();
   assert.deepEqual(args.slice(0, 2), ["--slice", "1"]);
-  for (const [flag, value] of [["--orient", "1"], ["--arrange", "0"], ["--repetitions", "2"], ["--scale", "1.5"], ["--rotate", "90"]]) {
+  for (const [flag, value] of [["--orient", "1"], ["--arrange", "0"], ["--clone-objects", "2"], ["--scale", "1.5"], ["--rotate", "90"]]) {
     assert.equal(args[args.indexOf(flag) + 1], value, `${flag} must be ${value}`);
   }
   assert.ok(args.includes("--uptodate"));
@@ -446,9 +471,29 @@ test("Orca STL transforms are applied to a mesh copy in Orca's order; BambuStudi
   assert.equal(result.isError, undefined, text(result));
   const args = await install.args();
   assert.equal(args.at(-1), box);
-  for (const [flag, value] of [["--scale", "2"], ["--rotate", "90"], ["--rotate-x", "90"], ["--rotate-y", "45"], ["--repetitions", "2"]]) {
+  for (const [flag, value] of [["--scale", "2"], ["--rotate", "90"], ["--rotate-x", "90"], ["--rotate-y", "45"], ["--clone-objects", "2"]]) {
     assert.equal(args[args.indexOf(flag) + 1], value, `${flag} must be ${value}`);
   }
+  assert.equal(args.includes("--repetitions"), false);
+});
+
+test("Bambu Studio copies STL with clone-objects but preserves selected 3MF repetitions", async t => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install);
+  let result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", repetitions: 2, slice_plate: 0 });
+  assert.equal(result.isError, undefined, text(result));
+  let args = await install.args();
+  assert.equal(args[args.indexOf("--clone-objects") + 1], "2");
+  assert.equal(args.includes("--repetitions"), false);
+  await install.resetCapture();
+  result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", repetitions: 2, clone_objects: "2" });
+  assert.equal(result.isError, true); await assertNotExecuted(install);
+  const project = path.join(install.root, "original.3mf");
+  await fs.writeFile(project, await zipBytes({ "3D/3dmodel.model": '<?xml version="1.0"?><model unit="millimeter"><resources/><build/></model>' }));
+  result = await call("slice_stl", { stl_path: project, bambu_model: "p1s", repetitions: 2, slice_plate: 1 });
+  assert.equal(result.isError, undefined, text(result));
+  args = await install.args();
+  assert.equal(args[args.indexOf("--repetitions") + 1], "2");
   assert.equal(args.includes("--clone-objects"), false);
 });
 
@@ -768,4 +813,13 @@ test("slice_stl returns Bambu Studio's result.json, warnings and errors included
   result = await slice();
   assert.match(text(result), /^Error: /);
   assert.equal(result.structuredContent.slicer_result, undefined);
+});
+
+test("unsupported slicers refuse pause_at_layers before running rather than ignoring them", async t => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install);
+  const result = await call('slice_stl', {stl_path: SAMPLE_STL, slicer_type: 'prusaslicer', pause_at_layers: [3]});
+  assert.equal(result.isError, true);
+  assert.match(text(result), /Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI/);
+  assert.equal(existsSync(path.join(install.root, "args.json")), false);
 });

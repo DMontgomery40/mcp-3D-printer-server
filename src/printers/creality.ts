@@ -1,5 +1,5 @@
 import type { AxiosInstance } from "axios";
-import { GenericPrinterImplementation, type GenericPrinterState, type SnapshotCandidate } from "./generic-base.js";
+import { GenericPrinterImplementation, type GenericPrinterState, type SnapshotCandidate, type CameraCandidate } from "./generic-base.js";
 import { KlipperImplementation, MACRO_TIMEOUT_MS } from "./klipper.js";
 import type { ConfirmHardware } from "../safety/confirmation.js";
 import type { CounterpartProgress, FilamentSlot, PrinterIdentity } from "../counterpart/contract.js";
@@ -73,6 +73,11 @@ export class CrealityImplementation extends GenericPrinterImplementation {
     return moonraker ? this.moonraker.snapshotCandidates(host, moonraker, "") : [];
   }
 
+  async cameraCandidates(host: string): Promise<CameraCandidate[]> {
+    const moonraker = await this.moonrakerPort(host);
+    return moonraker ? this.moonraker.cameraCandidates(host, moonraker, "") : [];
+  }
+
   async counterpartFilaments(host: string, port: string, apiKey: string): Promise<FilamentSlot[]> {
     const moonraker = await this.moonrakerPort(host);
     return moonraker ? this.moonraker.counterpartFilaments(host, moonraker, "") : super.counterpartFilaments(host, port, apiKey);
@@ -111,7 +116,7 @@ export class CrealityImplementation extends GenericPrinterImplementation {
     }
     const state = raw.trim().toLowerCase();
     if (IDLE_STATES.has(state)) return { state, ready: true };
-    if (FINISHED_STATES.has(state)) return { state, ready: true, finishedJob: JSON.stringify([state]) };
+    if (FINISHED_STATES.has(state)) return { state, ready: true };
     return { state, ready: false, reason: `state is ${state}` };
   }
 
@@ -217,4 +222,4 @@ export class CrealityImplementation extends GenericPrinterImplementation {
     
     return response.data;
   }
-} 
+}

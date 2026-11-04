@@ -1,7 +1,7 @@
 import fs from "fs";
 import FormData from "form-data";
 import { isAxiosError } from "axios";
-import { GenericPrinterImplementation, type GenericPrinterState, type HeaterComponent, type SnapshotCandidate } from "./generic-base.js";
+import { GenericPrinterImplementation, type GenericPrinterState, type HeaterComponent, type SnapshotCandidate, type CameraCandidate } from "./generic-base.js";
 import type { CounterpartProgress, PrinterIdentity } from "../counterpart/contract.js";
 import { nonEmptyText } from "../counterpart/contract.js";
 import { mapOctoPrint } from "../counterpart/progress.js";
@@ -55,20 +55,27 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
    * src/octoprint/plugins/classicwebcam/__init__.py; checked on 1.8.7 and 1.11.2.
    */
   async snapshotCandidates(host: string, port: string, apiKey: string): Promise<SnapshotCandidate[]> {
+    return (await this.cameraCandidates(host, port, apiKey)).filter(candidate => candidate.transport === "http-snapshot");
+  }
+
+  async cameraCandidates(host: string, port: string, apiKey: string): Promise<CameraCandidate[]> {
     const settings = (await this.apiClient.get(`http://${host}:${port}/api/settings`, { headers: { "X-Api-Key": apiKey } })).data;
-    const candidates: SnapshotCandidate[] = [];
+    const candidates: CameraCandidate[] = [];
     if (settings?.webcam?.webcamEnabled !== false) {
+      // The settings API maps webcam.stream to streamUrl. Classic Webcam on
+      // 1.9+ exposes its own stream field; only configured URLs are used.
       const configured = [
-        settings?.plugins?.classicwebcam?.snapshot,
-        settings?.webcam?.snapshotUrl,
-        ...(Array.isArray(settings?.webcam?.webcams) ? settings.webcam.webcams.map((webcam: any) => webcam?.compat?.snapshot) : []),
+        settings?.plugins?.classicwebcam,
+        {stream: settings?.webcam?.streamUrl, snapshot: settings?.webcam?.snapshotUrl},
+        ...(Array.isArray(settings?.webcam?.webcams) ? settings.webcam.webcams.map((webcam: any) => webcam?.compat) : []),
       ];
-      for (const url of configured) {
-        const text = nonEmptyText(url);
-        if (text) candidates.push({ url: text, source: "octoprint-settings", configured: true });
+      for (const camera of configured) {
+        const stream = nonEmptyText(camera?.stream), snapshot = nonEmptyText(camera?.snapshot);
+        if (stream) candidates.push({url: stream, snapshotUrl: snapshot, source: "octoprint-settings", configured: true, transport: "http-mjpeg"});
+        if (snapshot) candidates.push({url: snapshot, source: "octoprint-settings", configured: true, transport: "http-snapshot"});
       }
     }
-    candidates.push({ url: `http://${host}/webcam/?action=snapshot`, source: "octoprint-fallback", configured: false });
+    candidates.push({ url: `http://${host}/webcam/?action=snapshot`, source: "octoprint-fallback", configured: false, transport: "http-snapshot" });
     return candidates;
   }
 
