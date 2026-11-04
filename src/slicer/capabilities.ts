@@ -5,7 +5,8 @@
  *
  * The Bambu-compatible CLI route (Bambu Studio, FULU OrcaSlicer-bambulab, or OrcaSlicer given a
  * Bambu model) takes all three. Generic OrcaSlicer takes the support keys over its process profile.
- * PrusaSlicer, Slic3r and Cura take none of them through this server.
+ * PrusaSlicer, Slic3r and Cura take none of them through this server. For a Bambu printer on OrcaSlicer, the
+ * Bambu route needs the call's bambu_model; clients that report these to the person pass it.
  */
 export interface SliceCapabilities {
   supports: boolean;

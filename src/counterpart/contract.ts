@@ -63,7 +63,8 @@ export interface CounterpartCapabilities {
   cancel: boolean;
   print3mf: boolean;
   gcode: boolean;
-  /** What slice_stl can apply with this server's slicer for this printer (src/slicer/capabilities.ts). */
+  /** What slice_stl can apply with this server's slicer for this printer (src/slicer/capabilities.ts). For a Bambu printer on
+   *  OrcaSlicer this assumes the call passes the printer's bambu_model, as Counterpart does; without one, OrcaSlicer slices generically. */
   slicing?: { supports: boolean; copies: boolean; orient: boolean };
 }
 

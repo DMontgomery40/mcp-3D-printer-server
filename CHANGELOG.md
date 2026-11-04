@@ -4,7 +4,7 @@
 
 ### Added
 
-- `counterpart_printer_info` reports `capabilities.slicing`: whether `slice_stl` can apply supports, copies (`repetitions`) and auto-orient with the slicer this server uses for that printer. The Bambu-compatible CLI route takes all three, generic OrcaSlicer takes supports, and PrusaSlicer, Slic3r and Cura take none. Clients such as Counterpart offer those choices from this instead of knowing which slicers accept what. Same field as bambu-printer-mcp 1.1.58.
+- `counterpart_printer_info` reports `capabilities.slicing`: whether `slice_stl` can apply supports, copies (`repetitions`) and auto-orient with the slicer this server uses for that printer. The Bambu-compatible CLI route takes all three, generic OrcaSlicer takes supports, and PrusaSlicer, Slic3r and Cura take none. For a Bambu printer on OrcaSlicer, that assumes the call passes the printer's `bambu_model`. Clients such as Counterpart offer those choices from this instead of knowing which slicers accept what. Same field as bambu-printer-mcp 1.1.58. Checked with mocked transports only.
 
 ### Changed
 
