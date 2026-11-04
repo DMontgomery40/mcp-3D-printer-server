@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.31] – 2026-11-04
+
+### Added
+
+- A printer refusal on `print_3mf` carries a stable `code` in its structured error: `printer-command-rejected` when the printer refuses the print command itself (Bambu HMS 0500-0500-0001-0007, MQTT command verification; the file is on the printer, nothing is printing), and `printer-not-ready` when the printer isn't in a state that can start a print. The message and suggestion are unchanged. Clients such as Counterpart can act on the code instead of matching the wording, which changes with printers and firmware. Checked with mocked MQTT only. Same change as bambu-printer-mcp 1.1.57.
+
 ## [1.2.30] – 2026-11-04
 
 ### Added
