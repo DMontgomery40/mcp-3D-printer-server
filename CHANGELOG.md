@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Every tool now carries the four MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) from one table, `src/tool-annotations.ts`, so clients can tell reads from actions without parsing descriptions. Before, 7 of 45 tools had partial annotations. Destructive means the tool may end or replace something that exists: `cancel_print`, `upload_gcode` (same file name), `save_template`, `counterpart_print_route` with a route, and the pass-through calls `fulu_bambu_network_rpc`, `blender_mcp_call` and `fusion_mcp_call`. Starting a print and heating are marked additive, matching the no-confirmation decision. Annotations are hints for clients; every safety check still applies. A test lists the tools over stdio and fails for any tool without all four.
+
 ### Fixed
 
 - Resume a Bambu job that the printer paused itself. A P1S paused by Pause or by a `pause_at_layers` stop reports `print_error` 0300_8013 ("paused by the user" / "paused by the pause command in the file"), and Resume refused it as a print error, so a paused job could only be resumed at the printer. The notice is excused only for Resume, only while the printer reports PAUSE; any other print error still refuses, and starting a job still needs no error. Ported from bambu-printer-mcp.

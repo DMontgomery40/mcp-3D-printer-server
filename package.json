@@ -39,6 +39,8 @@
         "dist/slicer",
         "dist/stl",
         "dist/test",
+        "dist/tool-annotations.d.ts",
+        "dist/tool-annotations.js",
         "dist/types.d.ts",
         "dist/types.js",
         "dist/ensure-web-crypto.d.ts",
