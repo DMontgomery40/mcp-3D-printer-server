@@ -3,6 +3,7 @@
  * adapters supply firmware reads; this module turns them into the shared
  * results, detects capabilities, and fetches camera snapshots.
  */
+import { sliceCapabilities } from "../slicer/capabilities.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isAxiosError, type AxiosInstance } from "axios";
@@ -132,6 +133,7 @@ export class CounterpartService {
       capabilities = {
         progress: true, layers: true, camera: overrideSnapshotUrl() ? "http-snapshot" : "none", filaments: "ams",
         pause: true, resume: true, cancel: true, print3mf: true, gcode: true,
+        slicing: sliceCapabilities(this.bambuProfileSource().slicerType ?? "bambustudio", true),
       };
     } else {
       const { host, port, apiKey } = target;
@@ -144,6 +146,7 @@ export class CounterpartService {
       capabilities = {
         progress: true, layers, camera, filaments: "single",
         pause: pauseResume, resume: pauseResume, cancel: true, print3mf: false, gcode: true,
+        slicing: sliceCapabilities(this.bambuProfileSource().slicerType ?? "prusaslicer", false),
       };
     }
     const streamCandidates = await this.cameraCandidates(target).catch(() => []);

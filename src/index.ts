@@ -38,6 +38,7 @@ import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOver
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { PRINT_QUALITY_PROPERTIES, withPrintQuality } from "./slicer/print-quality.js";
 import { PrinterRefusal } from "./refusal.js";
+import { isBambuProjectSlicer, usesBambuCli } from "./slicer/capabilities.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
 import { annotateTools } from "./tool-annotations.js";
@@ -153,9 +154,6 @@ function normalizeSlicerType(rawValue: string | undefined): SlicerType {
   return resolved;
 }
 
-function isBambuProjectSlicer(slicerType: SlicerType): boolean {
-  return slicerType === "orcaslicer-bambulab" || slicerType === "bambustudio";
-}
 
 function firstExistingPath(candidates: string[]): string | undefined {
   return candidates.find((candidate) => fs.existsSync(candidate));
@@ -915,9 +913,13 @@ class ThreeDPrinterMCPServer {
       typeof args.bambu_model === "string" && args.bambu_model.trim() ? args.bambu_model : undefined;
     // Generic OrcaSlicer keeps its user-supplied machine profile unless the
     // call explicitly targets a Bambu model.
-    const bambuCli = isBambuProjectSlicer(slicerType) || (slicerType === "orcaslicer" && explicitModel !== undefined);
+    const bambuCli = usesBambuCli(slicerType, explicitModel !== undefined);
     if (!bambuCli && parsePauseLayers(args.pause_at_layers)) {
       throw new Error(`Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI, not ${slicerType}.`);
+    }
+    // Copies only come from the Bambu-compatible CLI; elsewhere one copy would be sliced without a word.
+    if (!bambuCli && args.repetitions !== undefined && Number(args.repetitions) > 1) {
+      throw new Error(`Copies (repetitions) need the Bambu Studio or OrcaSlicer CLI with a Bambu model, not ${slicerType}; nothing was sliced.`);
     }
 
     let printerPreset: string | undefined;

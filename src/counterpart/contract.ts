@@ -63,6 +63,8 @@ export interface CounterpartCapabilities {
   cancel: boolean;
   print3mf: boolean;
   gcode: boolean;
+  /** What slice_stl can apply with this server's slicer for this printer (src/slicer/capabilities.ts). */
+  slicing?: { supports: boolean; copies: boolean; orient: boolean };
 }
 
 export interface PrinterIdentity {
@@ -153,6 +155,11 @@ export const PRINTER_INFO_OUTPUT_SCHEMA = {
         cancel: { type: "boolean" },
         print3mf: { type: "boolean" },
         gcode: { type: "boolean" },
+        slicing: {
+          type: "object",
+          required: ["supports", "copies", "orient"],
+          properties: { supports: { type: "boolean" }, copies: { type: "boolean" }, orient: { type: "boolean" } },
+        },
       },
     },
   },
