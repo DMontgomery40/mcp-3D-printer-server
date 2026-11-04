@@ -738,6 +738,9 @@ if (args.includes("--outputdir")) {
   args = JSON.parse(await fs.readFile(capture, "utf8"));
   assert.deepEqual(args.slice(args.indexOf("--layer-height"), args.indexOf("--layer-height") + 6),
     ["--layer-height", "0.42", "--perimeters", "6", "--fill-density", "40%"], "draft scales with a 0.6 mm nozzle");
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", repetitions: 3 });
+  assert.equal(result.isError, true, "PrusaSlicer would slice one copy without a word");
+  assert.match(text(result), /Copies \(repetitions\) need the Bambu Studio or OrcaSlicer CLI/);
   result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", quality: "standard", strength: "standard" });
   assert.equal(result.isError, undefined, text(result));
   assert.equal(JSON.parse(await fs.readFile(capture, "utf8")).includes("--layer-height"), false, "standard leaves the preset alone");
