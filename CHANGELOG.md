@@ -4,7 +4,7 @@
 
 ### Added
 
-- Every tool now carries the four MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) from one table, `src/tool-annotations.ts`, so clients can tell reads from actions without parsing descriptions. Before, 7 of 45 tools had partial annotations. Destructive means the tool may end or replace something that exists: `cancel_print`, `upload_gcode` (same file name), `save_template`, `counterpart_print_route` with a route, and the pass-through calls `fulu_bambu_network_rpc`, `blender_mcp_call` and `fusion_mcp_call`. Starting a print and heating are marked additive, matching the no-confirmation decision. Annotations are hints for clients; every safety check still applies. A test lists the tools over stdio and fails for any tool without all four.
+- Every tool now carries the four MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) from one table, `src/tool-annotations.ts`, so clients can tell reads from actions without parsing descriptions. Before, 7 of 45 tools had partial annotations. Destructive means the tool may end or replace something that exists: `cancel_print`, `upload_gcode` (same file name), `camera_snapshot` with `save_path`, `save_template`, `counterpart_print_route` with a route, and the pass-through calls `fulu_bambu_network_rpc`, `blender_mcp_call` and `fusion_mcp_call`. Starting a print and heating are marked additive, matching the no-confirmation decision. Annotations are hints for clients; every safety check still applies. A test lists the tools over stdio and fails for any tool without all four.
 
 ### Fixed
 

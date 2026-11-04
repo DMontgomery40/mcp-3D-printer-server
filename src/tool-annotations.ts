@@ -27,7 +27,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   list_printer_files: read(true),
   counterpart_printer_info: read(true),
   counterpart_print_progress: read(true),
-  camera_snapshot: read(true),
+  camera_snapshot: write(true, false, true), // save_path writes, and replaces, a file of the caller's choosing
   camera_frame: read(true),
   get_printer_filaments: read(true),
 
@@ -59,7 +59,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   slice_with_template: write(false, false, false),
   list_templates: read(false),
   save_template: write(true, true, false), // replaces a template of the same name
-  get_slice_settings: read(false),
+  get_slice_settings: write(false, true, false), // a 3MF's settings are extracted to a file in TEMP_DIR
   confirm_temperatures: read(false),
   inspect_print_file: read(false),
 
@@ -72,7 +72,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   blender_mcp_call: write(true, false, true), // any Blender MCP tool
   blender_mcp_export_stl: write(false, false, true), // never overwrites; leaves the scene unchanged
   blender_mcp_edit_model: write(false, false, true),
-  fusion_mcp_status: read(true),
+  fusion_mcp_status: write(false, true, true), // launch: true opens Fusion
   fusion_mcp_call: write(true, false, true), // any Fusion tool, execute_code included
   fusion_mcp_new_design: write(false, false, true),
   fusion_mcp_export: write(false, false, true), // never overwrites files

@@ -47,20 +47,23 @@ for (const type of ["bambu", "octoprint"]) {
 test("annotations follow what each tool does", () => {
   const is = (name, expected) => assert.deepEqual(
     Object.fromEntries(Object.entries(expected).map(([hint]) => [hint, TOOL_ANNOTATIONS[name][hint]])), expected, name);
-  for (const name of ["get_printer_status", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "check_fulu_orca_setup", "blender_mcp_status", "fusion_mcp_status"]) {
+  for (const name of ["get_printer_status", "counterpart_print_progress", "get_printer_filaments", "check_fulu_orca_setup", "blender_mcp_status"]) {
     is(name, { readOnlyHint: true, openWorldHint: true });
   }
-  for (const name of ["inspect_print_file", "confirm_temperatures", "get_stl_info", "list_templates", "get_slice_settings"]) {
+  for (const name of ["inspect_print_file", "confirm_temperatures", "get_stl_info", "list_templates"]) {
     is(name, { readOnlyHint: true, openWorldHint: false });
   }
   // Ending a job, replacing a file or setting, and arbitrary remote calls are destructive.
-  for (const name of ["cancel_print", "upload_gcode", "save_template", "counterpart_print_route", "fulu_bambu_network_rpc", "blender_mcp_call", "fusion_mcp_call"]) {
+  for (const name of ["cancel_print", "upload_gcode", "camera_snapshot", "save_template", "counterpart_print_route", "fulu_bambu_network_rpc", "blender_mcp_call", "fusion_mcp_call"]) {
     is(name, { readOnlyHint: false, destructiveHint: true });
   }
   // Starting a print and heating are additive (no confirmation prompt by maintainer decision); pause and resume too.
   for (const name of ["print_3mf", "start_print", "process_and_print_stl", "set_printer_temperature", "pause_print", "resume_print"]) {
     is(name, { readOnlyHint: false, destructiveHint: false, openWorldHint: true });
   }
+  // An optional argument that writes a file or opens an application makes the tool not read-only.
+  is("get_slice_settings", { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+  is("fusion_mcp_status", { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
   // Local STL edits and slices write a new file each call.
   for (const name of ["scale_stl", "lay_flat", "slice_stl", "generate_stl_visualization"]) {
     is(name, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
