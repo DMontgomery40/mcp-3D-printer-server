@@ -79,7 +79,7 @@ import { uniquePrintName, withPrinterOperation, withPrintSnapshot } from "./safe
 import { checkedFile } from "./printers/bambu.js";
 import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
 import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "./safety/expected-peaks.js";
-import { DESIGN_PROMPTS, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_URI, SERVER_INSTRUCTIONS } from "./design-guidance.js";
+import { DESIGN_PROMPTS, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_RESOURCE, FDM_CAPABILITY_URI, SERVER_INSTRUCTIONS } from "./design-guidance.js";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -1227,12 +1227,7 @@ class ThreeDPrinterMCPServer {
             mimeType: "application/json",
             description: "List of files available on the 3D printer"
           },
-          {
-            uri: FDM_CAPABILITY_URI,
-            name: "FDM bridge and overhang guidance",
-            mimeType: "text/markdown",
-            description: "Planning bands and evidence for bridges and overhangs, for when one decides the plan and no measured capability is available"
-          }
+          FDM_CAPABILITY_RESOURCE
         ],
         templates: [
           {
@@ -1258,7 +1253,7 @@ class ThreeDPrinterMCPServer {
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const uri = request.params.uri;
       if (uri === FDM_CAPABILITY_URI) {
-        return { contents: [{ uri, mimeType: "text/markdown", text: FDM_CAPABILITY_GUIDANCE }] };
+        return { contents: [{ uri, mimeType: FDM_CAPABILITY_RESOURCE.mimeType, text: FDM_CAPABILITY_GUIDANCE }] };
       }
       const match = uri.match(/^printer:\/\/([^\/]+)\/(.+)$/);
 

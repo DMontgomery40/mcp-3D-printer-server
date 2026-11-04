@@ -46,8 +46,10 @@ test("the FDM design guidance is served as MCP prompts, a resource and the serve
 
   // Any client, not only Counterpart, learns where the guidance is.
   const instructions = client.getInstructions() ?? "";
-  for (const prompt of DESIGN_PROMPTS) assert.match(instructions, new RegExp(prompt.name));
-  assert.match(instructions, new RegExp(FDM_CAPABILITY_URI));
+  for (const prompt of DESIGN_PROMPTS) assert.ok(instructions.includes(prompt.name), prompt.name);
+  assert.ok(instructions.includes(FDM_CAPABILITY_URI));
+  assert.ok(instructions.includes("sufficiently specific measured capability"), "the pack's own condition for the capability reference");
+  assert.ok(instructions.includes("before presenting the manufacturing recommendation"), "the review comes before the recommendation");
 });
 
 test("the guidance is the prompt pack's own words, with no numeric bans added", () => {
