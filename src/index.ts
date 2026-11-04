@@ -3347,7 +3347,8 @@ class ThreeDPrinterMCPServer {
         console.error(`Error calling tool ${name}:`, error);
         
         const errorMessage = error instanceof Error ? error.message : String(error);
-        const structuredError = this.toStructuredToolError(name, errorMessage, error);
+        // A printer refusal adds its stable code (src/refusal.ts); the message and suggestion stay as they were.
+        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}) };
         
         return {
           content: [
@@ -3520,16 +3521,6 @@ class ThreeDPrinterMCPServer {
   }
 
   private toStructuredToolError(tool: string, message: string, error?: unknown): StructuredToolError {
-    if (error instanceof PrinterRefusal) {
-      return {
-        status: "error",
-        retryable: false,
-        suggestion: "The printer refused this and nothing is printing. Retrying unchanged repeats the refusal: fix the printer's state or settings named in the error first.",
-        message,
-        tool,
-        code: error.code,
-      };
-    }
     // Slicer failures are local profile/slicer problems, never printer connectivity.
     if (error instanceof SlicerError) {
       return {
