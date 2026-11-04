@@ -124,7 +124,7 @@ test("a job paused with its own pause notice (0300_8013) resumes; any other prin
   const other = await pausedJob(t, { confirm: async () => false });
   other.report = { ...other.report, print_error: 0x0300400c };
   await assert.rejects(other.printer.resumeJob(host, "8883", apiKey), /print error/);
-  assert.deepEqual(other.published(), [], "a filament or hardware pause sends nothing");
+  assert.deepEqual(other.published(), [], "any other print error (e.g. cancel, 0300_400C) sends nothing");
 });
 
 /** The same printer, as a new server process sees it after a restart: same storage, same paused report, same record folder. */

@@ -307,7 +307,7 @@ test("a paused job's own pause notice does not block Resume, and nothing else is
   assert.equal(isPauseNotice({ gcode_state: "PAUSE", print_error: "50364435" }, false), true);
   assert.equal(isPauseNotice({ gcode_state: "PAUSE", print_error: PAUSE_NOTICE }, true), false, "starting a new job still needs no error");
   assert.equal(isPauseNotice({ gcode_state: "RUNNING", print_error: PAUSE_NOTICE }, false), false);
-  assert.equal(isPauseNotice({ gcode_state: "PAUSE", print_error: 0x0300400c }, false), false, "a filament or hardware pause is still an error");
+  assert.equal(isPauseNotice({ gcode_state: "PAUSE", print_error: 0x0300400c }, false), false, "any other print error (e.g. cancel, 0300_400C) is still an error");
   const paused = fresh({ gcode_state: "PAUSE", print_error: PAUSE_NOTICE });
   assert.doesNotThrow(() => check(paused, req({ requireIdle: false })));
   assert.throws(() => check(paused, req()), /not safely idle|print error/);
