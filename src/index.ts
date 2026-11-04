@@ -1038,6 +1038,8 @@ class ThreeDPrinterMCPServer {
     args: Record<string, any>; host: string; serial: string; token: string; threeMFPath: string;
     model: string; nozzleDiameters?: number[]; bedType: string; connectionType: string;
     ams: { useAMS: boolean; amsMapping?: number[]; amsSlots?: number[] };
+    /** The zero-based plate print_3mf validated: inspected and dispatched as the same plate. */
+    plateIndex: number;
   }): Promise<Record<string, unknown>> {
     const { args, model, bedType, connectionType } = options;
     const devId = options.serial.trim();
@@ -1049,7 +1051,7 @@ class ThreeDPrinterMCPServer {
     const isLocalBridgePrint = connectionType === "lan";
     const bridgePrintMethod = isLocalBridgePrint ? "start_local_print" : "start_print";
     const bridgeMethod = `net.${bridgePrintMethod}`;
-    const plateIndex = 0;
+    const { plateIndex } = options;
     const threeMfFilename = path.basename(options.threeMFPath);
     const projectName = threeMfFilename.replace(/\.3mf$/i, "");
     const presetName = `${projectName}_plate_${plateIndex + 1}`;
@@ -3043,7 +3045,7 @@ class ThreeDPrinterMCPServer {
             // will actually launch. Ready-to-print archives ignore it.
             const pauseLayers = parsePauseLayers(args?.pause_at_layers);
             if (!shouldAutoSlice && pauseLayers) {
-              const gcode = await readPlateGcode(threeMFPath, 1);
+              const gcode = await readPlateGcode(threeMFPath, printPlate + 1);
               const placed = gcode ? pausedLayers(gcode, machinePauseGcode(gcode)) : [];
               const missing = pauseLayers.filter(layer => !placed.includes(layer));
               if (missing.length) throw new Error(`This 3MF is already sliced without a pause before layer ${missing.join(", ")}. Slice it again with pause_at_layers (slice_stl), or add the pause in Bambu Studio or OrcaSlicer.`);
@@ -3133,7 +3135,7 @@ class ThreeDPrinterMCPServer {
               result = await this.print3mfViaBambuNetwork({
                 args: args as Record<string, any>, host, serial: bambuSerial, token: bambuToken, threeMFPath,
                 model: printModel, nozzleDiameters: requestedPrintNozzles, bedType: printBedType,
-                connectionType: printConnection.type,
+                connectionType: printConnection.type, plateIndex: printPlate,
                 ams: { useAMS: printOptions.useAMS, amsMapping: printOptions.amsMapping, amsSlots: printOptions.amsSlots },
               });
               break;

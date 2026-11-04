@@ -98,18 +98,20 @@ test("bambu-printer-mcp's native and Bambu Connect routes are refused, not sent 
   }
 });
 
-async function twoFilamentProject(directory) {
+async function twoFilamentProject(directory, plates = 1) {
   const file = path.join(directory, "two.3mf");
   const zip = new JSZip();
+  // Only the last plate carries G-code, so printing any other plate cannot pass inspection.
+  const plate = plates;
   zip.file("3D/3dmodel.model", '<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices/><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>');
-  zip.file("Metadata/plate_1.gcode", "; printer_model = Bambu Lab P1S\n; nozzle_diameter = 0.4\n; filament_type = PLA;PETG\n; filament_colour = #FFFFFF;#000000\n; curr_bed_type = Textured PEI Plate\nM104 S240\nM140 S70\nG1 X10 Y10 Z1\n");
-  zip.file("Metadata/plate_1.json", JSON.stringify({ filament_ids: [1] }));
+  zip.file(`Metadata/plate_${plate}.gcode`, "; printer_model = Bambu Lab P1S\n; nozzle_diameter = 0.4\n; filament_type = PLA;PETG\n; filament_colour = #FFFFFF;#000000\n; curr_bed_type = Textured PEI Plate\nM104 S240\nM140 S70\nG1 X10 Y10 Z1\n");
+  zip.file(`Metadata/plate_${plate}.json`, JSON.stringify({ filament_ids: [1] }));
   zip.file("Metadata/project_settings.config", JSON.stringify({ printer_model: "p1s", nozzle_diameter: ["0.4"], filament_type: ["PLA", "PETG"], filament_colour: ["#FFFFFF", "#000000"], filament_ids: ["GFL99", "GFG99"], curr_bed_type: "Textured PEI Plate" }));
   fs.writeFileSync(file, await zip.generateAsync({ type: "nodebuffer" }));
   return file;
 }
 
-test("print_3mf on FULU's LAN route sends the checked job with Bambu Studio's AMS fields, never plain MQTT", { timeout: 120_000 }, async (t) => {
+for (const plateIndex of [0, 1]) test(`print_3mf on FULU's LAN route sends the checked job for plate ${plateIndex + 1} with Bambu Studio's AMS fields, never plain MQTT`, { timeout: 120_000 }, async (t) => {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-print-"));
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   const log = path.join(work, "host.jsonl");
@@ -124,8 +126,9 @@ test("print_3mf on FULU's LAN route sends the checked job with Bambu Studio's AM
     BAMBU_NETWORK_CONFIG_DIR: path.join(work, "config"), PJARCZAK_BAMBU_PLUGIN_DIR: path.join(work, "plugins"), FAKE_FULU_LOG: log,
     BAMBU_DEFAULT_CONNECTION_MODE: "bambu_network", BAMBU_DEFAULT_CONNECTION_TYPE: "lan",
   }, { preload });
-  const file = await twoFilamentProject(work);
-  const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file, ams_slots: [3], use_ams: true } }, undefined, { timeout: 110_000 });
+  // Codex review on #52: the FULU route used to inspect and dispatch plate 1 whatever plate_index said.
+  const file = await twoFilamentProject(work, plateIndex + 1);
+  const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file, ams_slots: [3], use_ams: true, plate_index: plateIndex } }, undefined, { timeout: 110_000 });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   const printed = JSON.parse(result.content[0].text);
   assert.equal(printed.bridgeMethod, "net.start_local_print");
@@ -148,7 +151,7 @@ test("print_3mf on FULU's LAN route sends the checked job with Bambu Studio's AM
     { ams: 3, targetColor: "000000FF", filamentId: "GFG99", filamentType: "PETG", sourceColor: "#000000FF" },
   ]);
   assert.equal(params.connection_type, "lan");
-  assert.equal(params.plate_index, 1);
+  assert.equal(params.plate_index, plateIndex + 1);
 });
 
 test("print_3mf on FULU's route still refuses a tray of the wrong material before the bridge starts", async (t) => {
@@ -177,6 +180,20 @@ test("print_3mf refuses a pre-sliced file missing requested layer pauses before 
   const file = path.join(directory, 'missing-pause.3mf');
   fs.writeFileSync(file, await zip.generateAsync({type: 'nodebuffer'}));
   const reply = await client.callTool({name: 'print_3mf', arguments: {three_mf_path: file, bambu_model: 'p1s', pause_at_layers: [3]}});
+  assert.equal(reply.isError, true);
+  assert.match(reply.content[0].text, /already sliced without a pause before layer 3/);
+});
+
+test("print_3mf checks requested pauses on the plate it prints, not plate 1", async t => {
+  // Codex review on #52: plate 1's pause used to satisfy a request to print plate 2.
+  const { client, directory } = await server(t);
+  const zip = new JSZip();
+  const layers = '; Z_HEIGHT: 0.2\nG1\n; Z_HEIGHT: 0.4\nG1\n; Z_HEIGHT: 0.6\n';
+  zip.file('Metadata/plate_1.gcode', layers + '; PAUSE_PRINTING\nG1\n');
+  zip.file('Metadata/plate_2.gcode', layers + 'G1\n');
+  const file = path.join(directory, 'two-plates.3mf');
+  fs.writeFileSync(file, await zip.generateAsync({type: 'nodebuffer'}));
+  const reply = await client.callTool({name: 'print_3mf', arguments: {three_mf_path: file, bambu_model: 'p1s', pause_at_layers: [3], plate_index: 1}});
   assert.equal(reply.isError, true);
   assert.match(reply.content[0].text, /already sliced without a pause before layer 3/);
 });

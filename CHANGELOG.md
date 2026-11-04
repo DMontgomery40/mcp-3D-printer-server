@@ -25,6 +25,8 @@
 
 - Resolve H2C first-layer temperature tables by the selected filament index and extruder variant instead of treating every variant row as a filament. Preserve unique bindings, header agreement and independent base/offset ceilings. Ports the correction reported by [Steve Pritchard (sjpritchard)](https://github.com/DMontgomery40/bambu-printer-mcp/issues/81); an unchanged Studio 2.9 H2C slice passes offline inspection after reproducing the failure.
 
+- `print_3mf` with a `plate_index` prints, inspects and checks pauses on that plate on every route: FULU's BambuNetwork route used to inspect and dispatch plate 1, and a pre-sliced file's requested pauses were checked against plate 1. Tested with the fake FULU host; no printer was contacted.
+
 ### Added
 
 - `slice_stl`, `slice_with_template` and `print_3mf` accept `pause_at_layers`, matching bambu-printer-mcp. Bambu Studio and Bambu-compatible OrcaSlicer CLIs place the printer's own pause before each requested 1-based layer (2 or greater), using a first slice to find exact heights. Existing project pauses and custom G-code are preserved. Output must contain every requested pause; already sliced files missing one are refused before dispatch. Other slicers refuse the option rather than ignoring it. Evidence: fake slicer/MCP tests only; no physical print or real slicer was run in this port.
