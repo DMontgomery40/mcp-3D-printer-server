@@ -16,7 +16,7 @@ An MCP server that connects Claude, Codex, and other MCP clients to 3D printers 
 
 **[Browse the documentation site](https://dmontgomery40.github.io/mcp-3D-printer-server/)** for searchable setup guides, per-printer credentials, slicing, and the full tool reference. It is generated from this README and the docs folder.
 
-**Only print on Bambu Lab printers?** [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) is a Bambu-focused fork of this project with more Bambu features, including AMS inventory and matching, camera snapshots, X2D support, and a Claude Desktop extension.
+**Only print on Bambu Lab printers?** [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) is a Bambu-focused fork of this project with more Bambu features, including AMS auto-matching, Bambu camera snapshots and streams, X2D native printing, Bambu Connect, and a Claude Desktop extension. Both servers read the AMS, choose trays, pause, resume, stop, and print through FULU's authenticated BambuNetwork route.
 
 Built with help from our [contributors](./CONTRIBUTORS.md). Thank you to everyone sharing fixes, careful bug reports, and real printer testing!
 
@@ -64,9 +64,7 @@ Offer these optional extras, and set them up only if I choose them:
   FULU OrcaSlicer-bambulab, Bambu Studio, or CuraEngine before suggesting
   an install.
 Configure executables in the server environment. Do not enable
-MCP_ALLOW_EXECUTABLE_ARG. Leave print confirmation on: do not set
-PRINT_REQUIRE_CONFIRMATION=0 or BAMBU_REQUIRE_CONFIRMATION=0 unless I ask
-for a headless setup.
+MCP_ALLOW_EXECUTABLE_ARG.
 
 Verify that the MCP initializes, lists its tools, and reads printer status.
 Do not start a print or change printer settings, including temperatures, as
@@ -105,9 +103,9 @@ This server provides the printer, slicing, and mesh tools. Web search, photos, a
 ### Slice and print
 
 - **"Print this in PETG."** *(with an STL)*\
-  It slices with the PETG filament profile you've set up and checks the job's peak temperatures. The server then asks you to confirm before the print starts.
+  It slices with the PETG filament profile you've set up and checks the job's peak temperatures and the printer's state before the print starts.
 - **"Print the bracket I sliced last night on the Bambu."**\
-  It checks the plate's model, nozzle, bed type, materials, and temperatures against the live printer, then asks you to confirm before it uploads and starts the job.
+  It checks the plate's model, nozzle, bed type, materials, and temperatures against the live printer before it uploads and starts the job.
 - **"Send benchy.gcode to the Klipper printer, but don't start it yet."**\
   It uploads the file through Moonraker so you can start it later.
 
@@ -134,7 +132,7 @@ This server provides the printer, slicing, and mesh tools. Web search, photos, a
 
 ## What's new
 
-See the [changelog](./CHANGELOG.md) for versioned changes. The next release brings the print safety gate to every printer backend: a human confirms every print start and positive heating command, and the server checks the exact G-code against hardware and material ceilings. It also adds Bambu-compatible CLI slicing with resolved machine presets and a template registry, `blender_mcp_export_stl` for verified STL export from Blender, and this documentation site. Release 1.2.9 fixes Bambu FTPS uploads that failed with "Premature close" ([#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22)), adds standard Blender MCP discovery, forwarding, and verified STL edits, requires the Bambu printer model for raw print starts, and isolates each server's scratch files. Separately, [#20](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/20) and [#21](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/21) made per-call executable selectors, such as a slicer path or bridge command, require an explicit opt-in.
+See the [changelog](./CHANGELOG.md) for versioned changes. The next release brings the print safety gate to every printer backend: the server checks the exact G-code against hardware and material ceilings. It also adds Bambu-compatible CLI slicing with resolved machine presets and a template registry, `blender_mcp_export_stl` for verified STL export from Blender, and this documentation site. Release 1.2.9 fixes Bambu FTPS uploads that failed with "Premature close" ([#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22)), adds standard Blender MCP discovery, forwarding, and verified STL edits, requires the Bambu printer model for raw print starts, and isolates each server's scratch files. Separately, [#20](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/20) and [#21](https://github.com/DMontgomery40/mcp-3D-printer-server/pull/21) made per-call executable selectors, such as a slicer path or bridge command, require an explicit opt-in.
 
 </details>
 
@@ -193,9 +191,9 @@ What each backend reads and sends differs. See [printer backend setup](https://g
 
 ## FULU and open-source printing
 
-[FULU OrcaSlicer-bambulab](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) is a first-class slicer target for Bambu Lab projects (`SLICER_TYPE=orcaslicer-bambulab`; aliases include `fulu-orca` and `orca-studio`), and the default slicer when `PRINTER_TYPE=bambu` and no slicer is configured. `slice_stl` and `print_3mf` auto-slicing use its project command line, and `check_fulu_orca_setup` inspects the install and runtime payload.
+[FULU OrcaSlicer-bambulab](https://github.com/FULU-Foundation/OrcaSlicer-bambulab) is a first-class slicer target for Bambu Lab projects (`SLICER_TYPE=orcaslicer-bambulab`; aliases include `fulu-orca` and `orca-studio`). Choose it with `SLICER_TYPE=orcaslicer-bambulab`: Bambu printers default to Bambu Studio, because FULU v1.0.0's command line segfaults on every slice until [FULU #56](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/56) and [#57](https://github.com/FULU-Foundation/OrcaSlicer-bambulab/pull/57) are released. `slice_stl` and `print_3mf` auto-slicing use its project command line, and `check_fulu_orca_setup` inspects the install and runtime payload.
 
-The optional FULU **BambuNetwork bridge** is a separate runtime. `fulu_bambu_network_rpc` can probe it and send guarded RPC calls, but the server never switches a print from its local MQTT and FTPS path to BambuNetwork or the cloud on its own.
+The optional FULU **BambuNetwork bridge** is a separate runtime. With `BAMBU_DEFAULT_CONNECTION_MODE=bambu_network` (or `connection_mode: "bambu_network"`), `print_3mf`, `cancel_print`, `pause_print` and `resume_print` go through it: the plug-in's authenticated local-network session (`connection_type: "lan"`), which a P1S on authorization firmware accepts without Developer Mode, or Bambu Cloud (`"cloud"`). Every print still passes the same inspection and fresh-state checks first. `counterpart_print_route` reads and changes the route. The server never switches routes on its own; `fulu_bambu_network_rpc` probes the bridge and refuses raw print methods.
 
 **[Follow the FULU guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md)** for platform runtime setup, bridge probes, and the current macOS and Windows testing status.
 
@@ -211,10 +209,11 @@ The optional FULU **BambuNetwork bridge** is a separate runtime. `fulu_bambu_net
 - Printer status, file listing, G-code upload from inline content or a local path, starting a stored file, pausing, resuming, cancelling a job, and setting bed or nozzle temperatures
 - The `counterpart/1` tools shared with [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp): one progress shape for every firmware (state, job, progress, time left, layers, temperatures, problems), detected printer capabilities, camera snapshots, and the loaded filament (Spoolman on Moonraker)
 - STL tools: inspect dimensions, scale, rotate, translate, extend the base, merge vertices, center, lay flat, transform one section of a model, and render multi-angle SVG previews
-- A print and heating safety gate on every backend: the exact G-code is inspected, every heater target is checked against hardware and material ceilings, the printer's state is checked, and a human confirms through MCP elicitation. Heater-off, pause, and cancel are never gated; resume only continues a paused job this server inspected and started, after a person confirms
+- A print and heating safety gate on every backend: the exact G-code is inspected, every heater target is checked against hardware and material ceilings, and the printer's state is checked. There is no confirmation prompt and no bed check: your client's own print action is the approval. Heater-off, pause, and cancel are never gated; resume only continues a paused job this server inspected and started, and asks a person only when the printer cannot hand the file back for re-reading
 - Slicing through PrusaSlicer, Slic3r, OrcaSlicer, CuraEngine, FULU OrcaSlicer-bambulab, or Bambu Studio command lines, with G-code peak-temperature checks and a one-call process-and-print pipeline
 - Bambu-compatible CLI slicing with the exact model and nozzle machine preset resolved from your slicer installation, filament slots and colours, placement options, and a local template registry
-- Bambu Lab project printing: upload a sliced `.3mf` over FTPS and start it over MQTT with the plate's G-code path, MD5, AMS mapping, and calibration flags, after checking the plate against a fresh printer report; auto-slice unsliced projects with FULU OrcaSlicer-bambulab or Bambu Studio
+- Bambu Lab project printing: upload a sliced `.3mf` over FTPS and start it over MQTT with the plate's G-code path, MD5, AMS mapping (`ams_slots`, one tray per used filament), and calibration flags, after checking the plate against a fresh printer report; or print through FULU's authenticated BambuNetwork route. Auto-slice unsliced projects with FULU OrcaSlicer-bambulab or Bambu Studio
+- Bambu AMS inventory (`get_printer_filaments`), pause, resume and stop over the connection that printed
 - Required Bambu printer model for print operations, asked for through MCP elicitation when missing
 - FULU OrcaSlicer-bambulab setup inspection and diagnostic BambuNetwork bridge RPC, with raw print methods refused
 - Optional Blender MCP bridge: discover a standard Blender MCP server's tools, forward calls, export named scene objects to a verified STL, and run verified STL edits
@@ -394,7 +393,7 @@ Every printer tool accepts `host`, `port`, `type`, and `api_key`, and Bambu prin
 
 What each call does depends on the backend; see [printer backend setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#printer-backend-setup) for the exact API routes.
 
-Every print start and positive heating command, on every backend, goes through a [safety gate](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#print-and-heating-safety): the server inspects the exact G-code it will start, checks each heater target against hardware and material ceilings, checks that the printer is ready, and asks a human to confirm through MCP elicitation. Turning a heater off (`temperature: 0`), `pause_print`, and `cancel_print` are never gated. `resume_print` reheats and moves the printer, so it only resumes a job this server inspected and started, and asks a person first.
+Every print start and positive heating command, on every backend, goes through a [safety gate](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#print-and-heating-safety): the server inspects the exact G-code it will start, checks each heater target against hardware and material ceilings, and checks that the printer is ready. It does not ask for confirmation or for a bed check: the client's own print action is the approval. Turning a heater off (`temperature: 0`), `pause_print`, and `cancel_print` are never gated. `resume_print` reheats and moves the printer, so it only resumes a job this server inspected and started. It asks a person first only when the printer cannot hand the file back for re-reading.
 
 #### get_printer_status
 
@@ -435,14 +434,14 @@ Upload G-code to the printer, and optionally start it. Pass `gcode_path` for a l
 ```
 
 - Without `print`, the file is only uploaded and nothing is inspected or started.
-- With `print: true`, the exact uploaded bytes are inspected first (every `S` and `R` heater target, tool changes, and hardware and material ceilings), the printer's state is checked, and a human confirms before the job starts.
+- With `print: true`, the exact uploaded bytes are inspected first (every `S` and `R` heater target, tool changes, and hardware and material ceilings), and the printer's state is checked before the job starts.
 - Printing needs a declared material: slicer metadata in the file (`; filament_type = PLA`) or the `material` argument, which must not contradict the file.
 - On Bambu printers, files go to `cache/` over FTPS, and printing also needs the model (`bambu_model` or `BAMBU_MODEL`). Automatic printing after upload supports `.gcode` only; print `.3mf` projects with `print_3mf`.
 - The result's `jobName` is the remote file name. `counterpart_print_progress` reports the same name as `job.name` while that job runs.
 
 #### start_print
 
-Start a G-code file that is already stored on the printer. The server downloads that exact file, inspects it, checks the printer's state, asks a human to confirm, and then starts a uniquely named checked copy. This works on Bambu Lab, OctoPrint, Klipper (Moonraker), and Duet. Repetier, Prusa, and Creality refuse, because their adapters have no verified download route; use `upload_gcode` with `print: true` instead.
+Start a G-code file that is already stored on the printer. The server downloads that exact file, inspects it, checks the printer's state, and then starts a uniquely named checked copy. This works on Bambu Lab, OctoPrint, Klipper (Moonraker), and Duet. Repetier, Prusa, and Creality refuse, because their adapters have no verified download route; use `upload_gcode` with `print: true` instead.
 
 ```json
 {
@@ -457,7 +456,7 @@ Pass `material` when the file has no `filament_type` metadata. On Bambu printers
 
 #### cancel_print
 
-Cancel the current print job. Cancelling is never gated and also cancels checked prints still waiting to start, including a pending `resume_print`. A cancelled job cannot be resumed; use `pause_print` to stop temporarily.
+Cancel the current print job. Cancelling is never gated and also cancels checked prints still waiting to start, including a pending `resume_print`. A cancelled job cannot be resumed; use `pause_print` to stop temporarily. Bambu stops go over the connection that printed (`connection_mode`, `connection_type`, default `BAMBU_DEFAULT_CONNECTION_MODE`/`_TYPE`): LAN MQTT, or FULU's BambuNetwork session, which reports the printer's `err_code` when it refuses.
 
 ```json
 {
@@ -468,7 +467,7 @@ Cancel the current print job. Cancelling is never gated and also cancels checked
 
 #### pause_print
 
-Pause the current print. Pausing is never gated. Routes: OctoPrint `POST /api/job` (`{"command":"pause","action":"pause"}`), Moonraker `POST /printer/print/pause`, PrusaLink `PUT /api/v1/job/<id>/pause`, Duet `M25`, Repetier `@pause`, and Creality printers that run Moonraker. Bambu pause is in [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).
+Pause the current print. Pausing is never gated. Routes: OctoPrint `POST /api/job` (`{"command":"pause","action":"pause"}`), Moonraker `POST /printer/print/pause`, PrusaLink `PUT /api/v1/job/<id>/pause`, Duet `M25`, Repetier `@pause`, Creality printers that run Moonraker, and Bambu `{"print":{"command":"pause"}}` over LAN MQTT or FULU's BambuNetwork session (the connection that printed, as for `cancel_print`).
 
 ```json
 {
@@ -480,7 +479,9 @@ Pause the current print. Pausing is never gated. Routes: OctoPrint `POST /api/jo
 
 #### resume_print
 
-Resume a paused print. Resume reheats and moves the printer, so it is gated like a print start. It resumes only the job this server instance inspected and started, after a fresh report that the same job is paused, and after a person confirms through MCP elicitation (unless the server sets `PRINT_REQUIRE_CONFIRMATION=0`). OctoPrint, Klipper and Duet re-download the file and compare its SHA-256 with the inspected bytes before asking; PrusaLink, Repetier and Creality have no download route here, so the job is matched by name only. The printer is read again after the confirmation. Cancelling the job, or a report that it ended, retires it, so a later job that reuses the name is never resumed. A job started at the printer, from another app, or before the server restarted is refused; resume it at the printer. Duet's download route needs the Duet Software Framework, so a standalone board's resume is refused. The result's `bytesVerified` says whether the bytes were re-read. OctoPrint drops a resume sent while it is still pausing, so the server waits for a settled pause (`job.stage` "Pausing" means not yet). Routes: OctoPrint `{"command":"pause","action":"resume"}`, Moonraker `POST /printer/print/resume`, PrusaLink `PUT /api/v1/job/<id>/resume`, Duet `M24`, and Repetier `continueJob`.
+Resume a paused print. Resume reheats and moves the printer, so it is gated like a print start. It resumes only the job this server instance inspected and started, and after a fresh report that the same job is paused. OctoPrint, Klipper and Duet re-download the file and compare its SHA-256 with the inspected bytes, and resume without a prompt. PrusaLink, Repetier and Creality have no download route here, so the job is matched by name only and a person confirms through MCP elicitation first. The printer is read again just before the resume is sent. Cancelling the job, or a report that it ended, retires it, so a later job that reuses the name is never resumed. A job started at the printer, from another app, or before the server restarted is refused; resume it at the printer. Duet's download route needs the Duet Software Framework, so a standalone board's resume is refused. The result's `bytesVerified` says whether the bytes were re-read. OctoPrint drops a resume sent while it is still pausing, so the server waits for a settled pause (`job.stage` "Pausing" means not yet). Routes: OctoPrint `{"command":"pause","action":"resume"}`, Moonraker `POST /printer/print/resume`, PrusaLink `PUT /api/v1/job/<id>/resume`, Duet `M24`, and Repetier `continueJob`.
+
+Bambu resumes as bambu-printer-mcp does: the paused job must report the unique name this server started it under (`subtask_name`), the fresh-state check is repeated, and its bytes are re-read over FTPS (the uploaded 3MF, else the `cache/<name>_plate_<n>.gcode` a P1S extracts) and compared. A file this server uploaded that cannot be re-read refuses the resume; only a file FULU's plug-in placed that cannot be re-read asks a person. The resume goes over the connection that printed.
 
 #### counterpart_printer_info
 
@@ -528,7 +529,9 @@ Relative URLs and loopback hosts in the firmware's settings are read as the prin
 
 #### get_printer_filaments
 
-Report the loaded filament as one external slot, `{"slots": [{"id": "ext", "material", "color", "name", "source", "profile"}]}`. Moonraker printers with Spoolman report the active spool's material, `#RRGGBB` colour and name (`source: "spoolman"`); every other printer reports `source: "unknown"`. Bambu AMS inventory is in [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).
+Report the loaded filament as one external slot, `{"slots": [{"id": "ext", "material", "color", "name", "source", "profile"}]}`. Moonraker printers with Spoolman report the active spool's material, `#RRGGBB` colour and name (`source: "spoolman"`); other non-Bambu printers report `source: "unknown"`.
+
+Bambu printers report the live AMS from the printer's MQTT report, with bambu-printer-mcp's fields unchanged: `trays` (one per AMS tray, empty ones included: absolute `slot` = AMS id × 4 + tray, `loaded`, `tray_type`, `tray_color`, `tray_info_idx`, `remain_percent`, the resolved Bambu Studio/Orca filament profile `resolved_profile_path` with `profile_resolution` and `match_confidence`, and `display_name`), `summary`, `recommended` and `load_filaments_all`. Profiles resolve by `tray_info_idx` in the slicer's `BBL/filament` folder (`BAMBU_PROFILES_ROOT`, else the `SLICER_PATH` installation), preferring the `bambu_model` and `nozzle_diameter` preset. `slots` lists every loaded tray and the external spool (`"254"`, and `"254"`/`"255"` on dual-nozzle printers) with `source: "printer"`. Pass a tray's `slot` to `print_3mf` as `ams_slots`.
 
 Each slot also carries `profile`: the absolute path of the installed slicer filament profile for its material, which `slice_stl` takes as `load_filaments`. It is resolved in the slicer `slice_stl` uses by default (`SLICER_TYPE`, `SLICER_PATH`), for the printer in `SLICER_PROFILE`. OrcaSlicer searches its bundled `profiles/<vendor>/filament`, the `OrcaSlicer/system` copies and the user's `OrcaSlicer/user/<id>/filament` presets, reading `filament_type` and `compatible_printers` through `inherits`. PrusaSlicer and Slic3r search the data folder's `filament/*.ini` presets. The material must equal the profile's `filament_type` exactly (case aside): a `PLA` spool never gets a `PLA-CF` profile. Profiles that list other printers are skipped; one that lists this printer comes first, then profiles for every printer, user presets before bundled ones. With no reported material, `profile` is the filament `slice_stl` loads by default (`FILAMENT_PROFILE`), when that file exists. When nothing resolves, `profile` is omitted.
 
@@ -548,7 +551,7 @@ Set a target temperature for a printer component. Use `bed` or `extruder`; Bambu
 ```
 
 - `temperature` must be a finite number of 0 or more. `0` switches the heater off and is never gated.
-- Positive targets are checked before connecting against independent hardware ceilings and the material's ceiling, need a ready printer, and ask a human to confirm.
+- Positive targets are checked before connecting against independent hardware ceilings and the material's ceiling, and need a ready printer.
 - Positive nozzle heating needs `material` (for example PLA, PETG, or ABS), including for spools without RFID.
 - On Bambu printers, positive heating also needs `bambu_model` (or `BAMBU_MODEL`), and nozzle heating uses `nozzle_diameter` (0.2, 0.4, 0.6, or 0.8; default `NOZZLE_DIAMETER` or 0.4). Both are checked against the live printer.
 
@@ -563,9 +566,9 @@ These tools work with `PRINTER_TYPE=bambu` (or `type: "bambu"`). Set up LAN Only
 
 #### print_3mf
 
-Upload a sliced `.3mf` project to a Bambu printer over FTPS and start it with an MQTT `project_file` command that carries the plate's G-code path, its MD5, the AMS mapping, and the calibration flags. **`bambu_model` is required** (or `BAMBU_MODEL`); without it the server asks through MCP elicitation when the client supports it, or returns an error. The wrong model can crash the bed into the nozzle.
+Upload a sliced `.3mf` project to a Bambu printer over FTPS and start it with an MQTT `project_file` command that carries the plate's G-code path, its MD5, the AMS mapping, and the calibration flags, or print it through FULU's BambuNetwork bridge (`connection_mode: "bambu_network"`). **`bambu_model` is required** (or `BAMBU_MODEL`); without it the server asks through MCP elicitation when the client supports it, or returns an error. The wrong model can crash the bed into the nozzle.
 
-Before anything is uploaded, the server inspects a private copy of the selected plate (model, nozzle, bed type, materials, and every heater target). It checks them against per-model hardware limits, material ceilings, and a fresh MQTT report of the printer's model, serial, nozzle, state, errors, and loaded filament. A human then confirms, and the report is checked again before dispatch.
+Before anything is uploaded, the server inspects a private copy of the selected plate (model, nozzle, bed type, materials, and every heater target). It checks them against per-model hardware limits, material ceilings, and a fresh MQTT report of the printer's model, serial, nozzle, state, errors, and loaded filament. The report is read again before upload and again before dispatch.
 
 ```json
 {
@@ -573,7 +576,7 @@ Before anything is uploaded, the server inspects a private copy of the selected 
   "bambu_model": "p1s",
   "bed_type": "textured_plate",
   "use_ams": true,
-  "ams_mapping": { "Generic PLA": 0 },
+  "ams_slots": [2],
   "bed_leveling": true,
   "flow_calibration": true,
   "vibration_calibration": true,
@@ -583,7 +586,9 @@ Before anything is uploaded, the server inspects a private copy of the selected 
 ```
 
 - If the project has no plate G-code, the server tries to [auto-slice it](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#print_3mf-auto-slicing) with FULU OrcaSlicer-bambulab or Bambu Studio. If slicing fails, or the selected plate still has no G-code, it stops with an error and never uploads the original project.
-- `ams_mapping` is an object whose values are AMS slot numbers. When it is omitted, the mapping embedded in the 3MF is used; with no mapping at all, the print runs without AMS. `use_ams: false` turns AMS off.
+- `ams_slots` names one absolute tray per used filament, in plate order: `[2]` prints a one-filament plate from AMS 0 slot 2, `254` is the external spool (on dual-nozzle printers `254` left, `255` right). It is expanded to the project-level `ams_mapping` from the plate's `filament_ids` and the G-code header, and must name exactly one tray per used filament.
+- `ams_mapping` is the raw project-level array (position = project filament, value = tray, `-1` unused), or an object of trays keyed by project filament index. When neither is given, the mapping embedded in the 3MF is used; with no mapping at all, the print runs from the external spool. `use_ams: false` maps every used filament to the external spool. Each mapped tray's material is checked against the file in the fresh printer report.
+- `connection_mode` and `connection_type` choose the route (default `BAMBU_DEFAULT_CONNECTION_MODE` and `BAMBU_DEFAULT_CONNECTION_TYPE`; see [FULU's BambuNetwork route](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md#print-and-control-through-fulus-bambunetwork-route)). The bridge route sends Bambu Studio's `ams_mapping`, `ams_mapping2` and `ams_mapping_info` and the Send dialog's calibration options as Bambu Studio resolves them.
 - After sending the command, the server watches fresh reports for up to 15 seconds (`BAMBU_DISPATCH_CHECK_MS`) and returns `dispatch: "started"` or `"unconfirmed"`. If the firmware refuses the command (HMS 0500-0500-0001-0007 on firmware 01.08.05 and later without Developer Mode), the call fails and says so; the checked file stays on the printer's storage.
 - `nozzle_type` (`stainless_steel`, `hardened_steel`, `tungsten_carbide`, `brass`) sets the installed nozzle when the project must be auto-sliced. The job's nozzle type must match the printer's report.
 - `bed_type` is one of `textured_plate`, `cool_plate`, `engineering_plate`, or `hot_plate` (default `BED_TYPE`, else `textured_plate`). It must match the plate's bed metadata, so a file sliced for another plate, or without bed metadata, is refused until `bed_type` matches.
@@ -616,6 +621,14 @@ Call one FULU BambuNetwork bridge method for diagnostics. Read-only methods such
 ```
 
 The bridge command comes from `FULU_BAMBU_BRIDGE_COMMAND`; a per-call `bridge_command` requires `MCP_ALLOW_EXECUTABLE_ARG=1`.
+
+#### counterpart_print_route
+
+Read or change how this server reaches a Bambu printer for prints and for Stop, Pause and Resume, with the same contract as bambu-printer-mcp's. `route` is `lan` (the local network: direct LAN MQTT/FTPS, or FULU's authenticated LAN session when the mode is `bambu_network`) or `cloud` (Bambu Cloud through FULU's bridge). Pass `route` to change it: the next print and control use it at once, and it is saved to the `.env` file in the server's working directory when that file exists. Sends nothing to the printer.
+
+```json
+{ "route": "lan", "mode": "bambu_network", "type": "lan", "choices": ["lan", "cloud"], "savedTo": "/path/to/.env" }
+```
 
 </details>
 
@@ -724,7 +737,7 @@ Report every heater target in a G-code file: `S` and `R` forms, tool-addressed t
 
 #### process_and_print_stl
 
-Extend an STL's base, slice it, and print it through the same checked print gate as `upload_gcode` and `print_3mf`, including the human confirmation. If you pass `extruder_temp` or `bed_temp`, each must equal the sliced job's highest target (`S` and `R` forms, every tool); a mismatch stops before anything is uploaded. Pass `material` when the sliced G-code has no `filament_type` metadata. On a Bambu printer with a Bambu-compatible slicer, the sliced `.3mf` goes through the `print_3mf` checks, and the printer model is required.
+Extend an STL's base, slice it, and print it through the same checked print gate as `upload_gcode` and `print_3mf`. If you pass `extruder_temp` or `bed_temp`, each must equal the sliced job's highest target (`S` and `R` forms, every tool); a mismatch stops before anything is uploaded. Pass `material` when the sliced G-code has no `filament_type` metadata. On a Bambu printer with a Bambu-compatible slicer, the sliced `.3mf` goes through the `print_3mf` checks, and the printer model is required.
 
 ```json
 {
@@ -738,7 +751,7 @@ Extend an STL's base, slice it, and print it through the same checked print gate
 }
 ```
 
-Use `slice_stl`, `confirm_temperatures`, and `upload_gcode` separately when you want to review the sliced file before the print is offered for confirmation.
+Use `slice_stl`, `confirm_temperatures`, and `upload_gcode` separately when you want to review the sliced file before it prints.
 
 </details>
 
@@ -873,10 +886,10 @@ For example, `printer://192.168.1.100/status` reads the status of the printer at
 4. **Moonraker authentication is optional; Duet has no password support.** Set `API_KEY` for Moonraker hosts that require authentication. Leave it empty only when Moonraker trusts the MCP host. A password-protected Duet cannot be reached yet.
 5. **Command sent is not print finished.** A success response means the printer or its host accepted the request. Check status, and the printer itself, before you walk away.
 6. **Bambu prints need a sliced project and the right model.** `print_3mf` needs a `.3mf` with `Metadata/plate_<n>.gcode`, uploads it to `cache/`, and starts plate 1. Print settings such as layer height and temperatures cannot be changed at print time. `start_print` handles plain `.gcode` files only.
-7. **Bambu AMS mapping is simple.** `ams_mapping` values are sorted and padded to five entries; real behavior still depends on firmware, loaded filament, and the project's metadata. For AMS inventory and color matching, see [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp).
+7. **Bambu AMS choice is explicit.** `ams_slots` and `ams_mapping` choose trays; there is no automatic colour matching here (bambu-printer-mcp has `auto_match_ams`). The LAN mapping is padded to five entries as Bambu's P1/X1 firmware expects; real behavior still depends on firmware, loaded filament, and the project's metadata. The LAN route sends P1/X1-style `project_file` paths for every model; bambu-printer-mcp's H2, P2S and A1 path differences and X2D native route are not in this server.
 8. **Bambu temperatures go through G-code.** Temperature targets are sent as `M104` or `M140` over MQTT, so the printer's firmware and current state decide whether they apply.
 9. **Bambu networking assumes a trusted LAN.** MQTT and FTPS use the printer's self-signed certificate. Uploads use TLS 1.2 with session reuse; confirmation on the X1C firmware reported in [#22](https://github.com/DMontgomery40/mcp-3D-printer-server/issues/22) is still outstanding.
-10. **Safety checks read files and reports, not the physical printer.** A declared material cannot prove what spool is loaded, which is why a human confirms. There is no bed check: the printer detects an occupied bed itself during bed leveling. Klipper macro parameters that name a heater are checked, but macro bodies stored on the printer cannot be inspected. On Duet/RepRapFirmware, selecting a tool (`T0`) heats it to the temperature already stored on the printer; activation-only `M568` and `M144` are refused, but a plain tool change is allowed because every firmware uses it. The safety gate is tested with mocked printer transports and loopback HTTP APIs, plus one real Bambu P1S run that reached the firmware's command check; other printer systems have not been exercised on real hardware in this release.
+10. **Safety checks read files and reports, not the physical printer.** A declared material cannot prove what spool is loaded, and the server does not ask a person to check it: the client's print action is the approval. There is no bed check: the printer detects an occupied bed itself during bed leveling. Klipper macro parameters that name a heater are checked, but macro bodies stored on the printer cannot be inspected. On Duet/RepRapFirmware, selecting a tool (`T0`) heats it to the temperature already stored on the printer; activation-only `M568` and `M144` are refused, but a plain tool change is allowed because every firmware uses it. The safety gate is tested with mocked printer transports and loopback HTTP APIs, plus one real Bambu P1S run that reached the firmware's command check; other printer systems have not been exercised on real hardware in this release.
 11. **Remote starts need a download route.** `start_print` of a file already on the printer works on Bambu Lab, OctoPrint, Klipper, and Duet. Repetier, Prusa, and Creality refuse it; upload the local G-code with `print: true` instead.
 
 </details>
@@ -921,7 +934,7 @@ Prompt injection is an open problem for tool-using agents. A downloaded model's 
 - Treat tool output and downloaded files as untrusted input.
 - Keep printer keys and access codes in server configuration, with the least privilege your printer software allows.
 - Keep per-call executable selectors off. Slicer, bridge, and Blender commands come from server configuration unless `MCP_ALLOW_EXECUTABLE_ARG=1` is set.
-- Keep print confirmation on. The server asks a human through MCP elicitation before every print start and positive heating command, and refuses clients that cannot ask. `PRINT_REQUIRE_CONFIRMATION=0` (all printers) or `BAMBU_REQUIRE_CONFIRMATION=0` (Bambu only) opts out for headless setups; the first print after a finished job still asks.
+- Prints and positive heating start without a server prompt: the client's own print action is the approval, so give print tools only to clients and agents you trust to start a print. The file, ceiling and printer-state checks still run, and there is no bed check, so clear the plate before you print.
 - Heater ceilings come only from server configuration (`PRINTER_MAX_NOZZLE_TEMP`, `PRINTER_MAX_BED_TEMP`, `PRINTER_MAX_CHAMBER_TEMP`, or Bambu's per-model limits). Tool arguments and G-code never raise them.
 - Run the streamable HTTP transport on a trusted network. It binds to `127.0.0.1` by default and has no built-in authentication.
 - Set `BAMBU_MODEL` correctly and never substitute a similar model.

@@ -175,11 +175,7 @@ export class KlipperImplementation extends GenericPrinterImplementation {
     if (!["standby", "complete", "cancelled"].includes(job)) {
       return { state, ready: false, reason: `print_stats.state is ${job}` };
     }
-    return {
-      state,
-      ready: true,
-      finishedJob: job === "standby" ? undefined : JSON.stringify([job, status?.print_stats?.filename ?? null]),
-    };
+    return { state, ready: true };
   }
 
   protected async downloadRemoteFile(host: string, port: string, apiKey: string, filename: string, destination: string): Promise<void> {

@@ -1,25 +1,13 @@
+import { HIDDEN_HMS } from "./hidden-hms.js";
 import type { BambuClient } from "bambu-node";
-import { normalizeMaterial, normalizeModel } from "./limits.js";
-
-let sequence = 0;
-/**
- * Publish one MQTT command with a string sequence id and no ACK wait.
- * Unpatched bambu-node 3.22.21 command classes send numeric sequence ids;
- * bambu-printer-mcp patches them to strings for H2-series firmware. This
- * server does not install that patch, so safety-relevant commands are
- * published here with the patched wire shape: {category:{sequence_id,command,...}}.
- */
-export function publishBambuCommand(printer: Pick<BambuClient, "publish">, category: "print" | "pushing" | "info", command: string, extra: Record<string, unknown> = {}): Promise<void> {
-  sequence = (sequence + 1) % 1_000_000_000;
-  return printer.publish({ [category]: { sequence_id: String(sequence), command, ...extra } });
-}
+import { isDualNozzleModel, normalizeMaterial, normalizeModel } from "./limits.js";
 
 const MAX_REPORT_AGE_MS = 15_000;
 const MODEL_IDS: Record<string, string> = {
   O1C: "H2C", O1C2: "H2C", O1D: "H2D", O1E: "H2D Pro", O1S: "H2S", N6: "X2D",
   N2S: "A1", A1M: "A1 Mini", C11: "P1P", C12: "P1S", C13: "X1E", "BL-P001": "X1C", "BL-P002": "X1",
 };
-const SERIAL_MODELS: Record<string, string> = {
+export const SERIAL_MODELS: Record<string, string> = {
   "093": "H2S", "094": "H2D", "31B": "H2C", "239": "H2D Pro", "20P": "X2D",
   "00M": "X1C", "00W": "X1", "03W": "X1E", "01S": "P1P", "01P": "P1S", "22E": "P2S", "039": "A1", "030": "A1 Mini",
 };
@@ -104,7 +92,8 @@ export function readFreshPrinterStatus(printer: BambuClient, serial: string, tim
     printer.on("rawMessage", onRaw);
     printer.on("client:disconnect", onDisconnect);
     printer.on("client:error", onError);
-    // Publish only; an ACK wait would add a dependency that H2 firmware lacks.
+    // invoke() publishes only; executeCommand() would add an ACK dependency that H2 firmware lacks.
+    // String sequence ids without bambu-printer-mcp's bambu-node patch (H2-series firmware needs them).
     void Promise.all([publishBambuCommand(printer, "pushing", "pushall"), publishBambuCommand(printer, "info", "get_version")])
       .then(() => { requestsPublished = true; maybeResolve(); }, fail);
   });
@@ -115,6 +104,8 @@ export interface PrinterStateRequirements {
   nozzleDiameters: number[];
   materials?: string[];
   usedFilamentPositions?: number[];
+  /** Verified physical nozzle index for each project filament, composed from the inspected plate mappings. */
+  filamentNozzleIndices?: number[];
   amsMapping?: number[];
   useAMS?: boolean;
   requireIdle?: boolean;
@@ -131,10 +122,33 @@ interface ReportedNozzle { index: number; diameter: number; type?: string; flow?
 interface ReportedFilament { position: number; material: string; trayIndex: number; nozzleMin?: number; nozzleMax?: number }
 export interface ValidatedPrinterState { model: string; reportedNozzles: ReportedNozzle[]; filaments: ReportedFilament[] }
 
-function finiteNumber(value: unknown): number | undefined {
+export function finiteNumber(value: unknown): number | undefined {
   if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) return undefined;
   const number = Number(value);
   return Number.isFinite(number) ? number : undefined;
+}
+
+/**
+ * X2D retains FAILED after a canceled job even with no active print error.
+ * Bambu Studio classifies FAILED as a finished job; its v02.08.02.61
+ * hms_en_20P table (926a7192574bcb9b3a732e1ec59a46d79cb45466)
+ * calls 0300400C "The task was canceled."
+ * Only this observed terminal condition qualifies, never an arbitrary failure.
+ * Callers still validate HMS, identity, hardware and material configuration,
+ * and print dispatch rechecks the identity of the observed job.
+ */
+export function isCancelledX2DJob(raw: Record<string, any>, model: string): boolean {
+  return normalizeModel(model) === "x2d" && raw.gcode_state === "FAILED" &&
+    finiteNumber(raw.print_error) === 0 && finiteNumber(raw.fail_reason) === 0x0300400c &&
+    [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
+}
+/** Bambu Studio 2.8.2.61 marks FAILED as finished. Limit P1S recovery to
+ * a named prior job explicitly reporting idle, no print error and no HMS.
+ * Dispatch rechecks the observed job identity. */
+export function isFinishedP1SJob(raw: Record<string, any>, model: string): boolean {
+  return normalizeModel(model) === "p1s" && raw.gcode_state === "FAILED" && raw.print_type === "idle" &&
+    finiteNumber(raw.print_error) === 0 && Array.isArray(raw.hms) && raw.hms.length === 0 &&
+    [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
 }
 const token = (value: unknown) => typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_-]/g, "") : "";
 function nozzleTypeAndFlow(value: unknown): {type?: string; flow?: string} {
@@ -170,7 +184,7 @@ export function unchippedNozzles(raw: unknown): number[] {
     const index = finiteNumber(entry?.id);
     const stat = finiteNumber(entry?.stat);
     return index !== undefined && Number.isInteger(index) && index >= 0 && index < 16 &&
-      stat !== undefined && Number.isInteger(stat) && stat >= 0 && unreliableWithoutChip(entry, stat) ? [index] : [];
+      stat !== undefined && Number.isInteger(stat) && unreliableWithoutChip(entry, stat) ? [index] : [];
   });
 }
 
@@ -236,24 +250,96 @@ function reportedNozzles(raw: Record<string,any>): ReportedNozzle[] {
   return output;
 }
 
-function validateErrors(raw: Record<string,any>, requireIdle: boolean) {
+const hiddenHmsSets = new Map(Object.entries(HIDDEN_HMS).map(([prefix, codes]) => [prefix, new Set(codes)]));
+
+export type HmsEntry = { attr: number; code: number; severity: number; hex: string };
+export function hmsCode(entry: any): HmsEntry | undefined {
+  const code = finiteNumber(entry?.code);
+  const attr = finiteNumber(entry?.attr);
+  const valid = (value: number | undefined): value is number => value !== undefined && Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
+  if (!valid(code) || !valid(attr)) return undefined;
+  // BambuStudio DevHMS.cpp: code >> 16; DevHMS.h: 1=fatal,2=serious,3=common,4=info.
+  return { attr, code, severity: Math.floor(code / 65536), hex: (attr.toString(16).padStart(8, "0") + code.toString(16).padStart(8, "0")).toUpperCase() };
+}
+
+const hmsLabel = (hex: string) => `HMS ${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12)}`;
+const hmsKey = (entry: HmsEntry) => `hms:${entry.attr}:${entry.code}`;
+
+/** The one key format for a reported entry, shared by the gate and clear_hms_errors. */
+export function reportedHmsKey(entry: unknown): string {
+  const parsed = hmsCode(entry);
+  return parsed ? hmsKey(parsed) : `hms:${(entry as any)?.attr}:${(entry as any)?.code}`;
+}
+
+/** Bambu's display form of a cleared-code key such as "hms:83887616:131184"; other keys unchanged. */
+export function describeHmsKey(key: string): string {
+  const match = /^hms:(\d+):(\d+)$/.exec(key);
+  const entry = match ? hmsCode({ attr: Number(match[1]), code: Number(match[2]) }) : undefined;
+  return entry ? hmsLabel(entry.hex) : key;
+}
+
+/**
+ * A serious or common entry that Bambu lists for this serial prefix with empty
+ * text: Bambu Studio, Bambu Handy and the printer screen never show it, and
+ * the printer keeps printing with it (an X2D raises 0500-0600-0002-0070 at
+ * every boot). Bambu Studio selects the table by serial prefix, so this does
+ * too, but only when that prefix belongs to the verified model: a sparse report
+ * without a serial must not let a misconfigured serial pick another model's
+ * table. Fatal, invalid-level and unlisted entries never qualify.
+ */
+export function isHiddenNotice(serial: string, model: string, entry: HmsEntry): boolean {
+  if (entry.severity !== 2 && entry.severity !== 3) return false;
+  const prefix = serial.trim().toUpperCase().slice(0, 3);
+  const normalized = normalizeModel(model);
+  if (!normalized || normalizeModel(SERIAL_MODELS[prefix] ?? "") !== normalized) return false;
+  return hiddenHmsSets.get(prefix)?.has(entry.hex) === true;
+}
+
+function hiddenHmsEntries(raw: unknown, serial: string, model: string): HmsEntry[] {
+  if (!object(raw)) return [];
+  const identity = observedIdentity(raw, serial);
+  if (!identity.observedSerial || identity.model !== normalizeModel(model)) return [];
+  const entries = Array.isArray(raw.hms) ? raw.hms : [];
+  const seen = new Set<string>();
+  return entries.map(hmsCode).filter((entry): entry is HmsEntry =>
+    !!entry && isHiddenNotice(identity.observedSerial, model, entry) && !seen.has(entry.hex) && !!seen.add(entry.hex));
+}
+
+/** Labels of reported entries that pass only because Bambu hides them for this printer. */
+export function hiddenHmsNotices(raw: unknown, serial: string, model: string): string[] {
+  return hiddenHmsEntries(raw, serial, model).map(entry => hmsLabel(entry.hex));
+}
+
+/** Cleared-code keys of reported hidden entries; clearing never removes them, so they are not re-acknowledged. */
+export function hiddenHmsKeys(raw: unknown, serial: string, model: string): string[] {
+  return hiddenHmsEntries(raw, serial, model).map(hmsKey);
+}
+
+const loggedHiddenNotices = new Set<string>();
+/** Name each hidden entry a check passed once per printer on stderr, so headless runs still record it. */
+function logHiddenNotices(raw: Record<string, any>, serial: string, model: string): void {
+  for (const entry of hiddenHmsEntries(raw, serial, model)) {
+    const key = `${serial}:${entry.hex}`;
+    if (loggedHiddenNotices.has(key)) continue;
+    loggedHiddenNotices.add(key);
+    console.error(`Printer ${serial} reports ${hmsLabel(entry.hex)}, which Bambu lists for it without text and never shows as a fault; it does not block operations.`);
+  }
+}
+
+function validateErrors(raw: Record<string,any>, requireIdle: boolean, serial: string, model: string) {
   const state = typeof raw.gcode_state === "string" ? raw.gcode_state.toUpperCase() : "UNKNOWN";
-  if (requireIdle && !["IDLE","FINISH"].includes(state)) throw new Error(`Printer state ${state} is not safely idle.`);
-  if (!requireIdle && !["IDLE","FINISH","RUNNING","PAUSE"].includes(state)) throw new Error(`Printer state ${state} is unknown or failed.`);
+  const terminal = isCancelledX2DJob(raw, model) || isFinishedP1SJob(raw, model);
+  if (requireIdle && !["IDLE","FINISH"].includes(state) && !terminal) throw new Error(`Printer state ${state} is not safely idle.`);
+  if (!requireIdle && !["IDLE","FINISH","RUNNING","PAUSE"].includes(state) && !terminal) throw new Error(`Printer state ${state} is unknown or failed.`);
   if (finiteNumber(raw.print_error) !== 0) throw new Error("Printer reports a print error or did not report its error state.");
   if (!Array.isArray(raw.hms)) throw new Error("Printer HMS error state is missing or malformed.");
-  for (const entry of raw.hms) {
-    const code = finiteNumber(entry?.code);
-    const attr = finiteNumber(entry?.attr);
-    // BambuStudio DevHMS.cpp: code >> 16; DevHMS.h: 1=fatal,2=serious,3=common,4=info.
+  for (const reported of raw.hms) {
+    const entry = hmsCode(reported);
     // Unknown severities fail closed; attr identifies the module and is not a severity bitmask.
-    if (code === undefined || attr === undefined || !Number.isInteger(code) || !Number.isInteger(attr) || code < 0 || code > 0xffffffff || attr < 0 || attr > 0xffffffff || Math.floor(code / 65536) !== 4) {
-      const hex = (value: number) => value.toString(16).toUpperCase().padStart(8, "0");
-      const label = code !== undefined && attr !== undefined && Number.isInteger(code) && Number.isInteger(attr) && code >= 0 && attr >= 0
-        ? ` (HMS ${hex(attr).slice(0, 4)}-${hex(attr).slice(4)}-${hex(code).slice(0, 4)}-${hex(code).slice(4)})` : "";
-      throw new Error(`Printer reports actionable or unknown HMS errors${label}; inspect and resolve them on the printer before proceeding.`);
-    }
+    if (entry && (entry.severity === 4 || isHiddenNotice(serial, model, entry))) continue;
+    throw new Error(`Printer reports actionable or unknown HMS errors${entry ? ` (${hmsLabel(entry.hex)})` : ""}; inspect and resolve them before proceeding.`);
   }
+  logHiddenNotices(raw, serial, model);
 }
 function trayRange(value: unknown, label: string): number | undefined {
   if (value === undefined || value === null || value === "" || value === "0" || value === 0) return undefined;
@@ -261,13 +347,20 @@ function trayRange(value: unknown, label: string): number | undefined {
   if (number === undefined || number <= 0) throw new Error(`Reported filament ${label} temperature is malformed.`);
   return number;
 }
-function externalTray(raw: Record<string,any>): Record<string,any> | undefined {
+/** Dual-nozzle printers report one virtual external slot per nozzle, numbered as Bambu
+ * Studio does (VIRTUAL_TRAY_MAIN_ID 255 = right/main nozzle, VIRTUAL_TRAY_DEPUTY_ID 254 =
+ * left/deputy nozzle), so the requested tray selects its slot. Single-nozzle printers keep
+ * requiring exactly one slot 254 report, then the legacy vt_tray field. */
+function externalTray(raw: Record<string,any>, trayIndex: number, model: string): Record<string,any> | undefined {
   const slots = raw.vir_slot;
+  const dualNozzle = isDualNozzleModel(model);
   if (Array.isArray(slots)) {
-    const selected = slots.filter((slot:any) => Number(slot?.id) === 254);
-    if (slots.length === 1 && selected.length === 1) return selected[0];
+    const selected = slots.filter((slot:any) => Number(slot?.id) === trayIndex);
+    if (selected.length === 1 && (dualNozzle || slots.length === 1)) return selected[0];
+    if (dualNozzle && selected.length === 0 && slots.length > 0) throw new Error(`External spool ${trayIndex} is not in the fresh per-nozzle report; cannot verify the selected material.`);
     if (slots.length > 0) throw new Error("External spool report is ambiguous for this nozzle; cannot verify the selected material.");
   }
+  if (dualNozzle) throw new Error(`Dual-nozzle external spool ${trayIndex} requires a fresh per-nozzle vir_slot report; legacy vt_tray cannot verify the selected nozzle.`);
   return object(raw.vt_tray) ? raw.vt_tray : undefined;
 }
 function mappedTray(raw: Record<string,any>, index: number): Record<string,any> {
@@ -301,7 +394,7 @@ export function validatePrinterState(status: any, requirements: PrinterStateRequ
   const identity = observedIdentity(raw, String(status.serial ?? ""));
   const model = normalizeModel(requirements.model);
   if (!model || !identity.model || model !== identity.model) throw new Error(`Printer model identity mismatch: requested ${requirements.model}, observed ${identity.model ?? "unknown"}.`);
-  validateErrors(raw, requirements.requireIdle !== false);
+  validateErrors(raw, requirements.requireIdle !== false, identity.observedSerial ?? "", model);
   if (requirements.requireLoadedFilament && (raw.ams?.tray_now !== undefined || Array.isArray(raw.ams?.ams))) {
     const current = finiteNumber(raw.ams?.tray_now);
     if (current === 255) throw new Error("The nozzle is explicitly reported unloaded. Load the declared filament before starting or resuming this G-code job.");
@@ -313,7 +406,7 @@ export function validatePrinterState(status: any, requirements: PrinterStateRequ
     }
   }
   const nozzles = requirements.nozzleDiameters.length ? reportedNozzles(raw) : [];
-  if (requirements.nozzleDiameters.length && ["h2d","h2dpro","h2c","x2d"].includes(model) &&
+  if (requirements.nozzleDiameters.length && isDualNozzleModel(model) &&
       !Array.isArray(raw.device?.nozzle?.info) && !Array.isArray(raw.nozzle_diameter)) {
     throw new Error("A scalar legacy nozzle report is ambiguous for this multi-nozzle printer; fresh per-nozzle configuration is required.");
   }
@@ -341,13 +434,27 @@ export function validatePrinterState(status: any, requirements: PrinterStateRequ
   if (requirements.verifyMaterials !== false && (requirements.materials !== undefined || requirements.nozzleDiameters.length)) {
     const materials = requirements.materials ?? [];
     const positions = requirements.usedFilamentPositions ?? materials.map((_, index) => index);
+    // 255 is the right/main nozzle external spool only on dual-nozzle printers.
+    const dualNozzle = isDualNozzleModel(model);
+    const maxTray = dualNozzle ? 255 : 254;
     if (!positions.length) throw new Error("A declared material is required for each used filament or external spool.");
     for (const position of positions) {
       const material = normalizeMaterial(materials[position]);
       if (!Number.isInteger(position) || position < 0 || !material) throw new Error(`A known declared material is required for filament position ${position}.`);
-      const trayIndex = requirements.useAMS ? requirements.amsMapping?.[position] : 254;
-      if (trayIndex === undefined || !Number.isInteger(trayIndex) || trayIndex < 0 || trayIndex > 254) throw new Error(`Complete AMS mapping is required for filament position ${position}.`);
-      const tray = trayIndex === 254 ? externalTray(raw) : mappedTray(raw,trayIndex);
+      const physicalNozzle = requirements.filamentNozzleIndices?.[position];
+      const externalForNozzle = physicalNozzle === 0 ? 255 : physicalNozzle === 1 ? 254 : undefined;
+      const trayIndex = requirements.useAMS || requirements.amsMapping !== undefined
+        ? requirements.amsMapping?.[position] : dualNozzle ? externalForNozzle : 254;
+      if (!requirements.useAMS && dualNozzle && requirements.amsMapping === undefined && externalForNozzle === undefined) {
+        throw new Error(`External spool for filament position ${position} is ambiguous; re-slice with complete filament_map and physical_extruder_map nozzle bindings or provide a verified sliced plate.`);
+      }
+      if (trayIndex === undefined || !Number.isInteger(trayIndex) || trayIndex < 0 || trayIndex > maxTray) throw new Error(`Complete AMS mapping is required for filament position ${position}.`);
+      if (!requirements.useAMS && trayIndex < 254) throw new Error("External-spool printing requires an external spool mapping; AMS trays require use_ams:true.");
+      if (dualNozzle && trayIndex >= 254) {
+        if (externalForNozzle === undefined) throw new Error(`External spool ${trayIndex} needs a verified physical nozzle binding for filament position ${position}; re-slice with complete filament_map and physical_extruder_map metadata.`);
+        if (trayIndex !== externalForNozzle) throw new Error(`External spool ${trayIndex} does not feed physical nozzle ${physicalNozzle} for filament position ${position}; use spool ${externalForNozzle}.`);
+      }
+      const tray = trayIndex >= 254 ? externalTray(raw,trayIndex,model) : mappedTray(raw,trayIndex);
       const reportedType = typeof tray?.tray_type === "string" ? tray.tray_type.trim() : "";
       if (reportedType && normalizeMaterial(reportedType) !== material) throw new Error(`Reported material ${reportedType} in slot ${trayIndex} contradicts declared ${materials[position]}.`);
       const nozzleMin = trayRange(tray?.nozzle_temp_min,"minimum");
@@ -366,7 +473,7 @@ export function manualHeatingRequirements(status: any, model: string, nozzleDiam
   if (!normalized) throw new Error("A known printer model is required for manual nozzle heating.");
   const raw = status?.raw;
   if (!object(raw)) throw new Error("A fresh printer report is required for manual nozzle heating.");
-  if (["h2d","h2dpro","h2c","x2d"].includes(normalized) || reportedNozzles(raw).some(nozzle => nozzle.index !== 0)) {
+  if (isDualNozzleModel(normalized) || reportedNozzles(raw).some(nozzle => nozzle.index !== 0)) {
     throw new Error("Manual heating cannot verify the active nozzle and loaded material on this multi-nozzle printer. Use a checked sliced print instead.");
   }
   const requirements: PrinterStateRequirements = {
@@ -382,4 +489,36 @@ export function manualHeatingRequirements(status: any, model: string, nozzleDiam
   // 254 is external spool; 255 means no filament loaded. The caller must still declare a material.
   if (tray < 254) { requirements.useAMS = true; requirements.amsMapping = [tray]; }
   return requirements;
+}
+
+export type ExternalStorageState = "none" | "normal" | "abnormal" | "readonly";
+const EXTERNAL_STORAGE_STATES: readonly ExternalStorageState[] = ["none", "normal", "abnormal", "readonly"];
+
+/**
+ * The SD card or USB stick state, read as Bambu Studio does: the `sdcard`
+ * flag, then `home_flag` bits 8-9, then on firmware that reports cfg/fun/aux/stat
+ * the `aux` bits 12-13, each later source overriding the earlier one
+ * (DevStorage.cpp, DeviceManager.cpp parse_home_flag and parse_new_info).
+ */
+export function externalStorageState(raw: unknown): ExternalStorageState {
+  if (!object(raw)) return "none";
+  let state: ExternalStorageState = raw.sdcard === true ? "normal" : "none";
+  if (Number.isInteger(raw.home_flag)) state = EXTERNAL_STORAGE_STATES[(raw.home_flag >> 8) & 3];
+  if (["cfg", "fun", "aux", "stat"].every(key => key in raw) && typeof raw.aux === "string" && /^[0-9a-f]+$/i.test(raw.aux)) {
+    state = EXTERNAL_STORAGE_STATES[Number((BigInt(`0x${raw.aux}`) >> 12n) & 3n)];
+  }
+  return state;
+}
+
+let sequence = 0;
+/**
+ * Publish one MQTT command with a string sequence id and no ACK wait.
+ * Unpatched bambu-node 3.22.21 command classes send numeric sequence ids;
+ * bambu-printer-mcp patches them to strings for H2-series firmware. This
+ * server does not install that patch, so safety-relevant commands are
+ * published here with the patched wire shape: {category:{sequence_id,command,...}}.
+ */
+export function publishBambuCommand(printer: Pick<BambuClient, "publish">, category: "print" | "pushing" | "info", command: string, extra: Record<string, unknown> = {}): Promise<void> {
+  sequence = (sequence + 1) % 1_000_000_000;
+  return printer.publish({ [category]: { sequence_id: String(sequence), command, ...extra } });
 }

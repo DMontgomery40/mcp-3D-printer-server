@@ -23,6 +23,27 @@ import {
   type PrinterKind,
 } from "./contract.js";
 import { mapBambu } from "./progress.js";
+import {
+  counterpartSlots,
+  externalSpools,
+  normalizePrinterFilamentInventory,
+  type FilamentProfileSource,
+  type PrinterFilamentInventory,
+} from "../printers/bambu-filaments.js";
+
+/**
+ * The Bambu print-control dispatch for the configured connection (FULU's
+ * BambuNetwork); undefined keeps LAN MQTT. Resume's dispatch receives the
+ * checks to repeat before it sends.
+ */
+export type BambuControlRoute = (command: "stop" | "pause" | "resume") =>
+  ((assertActive?: () => void, beforeDispatch?: () => Promise<void>) => Promise<any>) | undefined;
+
+/** Bambu inventory hints: the model and nozzle select model-specific filament profiles. */
+export interface BambuFilamentOptions {
+  bambuModel?: string;
+  nozzleDiameter?: string;
+}
 
 export const DEFAULT_SNAPSHOT_TIMEOUT_MS = 8_000;
 const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
@@ -62,7 +83,9 @@ export class CounterpartService {
     private readonly http: AxiosInstance,
     private readonly server: { name: string; version: string },
     /** The slicer filament profile for a slot's material (undefined: the configured default). */
-    private readonly filamentProfile?: (material: string | undefined) => Promise<string | undefined>
+    private readonly filamentProfile?: (material: string | undefined) => Promise<string | undefined>,
+    /** The slicer whose BBL/filament profiles resolve Bambu trays by tray_info_idx. */
+    private readonly bambuProfileSource: () => FilamentProfileSource = () => ({})
   ) {}
 
   private generic(target: PrinterTarget): GenericPrinterImplementation | undefined {
@@ -99,10 +122,10 @@ export class CounterpartService {
       const status = await this.bambu(target).getStatus(target.host, target.port, target.apiKey).catch(() => undefined);
       const model = typeof status?.model === "string" && status.model !== "Unknown" ? status.model : process.env.BAMBU_MODEL?.trim();
       identity = { model: model || undefined, serial: typeof status?.serial === "string" && status.serial ? status.serial : undefined };
-      // This server has no Bambu camera, pause or resume path; bambu-printer-mcp does.
+      // This server has no Bambu camera path; bambu-printer-mcp does.
       capabilities = {
-        progress: true, layers: true, camera: overrideSnapshotUrl() ? "http-snapshot" : "none", filaments: "none",
-        pause: false, resume: false, cancel: true, print3mf: true, gcode: true,
+        progress: true, layers: true, camera: overrideSnapshotUrl() ? "http-snapshot" : "none", filaments: "ams",
+        pause: true, resume: true, cancel: true, print3mf: true, gcode: true,
       };
     } else {
       const { host, port, apiKey } = target;
@@ -141,11 +164,31 @@ export class CounterpartService {
     return "none";
   }
 
-  async filaments(target: PrinterTarget): Promise<{ slots: FilamentSlot[] }> {
-    const generic = this.generic(target);
-    if (!generic) {
-      throw new Error("Unsupported: Bambu AMS and external-spool inventory is read by bambu-printer-mcp's get_printer_filaments.");
+  /**
+   * bambu-printer-mcp's get_printer_filaments for Bambu: the live AMS inventory
+   * from MQTT. The first push from an idle printer can be sparse (model and
+   * modules); AMS data follows, so an empty live inventory is read once more.
+   */
+  async bambuFilaments(target: PrinterTarget, options: BambuFilamentOptions = {}): Promise<PrinterFilamentInventory & { slots: FilamentSlot[] }> {
+    const bambu = this.bambu(target);
+    const source = this.bambuProfileSource();
+    const read = async () => {
+      const status = await bambu.getStatus(target.host, target.port, target.apiKey);
+      if (status?.connected === false) throw new Error(`Could not read the printer's filament: ${status?.error ?? "not connected"}`);
+      return { status, inventory: normalizePrinterFilamentInventory(status, source, options.bambuModel, options.nozzleDiameter) };
+    };
+    let { status, inventory } = await read();
+    if (inventory.trays.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      ({ status, inventory } = await read());
     }
+    const external = externalSpools(status, source, options.bambuModel, options.nozzleDiameter);
+    return { slots: counterpartSlots(inventory, external), ...inventory };
+  }
+
+  async filaments(target: PrinterTarget, options: BambuFilamentOptions = {}): Promise<{ slots: FilamentSlot[] }> {
+    const generic = this.generic(target);
+    if (!generic) return this.bambuFilaments(target, options);
     const slots = await generic.counterpartFilaments(target.host, target.port, target.apiKey);
     const profiled = await Promise.all(slots.map(async (slot) => {
       const profile = await this.filamentProfile?.(slot.material).catch(() => undefined);
@@ -154,15 +197,19 @@ export class CounterpartService {
     return compact({ slots: profiled });
   }
 
-  async pause(target: PrinterTarget) {
+  /** Bambu: over the route that printed (route), else LAN MQTT. */
+  async pause(target: PrinterTarget, route?: BambuControlRoute) {
     const generic = this.generic(target);
-    if (!generic) throw new Error("Unsupported: pause_print for Bambu printers is provided by bambu-printer-mcp.");
+    if (!generic) return this.bambu(target).pauseJob(target.host, target.port, target.apiKey, route?.("pause"));
     return generic.pauseJob(target.host, target.port, target.apiKey);
   }
 
-  async resume(target: PrinterTarget) {
+  async resume(target: PrinterTarget, route?: BambuControlRoute) {
     const generic = this.generic(target);
-    if (!generic) throw new Error("Unsupported: resume_print for Bambu printers is provided by bambu-printer-mcp.");
+    if (!generic) {
+      const dispatch = route?.("resume");
+      return this.bambu(target).resumeJob(target.host, target.port, target.apiKey, dispatch);
+    }
     return generic.resumeJob(target.host, target.port, target.apiKey);
   }
 

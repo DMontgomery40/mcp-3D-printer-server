@@ -31,6 +31,15 @@ export const MACHINE_LIMITS: Readonly<Record<string, {nozzle: number; bed: numbe
   x2d: {nozzle:300,bed:120,chamber:65,volume:[256,256,260]},
 };
 
+/** Printers with two physical nozzles. Bambu Studio numbers the right/main nozzle 0
+ * (MAIN_EXTRUDER_ID) and the left/deputy nozzle 1 (DEPUTY_EXTRUDER_ID), and reports one
+ * virtual external-spool slot per nozzle: 255 (VIRTUAL_TRAY_MAIN_ID) and 254
+ * (VIRTUAL_TRAY_DEPUTY_ID). The single-nozzle H2S is deliberately absent. */
+export const DUAL_NOZZLE_MODELS: ReadonlySet<string> = new Set(['h2d','h2dpro','h2c','x2d']);
+export function isDualNozzleModel(model: unknown): boolean {
+  const normalized = normalizeModel(model);
+  return normalized !== undefined && DUAL_NOZZLE_MODELS.has(normalized);
+}
 export function normalizeModel(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   let model = value.trim().toLowerCase().replace(/^bambu\s*(?:lab\s*)?/, '').replace(/[\s_-]/g, '');
@@ -50,11 +59,6 @@ const MATERIAL_LIMITS: Readonly<Record<string, number>> = {
   HIPS:300, PP:300, POM:250, PET:350, PA:350, PC:350, PPA:350, PPS:350,
   'SUPPORT-PLA':290, 'SUPPORT-PA':350,
 };
-/** Independent nozzle policy ceiling for a declared material, or undefined when unknown. */
-export function materialNozzleCeiling(value: unknown): number | undefined {
-  const material = normalizeMaterial(value);
-  return material ? MATERIAL_LIMITS[material] : undefined;
-}
 export function normalizeMaterial(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const material = value.trim().toUpperCase().replace(/^BAMBU(?: LAB)?\s+/, '').replace(/^GENERIC\s+/, '');
@@ -95,4 +99,10 @@ export function validateTemperature(component: 'nozzle'|'bed'|'chamber', value: 
  * purge form and that no layer/deposition has begun. Never use for manual heat. */
 export function validateStartupPurgeTemperature(value: unknown, model: string, materials: string[]): number {
   return validate('nozzle',value,model,materials,true);
+}
+
+/** Independent nozzle policy ceiling for a declared material, or undefined when unknown. */
+export function materialNozzleCeiling(value: unknown): number | undefined {
+  const material = normalizeMaterial(value);
+  return material ? MATERIAL_LIMITS[material] : undefined;
 }
