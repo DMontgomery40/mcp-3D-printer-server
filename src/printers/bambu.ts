@@ -1,3 +1,4 @@
+import { PrinterRefusal } from "../refusal.js";
 import { PrinterImplementation } from "../types.js";
 import { createHash } from "node:crypto";
 import { createReadStream, readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from "node:fs";
@@ -782,7 +783,7 @@ export class BambuImplementation extends PrinterImplementation {
         if (verdict === undefined) {
           try { verdict = judge((await this.getSafetyStatus(host, serial, token))?.raw); } catch { /* stays unconfirmed */ }
         }
-        if (verdict === "rejected") throw new Error(COMMAND_REJECTED_MESSAGE);
+        if (verdict === "rejected") throw new PrinterRefusal("printer-command-rejected", COMMAND_REJECTED_MESSAGE);
         stillActive();
         return verdict ?? "unconfirmed";
       },

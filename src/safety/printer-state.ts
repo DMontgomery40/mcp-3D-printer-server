@@ -1,3 +1,4 @@
+import { PrinterRefusal } from "../refusal.js";
 import { HIDDEN_HMS } from "./hidden-hms.js";
 import type { BambuClient } from "bambu-node";
 import { isDualNozzleModel, normalizeMaterial, normalizeModel } from "./limits.js";
@@ -341,7 +342,7 @@ export function isPauseNotice(raw: Record<string, any>, requireIdle: boolean): b
 function validateErrors(raw: Record<string,any>, requireIdle: boolean, serial: string, model: string) {
   const state = typeof raw.gcode_state === "string" ? raw.gcode_state.toUpperCase() : "UNKNOWN";
   const terminal = isCancelledX2DJob(raw, model) || isFinishedP1SJob(raw, model);
-  if (requireIdle && !["IDLE","FINISH"].includes(state) && !terminal) throw new Error(`Printer state ${state} is not safely idle.`);
+  if (requireIdle && !["IDLE","FINISH"].includes(state) && !terminal) throw new PrinterRefusal("printer-not-ready", `Printer state ${state} is not safely idle.`);
   if (!requireIdle && !["IDLE","FINISH","RUNNING","PAUSE"].includes(state) && !terminal) throw new Error(`Printer state ${state} is unknown or failed.`);
   if (finiteNumber(raw.print_error) !== 0 && !isPauseNotice(raw, requireIdle)) throw new Error("Printer reports a print error or did not report its error state.");
   if (!Array.isArray(raw.hms)) throw new Error("Printer HMS error state is missing or malformed.");

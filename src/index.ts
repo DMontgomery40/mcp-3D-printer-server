@@ -37,6 +37,7 @@ import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { PRINT_QUALITY_PROPERTIES, withPrintQuality } from "./slicer/print-quality.js";
+import { PrinterRefusal } from "./refusal.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
 import { annotateTools } from "./tool-annotations.js";
@@ -736,6 +737,8 @@ type StructuredToolError = {
   suggestion: string;
   message: string;
   tool: string;
+  /** A stable refusal code (src/refusal.ts) when the printer refused; clients act on it, not on the words. */
+  code?: string;
   slicer?: Record<string, unknown>;
   /** The slicer's own result.json, verbatim. */
   slicer_result?: Record<string, unknown>;
@@ -3185,7 +3188,9 @@ class ThreeDPrinterMCPServer {
                 // Report what the printer did, not merely that a command was published.
             } catch (printError) {
                  console.error(`Error starting 3MF print for ${threeMfFilename}:`, printError);
-                 throw new Error(`Failed to start print: ${(printError as Error).message}`);
+                 const wrapped = `Failed to start print: ${(printError as Error).message}`;
+                 // A printer refusal keeps its code through the wrap: clients act on it (src/refusal.ts).
+                 throw printError instanceof PrinterRefusal ? new PrinterRefusal(printError.code, wrapped) : new Error(wrapped);
             }
 
             break;
@@ -3515,6 +3520,16 @@ class ThreeDPrinterMCPServer {
   }
 
   private toStructuredToolError(tool: string, message: string, error?: unknown): StructuredToolError {
+    if (error instanceof PrinterRefusal) {
+      return {
+        status: "error",
+        retryable: false,
+        suggestion: "The printer refused this and nothing is printing. Retrying unchanged repeats the refusal: fix the printer's state or settings named in the error first.",
+        message,
+        tool,
+        code: error.code,
+      };
+    }
     // Slicer failures are local profile/slicer problems, never printer connectivity.
     if (error instanceof SlicerError) {
       return {

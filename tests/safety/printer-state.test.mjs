@@ -311,5 +311,6 @@ test("a paused job's own pause notice does not block Resume, and nothing else is
   const paused = fresh({ gcode_state: "PAUSE", print_error: PAUSE_NOTICE });
   assert.doesNotThrow(() => check(paused, req({ requireIdle: false })));
   assert.throws(() => check(paused, req()), /not safely idle|print error/);
+  assert.throws(() => check({ ...paused, print_error: 0 }, req()), error => error.code === "printer-not-ready" || /print error/.test(error.message));
   assert.throws(() => check(fresh({ print_error: PAUSE_NOTICE })), /print error/, "an idle printer reporting it still refuses a new job");
 });
