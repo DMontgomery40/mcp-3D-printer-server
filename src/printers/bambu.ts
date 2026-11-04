@@ -27,6 +27,7 @@ import {
 import { installBambuNodeRejectionGuard } from "./bambu-node-guard.js";
 import { requireHumanConfirmation, type ConfirmHardware } from "../safety/confirmation.js";
 import { assertExpectedPeaks, validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "../safety/expected-peaks.js";
+import { controlReply, refusedControlMessage, type ControlReply } from "../control-reply.js";
 
 export interface BambuPrintOptionsInternal {
   projectName: string;
@@ -63,6 +64,50 @@ interface ProjectFileMetadata {
 }
 
 const COMMAND_SETTLE_MS = 300;
+
+/**
+ * Pause, Resume or Stop exactly as Bambu Studio sends them (MachineObject::command_task_*), with this server's own
+ * 32-bit sequence id, so the printer's answer to this one control can be told apart from any other report.
+ */
+function studioControl(command: "stop" | "pause" | "resume") {
+  const sequenceId = String(20_000 + (Date.now() % 1_000_000));
+  return { command, sequenceId, send: (printer: Pick<BambuClient, "publish">) => printer.publish({ print: { command, param: "", sequence_id: sequenceId } }) };
+}
+
+/** How long a control on the direct local network waits for the printer's answer (BAMBU_CONTROL_REPLY_MS, 0-30000). */
+function controlReplyMs(): number {
+  const configured = Number(process.env.BAMBU_CONTROL_REPLY_MS);
+  return Number.isFinite(configured) && configured >= 0 ? Math.min(configured, 30_000) : 5_000;
+}
+
+/**
+ * The printer's answer to one control on its report topic (bambu-node re-emits every message as rawMessage).
+ * Started before the publish so a fast answer is not missed; undefined when none arrives in time.
+ */
+function watchControlReply(printer: unknown, command: string, sequenceId: string, ms: number): Promise<ControlReply | undefined> {
+  const emitter = printer as any;
+  if (ms <= 0 || typeof emitter?.on !== "function" || typeof emitter?.off !== "function") return Promise.resolve(undefined);
+  return new Promise(resolve => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onMessage = (_topic: string, payload: Buffer | string) => {
+      const reply = controlReply(String(payload), command, sequenceId);
+      if (reply) finish(reply);
+    };
+    const finish = (reply: ControlReply | undefined) => { clearTimeout(timer); emitter.off("rawMessage", onMessage); resolve(reply); };
+    timer = setTimeout(() => finish(undefined), ms);
+    emitter.on("rawMessage", onMessage);
+  });
+}
+
+/** Send one direct control and judge it by the printer's answer; a printer not in Developer Mode refuses unsigned ones. */
+async function sendDirectControl(printer: BambuClient, command: "stop" | "pause" | "resume"): Promise<ControlReply | undefined> {
+  const control = studioControl(command);
+  const answered = watchControlReply(printer, command, control.sequenceId, controlReplyMs());
+  await control.send(printer);
+  const reply = await answered;
+  if (reply && !reply.accepted) throw new Error(refusedControlMessage(command, "the local network", reply.errCode, true));
+  return reply;
+}
 /** HMS 0500-0500-0001-0007: firmware 01.08.05+ rejected an unsigned MQTT command. */
 const COMMAND_VERIFICATION_HMS = { attr: 0x05000500, code: 0x00010007 };
 const COMMAND_REJECTED_MESSAGE =
@@ -766,8 +811,8 @@ export class BambuImplementation extends PrinterImplementation {
     try {
       if (dispatch) return await dispatch();
       const printer = await this.getPrinter(host, serial, token);
-      await publishBambuCommand(printer, "print", "stop", { param: "" });
-      return { status: "success", message: "Cancel command sent successfully." };
+      const reply = await sendDirectControl(printer, "stop");
+      return { status: "success", confirmed: Boolean(reply), message: reply ? "The printer accepted Stop." : "Cancel command sent successfully." };
     } catch (error) {
       throw new Error(`Failed to cancel print: ${(error as Error).message}`);
     }
@@ -782,9 +827,9 @@ export class BambuImplementation extends PrinterImplementation {
         return { status: "success", message: "Pause command sent successfully.", ...result, action: "pause" };
       }
       const printer = await this.getPrinter(host, serial, token);
-      await publishBambuCommand(printer, "print", "pause", { param: "" });
-      await sleep(COMMAND_SETTLE_MS);
-      return { status: "success", action: "pause", message: "Pause command sent successfully." };
+      const reply = await sendDirectControl(printer, "pause");
+      if (!reply) await sleep(COMMAND_SETTLE_MS);
+      return { status: "success", action: "pause", confirmed: Boolean(reply), message: reply ? "The printer accepted Pause." : "Pause command sent successfully." };
     } catch (error) {
       throw new Error(`Failed to pause print: ${(error as Error).message}`);
     }
@@ -847,9 +892,9 @@ export class BambuImplementation extends PrinterImplementation {
       }
       const printer = await this.getPrinter(host, serial, token);
       assertActive();
-      await publishBambuCommand(printer, "print", "resume", { param: "" });
-      await sleep(COMMAND_SETTLE_MS);
-      return { status: "success", action: "resume", message: `Resume command sent for ${jobName}.`, jobName, bytesVerified };
+      const reply = await sendDirectControl(printer, "resume");
+      if (!reply) await sleep(COMMAND_SETTLE_MS);
+      return { status: "success", action: "resume", confirmed: Boolean(reply), message: reply ? `The printer accepted Resume for ${jobName}.` : `Resume command sent for ${jobName}.`, jobName, bytesVerified };
     });
   }
 

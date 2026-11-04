@@ -266,6 +266,55 @@ test("an unverified plug-in route resume without an elicitation client is refuse
   assert.deepEqual(job.published(), []);
 });
 
+/** A printer client that answers each control on its report topic, as bambu-node re-emits it (rawMessage). */
+function answeringClient(events, answer) {
+  const listeners = new Set();
+  return {
+    on: (name, listener) => { if (name === "rawMessage") listeners.add(listener); },
+    off: (name, listener) => { if (name === "rawMessage") listeners.delete(listener); },
+    publish: async (payload) => {
+      events.push({ action: "publish", payload });
+      const reply = answer(payload.print);
+      if (reply) setTimeout(() => {
+        const text = JSON.stringify({ print: { command: payload.print.command, param: "", sequence_id: payload.print.sequence_id, ...reply } });
+        for (const listener of [...listeners]) listener(`device/${serial}/report`, Buffer.from(text));
+      }, 10);
+    },
+  };
+}
+
+// Developer Mode connection (ported from bambu-printer-mcp): a printer not really in LAN Only + Developer Mode
+// refuses unsigned controls (84033543, 0x05024007); that must be said instead of "sent".
+for (const command of ["stop", "pause", "resume"]) {
+  test(`a direct ${command} the printer refuses as unsigned says it isn't in Developer Mode; an answered one is confirmed`, async (t) => {
+    for (const [answer, expected] of [[{ err_code: 84033543 }, "refused"], [{ result: "success" }, "accepted"]]) {
+      const job = await pausedJob(t);
+      job.printer.getPrinter = async () => { job.events.push({ action: "connect" }); return answeringClient(job.events, () => answer); };
+      const send = command === "stop" ? job.printer.cancelJob(host, "8883", apiKey)
+        : command === "pause" ? job.printer.pauseJob(host, "8883", apiKey) : job.printer.resumeJob(host, "8883", apiKey);
+      if (expected === "refused") {
+        await assert.rejects(send, /refused \w+ \(error 05024007\): it isn't in LAN Only and Developer Mode.*Bambu Studio or Bambu Handy/);
+      } else {
+        const result = await send;
+        assert.equal(result.confirmed, true);
+        assert.match(result.message, /accepted/);
+      }
+      const sent = job.published().at(-1).payload.print;
+      assert.deepEqual([sent.command, sent.param], [command, ""], "Bambu Studio's own control JSON");
+    }
+  });
+}
+
+test("a direct control with no answer still reports it was sent, unconfirmed", async (t) => {
+  const job = await pausedJob(t);
+  process.env.BAMBU_CONTROL_REPLY_MS = "50";
+  t.after(() => { delete process.env.BAMBU_CONTROL_REPLY_MS; });
+  job.printer.getPrinter = async () => answeringClient(job.events, () => undefined);
+  const result = await job.printer.pauseJob(host, "8883", apiKey);
+  assert.equal(result.confirmed, false);
+  assert.match(result.message, /Pause command sent/);
+});
+
 test("pause and stop are never gated and publish over LAN MQTT", async () => {
   const { printer, events } = isolatedPrinter(safetyStatus({ state: "RUNNING" }));
   const paused = await printer.pauseJob(host, "8883", apiKey);
