@@ -47,7 +47,7 @@ const shellQuoteArg = value => `'${String(value).replace(/'/g, "'\\''")}'`;
 
 // Every variable the fake bridge touches, restored once per test so several bridges in one test
 // cannot restore each other's values out of order.
-const FAKE_FULU_ENV = ["BAMBU_NETWORK_BRIDGE_COMMAND", "BAMBU_NETWORK_CONFIG_DIR", "FAKE_FULU_LOG", "PJARCZAK_BAMBU_PLUGIN_DIR",
+const FAKE_FULU_ENV = ["FAKE_FULU_WITH_RECORD_RESULT", "FAKE_FULU_START_PRINT_RESULT", "BAMBU_NETWORK_BRIDGE_COMMAND", "BAMBU_NETWORK_CONFIG_DIR", "FAKE_FULU_LOG", "PJARCZAK_BAMBU_PLUGIN_DIR",
   "BAMBU_NETWORK_USER_INFO", "BAMBU_NETWORK_CERT_DIR", "PJARCZAK_BAMBU_NETWORK_SO", "PJARCZAK_BAMBU_SOURCE_SO",
   "FAKE_FULU_EXIT_CODE", "FAKE_FULU_PUBLISH_FAILURES", "FAKE_FULU_UNSUPPORTED", "FAKE_FULU_CONNECT_STATUS", "FAKE_FULU_CONTROL_RESULT",
   "FAKE_FULU_CERT_EVENT", "FAKE_FULU_CERT_DELAY_MS", "FAKE_FULU_REQUIRE_CERT_READY", "FAKE_FULU_CONTROL_FAILURES",
@@ -210,6 +210,44 @@ test("a cloud print starts only after the printer's cloud session and certificat
   const print = recorded.findIndex(c => c.method === "net.start_print");
   assert.ok(print > recorded.findIndex(c => c.method === "net.install_device_cert" && c.payload.lan_only === false));
   assert.ok(recorded.slice(0, print).some(c => c.method === "bridge.poll_events"));
+});
+
+// Nov 4: net.start_print on the real P1S always returned -3120 (HTTP 403 "internal blocking"). Bambu Studio
+// sends a cloud-bound printer it can reach on the LAN with record first (PrintJob.cpp), then start_print.
+const FAST_CLOUD = {connectTimeoutMs: 2000, pollMs: 10, settleMs: 20, certificateWaitMs: 500};
+const cloudJob = {client_job_id: 7, params: {dev_id: "01PTEST", comments: ""}};
+test("a cloud print goes with record first and stops there when it works, as Bambu Studio does", async t => {
+  const {bridge, calls} = await fakeFuluBridge(t, {FAKE_FULU_LOGGED_IN: "1"});
+  const sent = await bridge.startCloudPrint("01PTEST", "net.start_local_print_with_record", cloudJob, {}, () => {}, FAST_CLOUD, "net.start_print");
+  assert.equal(sent.result.value, 0);
+  assert.equal(sent.firstFailure, undefined);
+  const recorded = calls().filter(c => c.method);
+  assert.ok(recorded.findIndex(c => c.method === "net.start_local_print_with_record") > recorded.findIndex(c => c.method === "net.install_device_cert" && c.payload.lan_only === false));
+  assert.equal(recorded.some(c => c.method === "net.start_print"), false);
+  assert.equal(recorded.some(c => c.method === "net.connect_printer"), false, "sent in the cloud session, not a LAN session");
+});
+
+test("a cloud print whose recorded send fails is sent once through the cloud, marked as Studio marks it", async t => {
+  const {bridge, calls} = await fakeFuluBridge(t, {FAKE_FULU_LOGGED_IN: "1", FAKE_FULU_WITH_RECORD_RESULT: "-2120"});
+  const checked = [];
+  const sent = await bridge.startCloudPrint("01PTEST", "net.start_local_print_with_record", cloudJob,
+    {beforeDispatch: async method => { checked.push(method); }}, () => {}, FAST_CLOUD, "net.start_print");
+  assert.equal(sent.firstFailure, -2120);
+  assert.equal(sent.result.value, 0);
+  const prints = calls().filter(c => c.method === "net.start_print");
+  assert.equal(prints.length, 1);
+  assert.equal(prints[0].payload.params.comments, "failed(-2120)");
+  assert.deepEqual(checked.filter(m => m.includes("start_")), ["net.start_local_print_with_record", "net.start_print"], "the printer is checked again before the second send");
+});
+
+test("a cloud print sends no second job after a failure that may have reached the printer, or one Studio stops on", async t => {
+  for (const failure of ["-26", "-4030", "-1", "-2100", "-2040"]) {
+    const {bridge, calls} = await fakeFuluBridge(t, {FAKE_FULU_LOGGED_IN: "1", FAKE_FULU_WITH_RECORD_RESULT: failure});
+    const sent = await bridge.startCloudPrint("01PTEST", "net.start_local_print_with_record", cloudJob, {}, () => {}, FAST_CLOUD, "net.start_print");
+    assert.equal(sent.result.value, Number(failure));
+    assert.equal(calls().some(c => c.method === "net.start_print"), false, `no second job after ${failure}`);
+    await bridge.stop();
+  }
 });
 
 test("a cloud print sends nothing when the plug-in is not signed in", async t => {

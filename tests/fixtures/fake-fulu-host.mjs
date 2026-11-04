@@ -106,6 +106,8 @@ function handle(method, payload) {
       reply("on_message", payload);
       return ok(0);
     }
+    case "net.start_local_print_with_record": return ok(Number(process.env.FAKE_FULU_WITH_RECORD_RESULT ?? 0));
+    case "net.start_print": return ok(Number(process.env.FAKE_FULU_START_PRINT_RESULT ?? 0));
     case "net.start_local_print": {
       const jobId = payload.client_job_id;
       queue("job.update_status", { job_id: jobId, status: 1, code: 100, msg: "0.0M/0.0M" });
