@@ -690,6 +690,8 @@ Options for the Bambu-compatible path:
 
 `layer_height` (mm), `wall_loops` (a whole number), and `sparse_infill_density` (such as `"15%"`) are written over the selected profile on every slicer: as the process keys `layer_height`, `wall_loops`, and `sparse_infill_density` for Bambu Studio and OrcaSlicer, and as `--layer-height`, `--perimeters`, and `--fill-density` for PrusaSlicer and Slic3r. They win over a template. Cura refuses them; set them in its definition file. Your profile files are never modified.
 
+`enable_support` (true or false), `support_type` (`normal(auto)`, `tree(auto)`, `normal(manual)` or `tree(manual)`) and `support_threshold_angle` (0 to 90 degrees; 0 lets the slicer decide) are written over the selected process profile as the same-named Bambu Studio and OrcaSlicer keys. PrusaSlicer, Slic3r and Cura refuse them; set supports in their own profile.
+
 Generic slicers keep their own profile formats: PrusaSlicer and Slic3r load one exported config, plus an optional filament preset `.ini` from `load_filaments`, and generic OrcaSlicer takes `machine.json;process.json`, optionally followed by `|filament.json`. `slicer_type`, `slicer_profile`, and `filament_profile` fall back to `SLICER_TYPE`, `SLICER_PROFILE`, and `FILAMENT_PROFILE`. The slicer executable comes from `SLICER_PATH`; a per-call `slicer_path` requires `MCP_ALLOW_EXECUTABLE_ARG=1`. See the [slicing guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing).
 
 #### slice_with_template

@@ -174,6 +174,36 @@ test("slice_stl never passes the raw inherited machine preset to the CLI (P1S re
   assert.equal(args.at(-1), SAMPLE_STL);
 });
 
+test("slice_stl writes enable_support, support_type and support_threshold_angle over the process preset", async (t) => {
+  const install = await createFakeInstall(t);
+  const { call, client } = await startServer(t, install);
+  const { tools } = await client.listTools();
+  const schema = tools.find(tool => tool.name === "slice_stl").inputSchema.properties;
+  assert.deepEqual([schema.enable_support.type, schema.support_type.enum, schema.support_threshold_angle.type],
+    ["boolean", ["normal(auto)", "tree(auto)", "normal(manual)", "tree(manual)"], "integer"]);
+  const result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", nozzle_diameter: "0.4",
+    enable_support: true, support_type: "tree(auto)", support_threshold_angle: 35 });
+  assert.equal(result.isError, undefined, text(result));
+  const args = await install.args();
+  const processPath = args[args.indexOf("--load-settings") + 1].split(";")[1];
+  const processConfig = JSON.parse(await fs.readFile(processPath, "utf8"));
+  assert.deepEqual([processConfig.enable_support, processConfig.support_type, processConfig.support_threshold_angle, processConfig.layer_height],
+    ["1", "tree(auto)", "35", "0.2"], "only the support keys change");
+  for (const bad of [{ support_type: "organic" }, { enable_support: "yes" }, { support_threshold_angle: 120 }]) {
+    const refused = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", nozzle_diameter: "0.4", ...bad });
+    assert.equal(refused.isError, true, JSON.stringify(bad));
+  }
+});
+
+test("support overrides use Studio's keys and forms, and PrusaSlicer refuses them", async () => {
+  const { orcaProcessOverrides, prusaSlicerOverrideArgs } = await import("../../dist/stl/stl-manipulator.js");
+  assert.deepEqual(orcaProcessOverrides({ enableSupport: true, supportType: "tree(auto)", supportThresholdAngle: 35 }),
+    { enable_support: "1", support_type: "tree(auto)", support_threshold_angle: "35" });
+  assert.deepEqual(orcaProcessOverrides({ enableSupport: false }), { enable_support: "0" });
+  assert.throws(() => prusaSlicerOverrideArgs({ enableSupport: true }), /Bambu Studio and OrcaSlicer only/);
+  assert.deepEqual(prusaSlicerOverrideArgs({ layerHeight: 0.2 }), ["--layer-height", "0.2"]);
+});
+
 test("a Bambu printer with no SLICER_TYPE slices with Bambu Studio, as bambu-printer-mcp does", async (t) => {
   // FULU OrcaSlicer-bambulab v1.0.0's CLI segfaults on every slice (FULU #56/#57), so it is no longer the default.
   const install = await createFakeInstall(t);
