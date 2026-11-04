@@ -688,6 +688,8 @@ Options for the Bambu-compatible path:
 | `scale`, `rotate`, `rotate_x`, `rotate_y` | Transform before slicing (uniform scale; rotations in degrees). For OrcaSlicer STL input the server applies them to a mesh copy in Orca's order to avoid a CLI crash; see [OrcaSlicer CLI limits](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing) |
 | `enable_timelapse`, `allow_mix_temp` | Insert timelapse parking moves; allow filaments with different temperature needs on one plate |
 
+`quality` (`draft`, `standard`, `fine`) and `strength` (`standard`, `strong`, `max`) let a client send the person's choice without slicer numbers: the server picks the layer height for the nozzle in use (0.28 and 0.12 mm on a 0.4 mm nozzle) and the walls and infill (4 walls at 25%, 6 at 40%); standard keeps the preset, and explicit values win.
+
 `layer_height` (mm), `wall_loops` (a whole number), and `sparse_infill_density` (such as `"15%"`) are written over the selected profile on every slicer: as the process keys `layer_height`, `wall_loops`, and `sparse_infill_density` for Bambu Studio and OrcaSlicer, and as `--layer-height`, `--perimeters`, and `--fill-density` for PrusaSlicer and Slic3r. They win over a template. Cura refuses them; set them in its definition file. Your profile files are never modified.
 
 `enable_support` (true or false), `support_type` (`normal(auto)`, `tree(auto)`, `normal(manual)` or `tree(manual)`) and `support_threshold_angle` (0 to 90 degrees; 0 lets the slicer decide) are written over the selected process profile as the same-named Bambu Studio and OrcaSlicer keys. PrusaSlicer, Slic3r and Cura refuse them; set supports in their own profile.

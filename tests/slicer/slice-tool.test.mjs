@@ -732,6 +732,15 @@ if (args.includes("--outputdir")) {
       ["--layer-height", "0.12", "--perimeters", "2", "--fill-density", "15%"]);
     assert.equal(args.at(-1), SAMPLE_STL);
   }
+  // quality and strength: the server owns the numbers, for PrusaSlicer as for Bambu-compatible slicers.
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", quality: "draft", strength: "max", nozzle_diameter: "0.6" });
+  assert.equal(result.isError, undefined, text(result));
+  args = JSON.parse(await fs.readFile(capture, "utf8"));
+  assert.deepEqual(args.slice(args.indexOf("--layer-height"), args.indexOf("--layer-height") + 6),
+    ["--layer-height", "0.42", "--perimeters", "6", "--fill-density", "40%"], "draft scales with a 0.6 mm nozzle");
+  result = await generic.call("slice_stl", { stl_path: SAMPLE_STL, slicer_type: "prusaslicer", quality: "standard", strength: "standard" });
+  assert.equal(result.isError, undefined, text(result));
+  assert.equal(JSON.parse(await fs.readFile(capture, "utf8")).includes("--layer-height"), false, "standard leaves the preset alone");
   const machine = path.join(root, "machine.json");
   const processProfile = path.join(root, "process.json");
   await fs.writeFile(machine, JSON.stringify({ type: "machine", name: "My printer" }));
@@ -852,4 +861,12 @@ test("unsupported slicers refuse pause_at_layers before running rather than igno
   assert.equal(result.isError, true);
   assert.match(text(result), /Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI/);
   assert.equal(existsSync(path.join(install.root, "args.json")), false);
+});
+
+test("quality and strength map to slicer settings; explicit values win; bad values are refused", async () => {
+  const { withPrintQuality } = await import("../../dist/slicer/print-quality.js");
+  assert.deepEqual(withPrintQuality({ quality: "fine", strength: "strong" }, 0.4), { quality: "fine", strength: "strong", layer_height: 0.12, wall_loops: 4, sparse_infill_density: "25%" });
+  assert.equal(withPrintQuality({ quality: "fine", layer_height: 0.16 }, 0.4).layer_height, 0.16);
+  assert.deepEqual(withPrintQuality({ stl_path: "x" }, 0.4), { stl_path: "x" });
+  assert.throws(() => withPrintQuality({ quality: "ultra" }, 0.4), /quality must be one of/);
 });
