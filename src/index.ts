@@ -34,7 +34,7 @@ import { createServer as createHttpServer, type IncomingMessage, type Server as 
 import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
-import { STLManipulator, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
+import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
@@ -396,6 +396,12 @@ const SLICE_TOOL_PROPERTIES = {
     type: "string",
     description: "Sparse infill density such as \"15%\" (0–100%), written over the selected process profile (Orca/Bambu Studio sparse_infill_density; PrusaSlicer --fill-density). Not mapped for Cura.",
   },
+  enable_support: { type: "boolean", description: "Turn support generation on or off (Orca/Bambu Studio enable_support), written over the selected process profile. Bambu Studio and OrcaSlicer only." },
+  support_type: { type: "string", enum: [...SUPPORT_TYPES], description: "Support style (Orca/Bambu Studio support_type), written over the selected process profile. Bambu Studio and OrcaSlicer only." },
+  support_threshold_angle: {
+    type: "integer", minimum: 0, maximum: 90,
+    description: "Overhang threshold in degrees for automatic supports (Orca/Bambu Studio support_threshold_angle; 0 lets the slicer decide). Bambu Studio and OrcaSlicer only.",
+  },
 };
 
 /**
@@ -428,7 +434,7 @@ const OUTPUT_SCHEMA_TOOLS = new Set([
   "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
 ]);
 
-/** layer_height / wall_loops / sparse_infill_density (PRD §8.4), validated before slicing. */
+/** layer_height / wall_loops / sparse_infill_density / support settings (PRD §8.4), validated before slicing. */
 function parseProcessOverrides(args: Record<string, unknown> | undefined): ProcessOverrides {
   const overrides: ProcessOverrides = {};
   if (args?.layer_height !== undefined) {
@@ -454,6 +460,24 @@ function parseProcessOverrides(args: Record<string, unknown> | undefined): Proce
       throw new Error("Invalid sparse_infill_density: expected a percentage such as \"15%\" from 0% to 100%.");
     }
     overrides.sparseInfillDensity = `${value}%`;
+  }
+  if (args?.enable_support !== undefined) {
+    if (typeof args.enable_support !== "boolean") throw new Error("Invalid enable_support: expected true or false.");
+    overrides.enableSupport = args.enable_support;
+  }
+  if (args?.support_type !== undefined) {
+    const value = args.support_type;
+    if (typeof value !== "string" || !(SUPPORT_TYPES as readonly string[]).includes(value)) {
+      throw new Error(`Invalid support_type: expected one of ${SUPPORT_TYPES.join(", ")}.`);
+    }
+    overrides.supportType = value;
+  }
+  if (args?.support_threshold_angle !== undefined) {
+    const value = args.support_threshold_angle;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 90) {
+      throw new Error("Invalid support_threshold_angle: expected an integer number of degrees from 0 to 90.");
+    }
+    overrides.supportThresholdAngle = value;
   }
   return overrides;
 }

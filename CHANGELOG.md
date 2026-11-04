@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.28] – 2026-11-04
+
+### Added
+
+- `slice_stl` takes `enable_support`, `support_type` (`normal(auto)`, `tree(auto)`, `normal(manual)`, `tree(manual)`) and `support_threshold_angle`, written over the selected process profile like `layer_height` and `wall_loops`. Bambu Studio and OrcaSlicer only; PrusaSlicer and Cura refuse them. Tested with the fake Bambu Studio CLI install; bambu-printer-mcp 1.1.54 checks the same keys against the installed Bambu Studio 02.08.02.61. No printer was involved.
+
 ## [1.2.27] – 2026-11-04
 
 ### Added

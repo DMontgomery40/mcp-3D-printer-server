@@ -36,6 +36,23 @@ export interface ProcessOverrides {
   wallLoops?: number;
   /** e.g. "15%" */
   sparseInfillDensity?: string;
+  enableSupport?: boolean;
+  /** normal(auto), tree(auto), normal(manual) or tree(manual) */
+  supportType?: string;
+  /** degrees, 0-90 */
+  supportThresholdAngle?: number;
+}
+
+/** Bambu Studio's and OrcaSlicer's support_type values. */
+export const SUPPORT_TYPES = ["normal(auto)", "tree(auto)", "normal(manual)", "tree(manual)"] as const;
+
+/** Support overrides only Bambu Studio and OrcaSlicer take; PrusaSlicer and Cura refuse them. */
+function supportOverrideNames(overrides: ProcessOverrides | undefined): string[] {
+  return [
+    overrides?.enableSupport !== undefined ? "enable_support" : "",
+    overrides?.supportType !== undefined ? "support_type" : "",
+    overrides?.supportThresholdAngle !== undefined ? "support_threshold_angle" : "",
+  ].filter(Boolean);
 }
 
 /** Orca/Bambu Studio process keys; profile JSON values are strings. */
@@ -44,11 +61,16 @@ export function orcaProcessOverrides(overrides: ProcessOverrides | undefined): R
   if (overrides?.layerHeight !== undefined) keys.layer_height = String(overrides.layerHeight);
   if (overrides?.wallLoops !== undefined) keys.wall_loops = String(overrides.wallLoops);
   if (overrides?.sparseInfillDensity !== undefined) keys.sparse_infill_density = overrides.sparseInfillDensity;
+  if (overrides?.enableSupport !== undefined) keys.enable_support = overrides.enableSupport ? "1" : "0";
+  if (overrides?.supportType !== undefined) keys.support_type = overrides.supportType;
+  if (overrides?.supportThresholdAngle !== undefined) keys.support_threshold_angle = String(overrides.supportThresholdAngle);
   return keys;
 }
 
 /** PrusaSlicer/Slic3r command-line options, which override the loaded config. */
 export function prusaSlicerOverrideArgs(overrides: ProcessOverrides | undefined): string[] {
+  const unsupported = supportOverrideNames(overrides);
+  if (unsupported.length) throw new Error(`${unsupported.join(", ")} apply to Bambu Studio and OrcaSlicer only; set them in the PrusaSlicer config passed as slicer_profile.`);
   const args: string[] = [];
   if (overrides?.layerHeight !== undefined) args.push('--layer-height', String(overrides.layerHeight));
   if (overrides?.wallLoops !== undefined) args.push('--perimeters', String(overrides.wallLoops));
@@ -1295,7 +1317,7 @@ export class STLManipulator extends EventEmitter {
           case 'cura':
             if (Object.keys(orcaProcessOverrides(processOverrides)).length) {
               throw new SlicerError('preparation',
-                'layer_height, wall_loops and sparse_infill_density are not mapped for Cura; set them in the Cura definition passed as slicer_profile.',
+                'layer_height, wall_loops, sparse_infill_density and the support settings are not mapped for Cura; set them in the Cura definition passed as slicer_profile.',
                 { slicerType, slicerPath });
             }
             // CuraEngine CLI args are different, often requiring -s for settings
