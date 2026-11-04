@@ -62,7 +62,7 @@ test("annotations follow what each tool does", () => {
     is(name, { readOnlyHint: false, destructiveHint: false, openWorldHint: true });
   }
   // An optional argument that writes a file or opens an application makes the tool not read-only.
-  is("get_slice_settings", { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+  is("get_slice_settings", { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
   is("fusion_mcp_status", { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
   // Local STL edits and slices write a new file each call.
   for (const name of ["scale_stl", "lay_flat", "slice_stl", "generate_stl_visualization"]) {

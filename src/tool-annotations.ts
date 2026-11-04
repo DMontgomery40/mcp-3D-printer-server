@@ -59,7 +59,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   slice_with_template: write(false, false, false),
   list_templates: read(false),
   save_template: write(true, true, false), // replaces a template of the same name
-  get_slice_settings: write(false, true, false), // a 3MF's settings are extracted to a file in TEMP_DIR
+  get_slice_settings: write(true, true, false), // extracts a 3MF's settings to a TEMP_DIR path named after the file; a same-named 3MF replaces it
   confirm_temperatures: read(false),
   inspect_print_file: read(false),
 
