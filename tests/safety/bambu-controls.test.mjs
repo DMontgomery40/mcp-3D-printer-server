@@ -112,6 +112,21 @@ test("a matching inspected paused job resumes after its bytes are re-read and a 
   assert.deepEqual(job.prompts, [], "a resume whose bytes were re-read does not ask");
 });
 
+// Ported from bambu-printer-mcp (fdca5a1): a P1S paused by Pause or by a pause_at_layers stop reports
+// print_error 0x03008013 (0300_8013). Without this, Resume never reached a paused printer.
+test("a job paused with its own pause notice (0300_8013) resumes; any other print error still refuses", async (t) => {
+  const job = await pausedJob(t, { confirm: async () => false });
+  job.report = { ...job.report, print_error: 0x03008013 };
+  const result = await job.printer.resumeJob(host, "8883", apiKey);
+  assert.equal(result.status, "success");
+  assert.equal(job.published().at(-1).payload.print.command, "resume");
+
+  const other = await pausedJob(t, { confirm: async () => false });
+  other.report = { ...other.report, print_error: 0x0300400c };
+  await assert.rejects(other.printer.resumeJob(host, "8883", apiKey), /print error/);
+  assert.deepEqual(other.published(), [], "a filament or hardware pause sends nothing");
+});
+
 /** The same printer, as a new server process sees it after a restart: same storage, same paused report, same record folder. */
 function restarted(job, resumeStateDir) {
   const next = isolatedPrinter(undefined, { confirm: async () => true, resumeStateDir, files: job.files });

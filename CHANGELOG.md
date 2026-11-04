@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Resume a Bambu job that the printer paused itself. A P1S paused by Pause or by a `pause_at_layers` stop reports `print_error` 0300_8013 ("paused by the user" / "paused by the pause command in the file"), and Resume refused it as a print error, so a paused job could only be resumed at the printer. The notice is excused only for Resume, only while the printer reports PAUSE; any other print error still refuses, and starting a job still needs no error. Ported from bambu-printer-mcp.
+- FULU's BambuNetwork agent now receives the client headers FULU's own GUI sends before `net.start` (Bambu Studio 02.05.02.51 on Linux, with a per-install device id kept in the config folder). Bambu's cloud issues the printer-control certificate and creates print tasks for this client; without the headers the agent was an unknown client. `BAMBU_NETWORK_CLIENT_NAME` and `BAMBU_NETWORK_CLIENT_VERSION` override the name and version. Ported from bambu-printer-mcp.
+- Evidence: mocked Bambu MQTT/FTPS boundaries and the fake FULU host only; no printer was contacted.
+
 ## [1.2.26] – 2026-11-04
 
 ### Changed

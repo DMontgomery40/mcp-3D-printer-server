@@ -299,3 +299,17 @@ test('official H2C and H2D Pro returned serials agree with declared identity and
 const dualNozzleInfo={nozzle:{info:[{id:0,diameter:0.4,type:'HH01',stat:0},{id:1,diameter:0.4,type:'HH01',stat:0}]}};
 const x2d=(vir_slot,raw={})=>fresh({model_id:undefined,model:'X2D',device:dualNozzleInfo,ams:{ams:[{id:'0',tray:[0,1,2,3].map(id=>({id:String(id),tray_type:'PLA'}))}]},...(vir_slot===undefined?{}:{vir_slot}),...raw});
 const x2dReq=(extra={})=>req({model:'x2d',nozzleDiameters:[0.4,0.4],materials:['PLA','PLA','PLA','PLA','PLA'],useAMS:true,amsMapping:[0,1,2,3,255],filamentNozzleIndices:[0,0,0,0,0],...extra});
+
+// Ported from bambu-printer-mcp tests/pause-notice.test.mjs.
+test("a paused job's own pause notice does not block Resume, and nothing else is excused", () => {
+  const { isPauseNotice, PAUSE_NOTICE } = safety;
+  assert.equal(isPauseNotice({ gcode_state: "PAUSE", print_error: PAUSE_NOTICE }, false), true);
+  assert.equal(isPauseNotice({ gcode_state: "PAUSE", print_error: "50364435" }, false), true);
+  assert.equal(isPauseNotice({ gcode_state: "PAUSE", print_error: PAUSE_NOTICE }, true), false, "starting a new job still needs no error");
+  assert.equal(isPauseNotice({ gcode_state: "RUNNING", print_error: PAUSE_NOTICE }, false), false);
+  assert.equal(isPauseNotice({ gcode_state: "PAUSE", print_error: 0x0300400c }, false), false, "a filament or hardware pause is still an error");
+  const paused = fresh({ gcode_state: "PAUSE", print_error: PAUSE_NOTICE });
+  assert.doesNotThrow(() => check(paused, req({ requireIdle: false })));
+  assert.throws(() => check(paused, req()), /not safely idle|print error/);
+  assert.throws(() => check(fresh({ print_error: PAUSE_NOTICE })), /print error/, "an idle printer reporting it still refuses a new job");
+});
