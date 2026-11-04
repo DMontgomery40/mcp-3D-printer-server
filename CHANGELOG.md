@@ -35,6 +35,8 @@
 
 ### Fixed
 
+- Keep authenticated FULU Pause, Resume and Stop request IDs as strings in Studio's 20000–29999 window, with a shared counter across LAN, cloud and retries that wraps inside the window. A cloud-bound P1S 01.10 rejects larger IDs with 0502400A even when their signatures are valid. Preserve reply correlation and the delivery hold; remove guidance claiming controls require Studio/Handy or Developer Mode. Automated regressions cover both transports and wraparound; hardware validation is limited to the maintainer's P1S.
+
 - An `ams_mapping` object (and the 3MF's own mapping) is ordered by project filament index, as bambu-printer-mcp orders it. Before, its tray values were sorted, so `{"0": 3, "1": 0}` sent tray 0 for filament 0.
 - Bambu printers slice with Bambu Studio when `SLICER_TYPE` is not set, as bambu-printer-mcp does. The previous default, FULU OrcaSlicer-bambulab, crashes on every command-line slice in its only release (v1.0.0, macOS DMG and Linux builds; fixes in FULU #56 and #57 are not released), so `slice_stl`, estimates and auto-slicing failed for every Bambu user without a slicer setting. FULU's Orca stays fully supported with `SLICER_TYPE=orcaslicer-bambulab`.
 - A relative `TEMP_DIR` (such as `./temp`) is resolved against the server's working directory, as bambu-printer-mcp 1.1.44 does. Bambu Studio fails every 3MF export to a relative output folder ("Project export to temp/…/…_sliced.3mf failed").

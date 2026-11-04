@@ -73,6 +73,12 @@ export type CloudSession = {
 };
 let stateSequence = 0;
 const nextSequence = () => String(++stateSequence);
+// The signed Studio channel on P1S 01.10 accepts string IDs in [20000, 29999].
+// Larger IDs receive 0502400A even when the RSA signature is valid. Share the
+// counter across LAN/cloud controls and retries; never derive IDs from wall time.
+let controlSequence = 19_999;
+const nextControlSequence = () => String(controlSequence = controlSequence >= 29_999 ? 20_000 : controlSequence + 1);
+
 
 export type LocalPrinter = { devId: string; devIp: string; username: string; password: string; useSsl: boolean };
 export type BridgeJobUpdate = { status: unknown; code: unknown; msg: unknown };
@@ -702,8 +708,7 @@ export class BambuNetworkBridge {
       for (let attempt = 1; attempt <= timing.attempts; attempt++) {
         await beforeDispatch?.();
         assertActive();
-        // A 32-bit sequence like FULU's own counter (from 20000).
-        const sequenceId = String(20_000 + (Date.now() % 1_000_000));
+        const sequenceId = nextControlSequence();
         const result = await this.callWithAgent(method, {
           dev_id: printer.devId,
           msg: JSON.stringify({ print: { command, param: "", sequence_id: sequenceId } }),
@@ -839,7 +844,7 @@ export class BambuNetworkBridge {
       for (let attempt = 1; attempt <= timing.attempts; attempt++) {
         await beforeDispatch?.();
         assertActive();
-        const sequenceId = String(20_000 + (Date.now() % 1_000_000));
+        const sequenceId = nextControlSequence();
         const result = await this.callWithAgent(method, {
           dev_id: devId, msg: JSON.stringify({ print: { command, param: "", sequence_id: sequenceId } }), qos: 1, flag: 0,
         }, traced);

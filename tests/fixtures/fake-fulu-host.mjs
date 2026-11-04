@@ -28,7 +28,8 @@ const queue = (name, payload) => state.events.push({ agent: 1, name, payload });
 // The printer's answer to a control, signed as a P1S signs it; FAKE_FULU_REFUSE sets its err_code.
 const reply = (name, payload) => {
   const { command, sequence_id } = JSON.parse(payload.msg).print;
-  const print = process.env.FAKE_FULU_REFUSE ? { command, param: "", sequence_id, err_code: Number(process.env.FAKE_FULU_REFUSE) }
+  const invalidSequence = typeof sequence_id !== "string" || !/^2[0-9]{4}$/.test(sequence_id);
+  const print = invalidSequence ? {command, sequence_id, err_code: 84033546} : process.env.FAKE_FULU_REFUSE ? { command, param: "", sequence_id, err_code: Number(process.env.FAKE_FULU_REFUSE) }
     : { command, param: "", reason: "success", result: "success", sequence_id };
   setTimeout(() => queue(name, { dev_id: payload.dev_id, msg: JSON.stringify({ header: { sign_alg: "RSA_SHA256", sign_string: "FAKE" }, print }) }), 10);
 };

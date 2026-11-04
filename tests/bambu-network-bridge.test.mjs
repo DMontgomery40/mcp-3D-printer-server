@@ -84,6 +84,41 @@ async function fakeFuluBridge(t, env = {}, { wrapped = false } = {}) {
 
 const controlSends = (calls, command = "stop") => calls().filter(c => c.method === "net.send_message_to_printer" && JSON.parse(c.payload.msg).print?.command === command);
 
+
+// P1S 01.10, Nov 3: valid RSA signatures with IDs outside Studio's 20000–29999
+// window receive 0502400A. Numeric IDs fail too. Exercise the actual LAN/cloud sends.
+test("FULU controls keep unique string IDs in the Studio window, including wrap and retry", async t => {
+  const {bridge, calls} = await fakeFuluBridge(t, {FAKE_FULU_CONTROL_FAILURES: "1", FAKE_FULU_LOGGED_IN: "1"});
+  for (const command of ["pause", "resume", "stop"]) {
+    assert.equal((await bridge.sendLocalPrintCommand(LOCAL_PRINTER, command, {}, undefined, FAST_CONTROL)).confirmed, true);
+    assert.equal((await bridge.sendCloudPrintCommand("01PTEST", command, {}, undefined, FAST_CONTROL)).confirmed, true);
+  }
+  const ids = calls().filter(c => ["net.send_message", "net.send_message_to_printer"].includes(c.method))
+    .map(c => JSON.parse(c.payload.msg).print?.sequence_id).filter(v => v !== undefined);
+  assert.equal(new Set(ids).size, ids.length, "every send, including retries, has a fresh ID");
+  for (const id of ids) assert.match(id, /^2[0-9]{4}$/);
+
+  // Skip transport/session time to drive the real dispatch through a full counter wrap.
+  const wrapping = new BambuNetworkBridge();
+  let messages = [], sent = [];
+  wrapping.withLocalSession = async (_p, _o, _a, _t, body) => {
+    messages = [];
+    return body({certificateReadyWithin: async () => true, settle: async () => {}, controlMessages: messages});
+  };
+  wrapping.callWithAgent = async (_method, payload) => {
+    const print = JSON.parse(payload.msg).print;
+    sent.push(print.sequence_id);
+    messages.push(JSON.stringify({print: {...print, result: "success"}}));
+    return {ok: true, value: 0};
+  };
+  for (let i = 0; i < 10001; i++) {
+    assert.equal((await wrapping.sendLocalPrintCommand(LOCAL_PRINTER, "pause", {trace: () => {}}, undefined, FAST_CONTROL)).confirmed, true);
+  }
+  for (const id of sent) assert.match(id, /^2[0-9]{4}$/);
+  assert.equal(new Set(sent.slice(0, 10000)).size, 10000);
+  assert.equal(sent[0], sent[10000], "wrap stays inside the accepted window");
+});
+
 test("an accepted control keeps the connection open while it reaches the printer, then disconnects", async t => {
   const {bridge, calls} = await fakeFuluBridge(t, {});
   await bridge.sendLocalPrintCommand(LOCAL_PRINTER, "stop", {}, undefined, {...FAST_CONTROL, deliveryMs: 200});
@@ -133,10 +168,10 @@ test("any other plug-in return is final: the control is never replayed", async t
 
 // Nov 3, the real P1S (cloud-bound, Developer Mode off): every LAN Stop/Pause got a signed reply
 // with err_code 84033546 and Counterpart still said "Stop sent." The refusal must reach the caller.
-test("a control the printer's authorization check refuses says which apps it takes controls from, and the way out", async t => {
+test("a refused control reports verification failure without claiming third-party controls are impossible", async t => {
   const {bridge} = await fakeFuluBridge(t, {FAKE_FULU_REFUSE: "84033546"});
   await assert.rejects(bridge.sendLocalPrintCommand(LOCAL_PRINTER, "stop", {}, undefined, FAST_CONTROL),
-    /refused Stop \(error 0502400A\): .*only from Bambu Studio or Bambu Handy.*Developer Mode connection/);
+    /refused Stop \(error 0502400A\): .*command verification failed/);
 });
 
 test("any other refusal keeps the printer's own error code", async t => {
@@ -185,7 +220,7 @@ test("a cloud print sends nothing when the plug-in is not signed in", async t =>
 
 test("a cloud control refused by the printer fails with its error code", async t => {
   const {bridge} = await fakeFuluBridge(t, {FAKE_FULU_LOGGED_IN: "1", FAKE_FULU_REFUSE: "84033546"});
-  await assert.rejects(bridge.sendCloudPrintCommand("01PTEST", "pause", {}, undefined, FAST_CONTROL), /refused Pause \(error 0502400A\): .*Developer Mode connection/);
+  await assert.rejects(bridge.sendCloudPrintCommand("01PTEST", "pause", {}, undefined, FAST_CONTROL), /refused Pause \(error 0502400A\): .*command verification failed/);
 });
 
 // Nov 3, the real P1S over Bambu Cloud: pause returned -2 while the certificate was still installing;

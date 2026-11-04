@@ -293,7 +293,7 @@ for (const command of ["stop", "pause", "resume"]) {
       const send = command === "stop" ? job.printer.cancelJob(host, "8883", apiKey)
         : command === "pause" ? job.printer.pauseJob(host, "8883", apiKey) : job.printer.resumeJob(host, "8883", apiKey);
       if (expected === "refused") {
-        await assert.rejects(send, /refused \w+ \(error 05024007\): it isn't in LAN Only and Developer Mode.*Bambu Studio or Bambu Handy/);
+        await assert.rejects(send, /refused \w+ \(error 05024007\): its command verification failed.*LAN Only and Developer Mode/);
       } else {
         const result = await send;
         assert.equal(result.confirmed, true);

@@ -52,7 +52,7 @@ test("counterpart_print_route reads the route and changes it in the running serv
   assert.deepEqual(read.choices, ["lan", "cloud", "developer"]);
   assert.deepEqual(read.options.map(option => [option.id, option.label, option.available]),
     [["lan", "Local network", true], ["cloud", "Bambu Cloud", true], ["developer", "Local network, Developer Mode", true]]);
-  assert.match(read.options[0].controls, /refuse Pause, Resume and Stop/);
+  assert.match(read.options[0].controls, /authenticated connection.*Pause, Resume and Stop/);
 
   const cloud = await route(client, { route: "cloud" });
   assert.deepEqual([cloud.route, cloud.mode, cloud.type], ["cloud", "bambu_network", "cloud"]);
