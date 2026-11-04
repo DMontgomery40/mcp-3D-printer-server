@@ -33,6 +33,7 @@ import { randomUUID } from "node:crypto";
 import * as THREE from 'three';
 import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
+import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {
   CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
@@ -295,6 +296,7 @@ function resolveNozzleType(value: unknown): string | undefined {
 
 // Shared slice_stl / slice_with_template argument schema.
 const SLICE_TOOL_PROPERTIES = {
+  pause_at_layers: { type: "array", items: { type: "integer", minimum: 2 }, description: "Pause before these 1-based layers, for example to insert magnets. Bambu-compatible CLI only; the slicer writes the printer's own pause G-code. Existing project pauses are preserved." },
   bambu_model: {
     type: "string",
     enum: [...SLICE_BAMBU_MODELS],
@@ -514,6 +516,7 @@ function buildBambuSliceOptions(args: Record<string, unknown> | undefined): Bamb
   options.rotateX = optionalFiniteNumber(args, "rotate_x");
   options.rotateY = optionalFiniteNumber(args, "rotate_y");
   options.slicePlate = optionalFiniteNumber(args, "slice_plate");
+  options.pauseAtLayers = parsePauseLayers(args?.pause_at_layers);
   if (options.repetitions !== undefined && (!Number.isInteger(options.repetitions) || options.repetitions < 1)) {
     throw new Error("Invalid repetitions: expected a positive integer.");
   }
@@ -876,6 +879,9 @@ class ThreeDPrinterMCPServer {
     // Generic OrcaSlicer keeps its user-supplied machine profile unless the
     // call explicitly targets a Bambu model.
     const bambuCli = isBambuProjectSlicer(slicerType) || (slicerType === "orcaslicer" && explicitModel !== undefined);
+    if (!bambuCli && parsePauseLayers(args.pause_at_layers)) {
+      throw new Error(`Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI, not ${slicerType}.`);
+    }
 
     let printerPreset: string | undefined;
     let options: BambuSliceOptions | undefined;
@@ -1983,6 +1989,7 @@ class ThreeDPrinterMCPServer {
             inputSchema: {
               type: "object",
               properties: {
+                pause_at_layers: { type: "array", items: { type: "integer", minimum: 2 }, description: "Pause before these 1-based layers when auto-slicing. An already sliced 3MF must contain the requested pauses or printing is refused." },
                 three_mf_path: {
                   type: "string",
                   description: "Path to the 3MF file to print."
@@ -2944,6 +2951,13 @@ class ThreeDPrinterMCPServer {
 
             // Only treat slicer_path as an executable selector when a slicer
             // will actually launch. Ready-to-print archives ignore it.
+            const pauseLayers = parsePauseLayers(args?.pause_at_layers);
+            if (!shouldAutoSlice && pauseLayers) {
+              const gcode = await readPlateGcode(threeMFPath, 1);
+              const placed = gcode ? pausedLayers(gcode, machinePauseGcode(gcode)) : [];
+              const missing = pauseLayers.filter(layer => !placed.includes(layer));
+              if (missing.length) throw new Error(`This 3MF is already sliced without a pause before layer ${missing.join(", ")}. Slice it again with pause_at_layers (slice_stl), or add the pause in Bambu Studio or OrcaSlicer.`);
+            }
             if (shouldAutoSlice) {
               const printSlicerPath =
                 this.resolveExecutableSelectorArg(
@@ -2962,7 +2976,7 @@ class ThreeDPrinterMCPServer {
                   printPreset,
                   filamentProfile || undefined,
                   // Slice for the plate and nozzle the print will be checked against.
-                  { bedType: printBedType, ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}) }
+                  { bedType: printBedType, ...(pauseLayers ? { pauseAtLayers: pauseLayers } : {}), ...(resolveNozzleType(args?.nozzle_type) ? { nozzleType: resolveNozzleType(args?.nozzle_type) } : {}) }
                 );
                 console.error("Auto-sliced to: " + threeMFPath);
               } catch (sliceErr: any) {

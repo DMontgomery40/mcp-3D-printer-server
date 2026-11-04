@@ -169,3 +169,14 @@ test("print_3mf on FULU's route still refuses a tray of the wrong material befor
   assert.match(result.content[0].text, /PETG|PLA|material/i);
   assert.equal(fs.existsSync(log), false, "the bridge host never started");
 });
+
+test("print_3mf refuses a pre-sliced file missing requested layer pauses before dispatch", async t => {
+  const { client, directory } = await server(t);
+  const zip = new JSZip();
+  zip.file('Metadata/plate_1.gcode', '; Z_HEIGHT: 0.2\nG1\n; Z_HEIGHT: 0.4\nG1\n; Z_HEIGHT: 0.6\nG1\n');
+  const file = path.join(directory, 'missing-pause.3mf');
+  fs.writeFileSync(file, await zip.generateAsync({type: 'nodebuffer'}));
+  const reply = await client.callTool({name: 'print_3mf', arguments: {three_mf_path: file, bambu_model: 'p1s', pause_at_layers: [3]}});
+  assert.equal(reply.isError, true);
+  assert.match(reply.content[0].text, /already sliced without a pause before layer 3/);
+});

@@ -21,6 +21,7 @@ import {
 } from '../slicer/bambu-cli.js';
 import { runSlicerProcess } from '../slicer/run-slicer.js';
 import { SlicerError, asPreparationError } from '../slicer/slicer-error.js';
+import { customGcodesWithPauses, layerTops, machinePauseGcode, pausedLayers, readPlateGcode, readProjectCustomGcodes } from '../slicer/layer-pauses.js';
 
 export type { BambuSliceOptions } from '../slicer/bambu-cli.js';
 
@@ -1111,6 +1112,50 @@ export class STLManipulator extends EventEmitter {
    * slicer's error_string and plate warnings.
    */
   async sliceSTLWithResult(
+    stlFilePath: string,
+    slicerType: SlicerType,
+    slicerPath: string,
+    slicerProfile?: string,
+    progressCallback?: ProgressCallback,
+    printerPreset?: string,
+    filamentProfile?: string,
+    bambuOptions?: BambuSliceOptions,
+    processOverrides?: ProcessOverrides
+  ): Promise<SliceOutput> {
+    const once = (options?: BambuSliceOptions) => this.sliceSTLOnce(stlFilePath, slicerType, slicerPath,
+      slicerProfile, progressCallback, printerPreset, filamentProfile, options, processOverrides);
+    const layers = bambuOptions?.pauseAtLayers?.length ? bambuOptions.pauseAtLayers : undefined;
+    const cli = STLManipulator.usesBambuCliPreparation(slicerType, printerPreset);
+    const plate = bambuOptions?.slicePlate && bambuOptions.slicePlate > 0 ? bambuOptions.slicePlate : 1;
+    const project = cli && /\.3mf$/i.test(stlFilePath) ? await readProjectCustomGcodes(stlFilePath, plate) : undefined;
+    if (!layers && !project?.gcodes.length) return once(bambuOptions);
+    if (layers && !cli) throw new Error(`Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI, not ${slicerType}.`);
+    const customGcodesFile = path.join(this.tempDir, `custom-gcodes-${crypto.randomUUID()}.json`);
+    try {
+      let tops: number[] = [];
+      if (layers) {
+        if (progressCallback) progressCallback(10, `Finding layer heights for the pause before layer ${layers.join(", ")}`);
+        const plain = await once({ ...bambuOptions, pauseAtLayers: undefined, customGcodesFile: undefined });
+        const gcode = await readPlateGcode(plain.path, plate);
+        if (!gcode) throw new Error('The slicer wrote no plate G-code, so the pause layers cannot be placed.');
+        tops = layerTops(gcode);
+      }
+      const info = layers ? customGcodesWithPauses(tops, layers, project) : project!;
+      await fs.promises.writeFile(customGcodesFile, JSON.stringify(info));
+      const result = await once({ ...bambuOptions, customGcodesFile });
+      if (layers) {
+        const gcode = await readPlateGcode(result.path, plate);
+        const placed = gcode ? pausedLayers(gcode, machinePauseGcode(gcode)) : [];
+        const missing = layers.filter(layer => !placed.includes(layer));
+        if (!gcode || missing.length || layerTops(gcode).length !== tops.length) {
+          throw new Error(`The slicer did not place the pause before layer ${(missing.length ? missing : layers).join(", ")}. Nothing was sent to the printer.`);
+        }
+      }
+      return result;
+    } finally { await fs.promises.rm(customGcodesFile, { force: true }); }
+  }
+
+  private async sliceSTLOnce(
     stlFilePath: string,
     slicerType: SlicerType,
     slicerPath: string,

@@ -141,7 +141,7 @@ async function assertSliced(outputPath) {
 }
 
 async function assertNotExecuted(install) {
-  assert.equal(existsSync(install.capture), false, "the slicer must not run when preparation fails");
+  assert.equal(existsSync(path.join(install.root, "args.json")), false, "the slicer must not run when preparation fails");
 }
 
 test("slice_stl never passes the raw inherited machine preset to the CLI (P1S regression)", async (t) => {
@@ -360,7 +360,7 @@ test("slice_stl maps Bambu CLI options and routes generic OrcaSlicer only with a
   for (const model of ["p1s", "p2s", "h2d", "h2s", "h2c", "a1mini"]) {
     assert.ok(sliceTool.inputSchema.properties.bambu_model.enum.includes(model), `slice_stl must accept ${model}`);
   }
-  for (const option of ["bed_type", "load_filaments", "filament_colours", "orient", "arrange", "slice_plate", "template_name"]) {
+  for (const option of ["bed_type", "load_filaments", "filament_colours", "orient", "arrange", "slice_plate", "template_name", "pause_at_layers"]) {
     assert.ok(sliceTool.inputSchema.properties[option], `slice_stl must expose ${option}`);
   }
 
@@ -793,4 +793,13 @@ test("slice_stl returns Bambu Studio's result.json, warnings and errors included
   result = await slice();
   assert.match(text(result), /^Error: /);
   assert.equal(result.structuredContent.slicer_result, undefined);
+});
+
+test("unsupported slicers refuse pause_at_layers before running rather than ignoring them", async t => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install);
+  const result = await call('slice_stl', {stl_path: SAMPLE_STL, slicer_type: 'prusaslicer', pause_at_layers: [3]});
+  assert.equal(result.isError, true);
+  assert.match(text(result), /Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI/);
+  assert.equal(existsSync(path.join(install.root, "args.json")), false);
 });

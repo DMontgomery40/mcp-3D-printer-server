@@ -35,11 +35,16 @@ async function fixture(t, slicerType = 'bambustudio') {
   const capture = path.join(root, 'args.json');
   // The fake CLI cannot import jszip; it copies a real sliced-project archive.
   const slicedZip = new JSZip();
-  slicedZip.file('Metadata/plate_1.gcode', '; fixture plate gcode\nG28\n');
+  slicedZip.file('Metadata/plate_1.gcode', '; Z_HEIGHT: 0.2\nG1\n; Z_HEIGHT: 0.4\nG1\n; Z_HEIGHT: 0.6\nG1\n');
   const slicedFixture = path.join(root, 'fixture_sliced.3mf');
   await fs.writeFile(slicedFixture, await slicedZip.generateAsync({ type: 'nodebuffer' }));
+  const pausedZip = new JSZip();
+  pausedZip.file('Metadata/plate_1.gcode', '; Z_HEIGHT: 0.2\nG1\n; Z_HEIGHT: 0.4\nG1\n; Z_HEIGHT: 0.6\n; PAUSE_PRINTING\nM400 U1\nG1\n');
+  const pausedFixture = path.join(root, 'paused.3mf');
+  const customCapture = path.join(root, 'custom-gcodes.json');
+  await fs.writeFile(pausedFixture, await pausedZip.generateAsync({ type: 'nodebuffer' }));
   await fs.mkdir(path.dirname(executable), { recursive: true });
-  await fs.writeFile(executable, `#!${process.execPath}\nconst fs = require('fs'); const path = require('path'); const args = process.argv.slice(2); fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args)); fs.copyFileSync(${JSON.stringify(slicedFixture)}, path.join(args[args.indexOf('--outputdir') + 1], args[args.indexOf('--export-3mf') + 1]));\n`, { mode: 0o755 });
+  await fs.writeFile(executable, `#!${process.execPath}\nconst fs = require('fs'); const path = require('path'); const args = process.argv.slice(2); fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args)); const custom = args.includes('--load-custom-gcodes') ? args[args.indexOf('--load-custom-gcodes') + 1] : undefined; if (custom) fs.copyFileSync(custom, ${JSON.stringify(customCapture)}); fs.copyFileSync(custom ? ${JSON.stringify(pausedFixture)} : ${JSON.stringify(slicedFixture)}, path.join(args[args.indexOf('--outputdir') + 1], args[args.indexOf('--export-3mf') + 1]));\n`, { mode: 0o755 });
   const saved = Object.fromEntries(['BAMBU_PROFILES_ROOT', 'BAMBU_SLICER_PROFILE_DIRS', 'BAMBU_CLI_FLATTEN'].map(k => [k, process.env[k]]));
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   process.env.BAMBU_PROFILES_ROOT = profiles;
@@ -59,7 +64,7 @@ async function fixture(t, slicerType = 'bambustudio') {
     await fs.writeFile(file, await zip.generateAsync({ type: 'nodebuffer' }));
     return file;
   };
-  return { root, profiles, write, machine, processFile, filament, executable, stl, slice, args, loaded, capture, project };
+  return { root, profiles, write, machine, processFile, filament, executable, stl, slice, args, loaded, capture, project, customCapture, pausedFixture, slicedFixture };
 }
 
 for (const slicerType of ['bambustudio', 'orcaslicer', 'orcaslicer-bambulab']) {
@@ -637,3 +642,32 @@ test('multi-nozzle machines get a prime tower every nozzle can reach', async t =
   const noTower = await flattenForCli({ ...opts, sourceProfiles: { process: { name: 'No tower', inherits: 'SAFETY process', enable_prime_tower: '0' } } });
   assert.deepEqual(await tower(noTower), [undefined, undefined]);
 });
+
+for (const slicerType of ['bambustudio', 'orcaslicer', 'orcaslicer-bambulab']) {
+  test(`${slicerType} places requested pause before its exact layer and removes temporary custom G-code`, async t => {
+    const f = await fixture(t, slicerType);
+    await f.slice({ pauseAtLayers: [3] });
+    const args = await f.args();
+    assert.ok(args.includes('--load-custom-gcodes'), 'the requested pause must reach the slicer');
+    const info = JSON.parse(await fs.readFile(f.customCapture, 'utf8'));
+    assert.deepEqual(info.gcodes.map(item => [item.type, item.print_z]), [['PausePrint', 0.6]]);
+    await assert.rejects(fs.access(args[args.indexOf('--load-custom-gcodes') + 1]), { code: 'ENOENT' });
+  });
+
+  test(`${slicerType} refuses a slice that omits the requested pause`, async t => {
+    const f = await fixture(t, slicerType);
+    await fs.copyFile(f.slicedFixture, f.pausedFixture);
+    await assert.rejects(f.slice({ pauseAtLayers: [3] }), /did not place the pause before layer 3/);
+  });
+
+  test(`${slicerType} retains a project pause when no new layer was requested`, async t => {
+    const f = await fixture(t, slicerType);
+    const project = new JSZip();
+    project.file('Metadata/custom_gcode_per_print_z.xml', '<custom_gcodes_per_layer><plate><plate_info id="1"/><layer top_z="0.6" type="1" color="" extruder="1"/><mode value="SingleExtruder"/></plate></custom_gcodes_per_layer>');
+    const input = path.join(f.root, 'saved-pause.3mf');
+    await fs.writeFile(input, await project.generateAsync({ type: 'nodebuffer' }));
+    await f.slice({}, undefined, input);
+    const info = JSON.parse(await fs.readFile(f.customCapture, 'utf8'));
+    assert.deepEqual(info.gcodes.map(item => [item.type, item.print_z]), [['PausePrint', 0.6]]);
+  });
+}

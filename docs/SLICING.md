@@ -21,6 +21,19 @@ STL / 3MF ──► slice_stl ──► slicer CLI ──► .gcode (or sliced .
 
 Printing a file that is already sliced needs no slicer on the MCP host. Either way, every print start goes through the [print safety gate](./SETUP.md#print-and-heating-safety).
 
+## Pause before a layer
+
+For magnets or nuts, pass `pause_at_layers: [3, 12]` to `slice_stl` or `slice_with_template` on the
+Bambu-compatible CLI path. These are 1-based preview layer numbers, at least 2. The server first
+slices to find the exact layer heights, then uses `--load-custom-gcodes` to have the slicer insert
+the machine's own pause (Bambu's `M400 U1`). The printer pauses by itself and waits for Resume.
+Saved project pauses and custom G-code are carried into the CLI slice too.
+
+`print_3mf` accepts the same option when it must auto-slice an unsliced project. An already sliced
+file must contain every requested pause or the request is refused before upload. A CLI result
+that omits a requested pause is also refused. Other slicers reject this option. Automated coverage
+uses fake CLIs; this port has not been verified with a physical printer or a real slicer.
+
 ## Slicer types and aliases
 
 Set `SLICER_TYPE` in the server environment, or pass `slicer_type` to a tool.

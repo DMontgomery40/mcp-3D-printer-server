@@ -49,6 +49,8 @@ export interface BambuSliceOptions {
   minSave?: boolean;           // --min-save
   skipModifiedGcodes?: boolean;// --skip-modified-gcodes
   slicePlate?: number;         // --slice N (0 = all plates)
+  pauseAtLayers?: number[];    // pause before each 1-based layer, through the slicer's own custom G-code
+  customGcodesFile?: string;   // internal --load-custom-gcodes file, prepared by sliceSTLWithResult
   /** Process keys written over the resolved process preset (layer_height, wall_loops, sparse_infill_density). */
   processOverrides?: Record<string, string>;
 }
@@ -706,6 +708,7 @@ export function buildBambuCliArgs(
     args.push("--load-defaultfila");
   }
   if (options.loadFilamentIds) args.push("--load-filament-ids", options.loadFilamentIds);
+  if (options.customGcodesFile) args.push("--load-custom-gcodes", path.resolve(options.customGcodesFile));
   return args;
 }
 

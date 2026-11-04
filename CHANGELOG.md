@@ -4,6 +4,8 @@
 
 ### Added
 
+- `slice_stl`, `slice_with_template` and `print_3mf` accept `pause_at_layers`, matching bambu-printer-mcp. Bambu Studio and Bambu-compatible OrcaSlicer CLIs place the printer's own pause before each requested 1-based layer (2 or greater), using a first slice to find exact heights. Existing project pauses and custom G-code are preserved. Output must contain every requested pause; already sliced files missing one are refused before dispatch. Other slicers refuse the option rather than ignoring it. Evidence: fake slicer/MCP tests only; no physical print or real slicer was run in this port.
+
 - Bambu AMS inventory and tray choice, ported from bambu-printer-mcp:
   - `get_printer_filaments` reads the AMS from the printer's MQTT report for `PRINTER_TYPE=bambu` instead of refusing. The result carries bambu-printer-mcp's fields unchanged (`trays` with absolute `slot`, `loaded`, `tray_type`, `tray_color`, `tray_info_idx` and the resolved Bambu Studio/Orca filament profile; `summary`; `recommended`; `load_filaments_all`), plus counterpart/1 `slots` for every loaded AMS tray and the external spool (`254`, and `254`/`255` on dual-nozzle printers) with `source: "printer"`. Optional `bambu_model` and `nozzle_diameter` pick model-specific profiles. `counterpart_printer_info` reports `filaments: "ams"` for Bambu.
   - `print_3mf` accepts `ams_slots`: one tray per used filament in plate order, expanded to the project-level `ams_mapping` from the plate's `filament_ids` and the G-code header, as bambu-printer-mcp does. `ams_mapping` also accepts the project-level array. Tray values are checked (0–15, 128–254, and 255 on dual-nozzle printers), `ams_slots` must name exactly one tray per used filament, and the fresh-state check still compares each mapped tray's material with the file. `use_ams: false` maps every used filament to the external spool of its nozzle on the wire. Counterpart's printer handoff sends exactly these arguments.
@@ -34,6 +36,8 @@
 - README, `docs/FULU.md`, `docs/SETUP.md` and `.env.example` describe Bambu AMS inventory and tray choice, Bambu pause, resume and stop, the connection routes (`BAMBU_DEFAULT_CONNECTION_MODE`, `BAMBU_DEFAULT_CONNECTION_TYPE`, `counterpart_print_route`) and printing and controlling through FULU's BambuNetwork route, including its evidence limits here (a fake FULU host only).
 
 ### Fixed
+
+- Include the authenticated control reply module in the npm package. The route imported it but the explicit package allowlist omitted it, so a packed install exited before MCP initialization. The packed-install smoke test covers startup and discovery through all three entrypoints.
 
 - Keep authenticated FULU Pause, Resume and Stop request IDs as strings in Studio's 20000–29999 window, with a shared counter across LAN, cloud and retries that wraps inside the window. A cloud-bound P1S 01.10 rejects larger IDs with 0502400A even when their signatures are valid. Preserve reply correlation and the delivery hold; remove guidance claiming controls require Studio/Handy or Developer Mode. Automated regressions cover both transports and wraparound; hardware validation is limited to the maintainer's P1S.
 
