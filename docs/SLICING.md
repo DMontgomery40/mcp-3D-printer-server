@@ -84,7 +84,7 @@ Generic OrcaSlicer writes `plate_1.gcode`; the server renames it after the input
 
 ### Layer height, walls and infill
 
-`quality` (`draft`, `standard`, `fine`) and `strength` (`standard`, `strong`, `max`) let a client send the person's choice without slicer numbers: the server picks the layer height for the nozzle in use (0.28 and 0.12 mm on a 0.4 mm nozzle) and the walls and infill (4 walls at 25%, 6 at 40%); standard keeps the preset, and explicit values win.
+`slice_stl` and `slice_with_template` take `quality` (`draft`, `standard`, `fine`) and `strength` (`standard`, `strong`, `max`), so a client can send the person's choice without slicer numbers. The server picks the layer height for the nozzle (0.28 and 0.12 mm on a 0.4 mm nozzle; it scales with `nozzle_diameter`, or `NOZZLE_DIAMETER` when that's not given, which for PrusaSlicer, Slic3r and generic OrcaSlicer must match the nozzle in `slicer_profile`) and the walls and infill (4 walls at 25%, 6 at 40%). Standard keeps the preset; explicit values win. Cura takes only Standard.
 
 `slice_stl` and `slice_with_template` accept `layer_height` (mm), `wall_loops` (a whole number of walls), and `sparse_infill_density` (a percentage such as `"15%"`; a bare number is read as a percentage). They are written over the profile the slice would otherwise use, so they win over the preset, `SLICER_PROFILE`, and a template:
 

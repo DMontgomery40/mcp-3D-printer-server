@@ -906,7 +906,7 @@ class ThreeDPrinterMCPServer {
     if (!args?.stl_path) {
       throw new Error("Missing required parameter: stl_path");
     }
-    const processOverrides = parseProcessOverrides(withPrintQuality(args, Number(args.nozzle_diameter ?? DEFAULT_NOZZLE_DIAMETER)));
+    const processOverrides = parseProcessOverrides(withPrintQuality(args, Number(args.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER)));
     const slicerType = normalizeSlicerType(String(args.slicer_type || DEFAULT_SLICER_TYPE));
     const explicitModel =
       typeof args.bambu_model === "string" && args.bambu_model.trim() ? args.bambu_model : undefined;

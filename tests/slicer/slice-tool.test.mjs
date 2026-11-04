@@ -869,4 +869,5 @@ test("quality and strength map to slicer settings; explicit values win; bad valu
   assert.equal(withPrintQuality({ quality: "fine", layer_height: 0.16 }, 0.4).layer_height, 0.16);
   assert.deepEqual(withPrintQuality({ stl_path: "x" }, 0.4), { stl_path: "x" });
   assert.throws(() => withPrintQuality({ quality: "ultra" }, 0.4), /quality must be one of/);
+  assert.throws(() => withPrintQuality({ quality: null }, 0.4), /quality must be one of/, "null is not Standard");
 });

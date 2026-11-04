@@ -8,17 +8,22 @@
 export const PRINT_QUALITIES = ["draft", "standard", "fine"] as const;
 export const PRINT_STRENGTHS = ["standard", "strong", "max"] as const;
 
-const LAYER_MM_AT_04: Record<string, number> = { draft: 0.28, fine: 0.12 };
-const STRENGTH: Record<string, { wall_loops: number; sparse_infill_density: string }> = {
+export type PrintQuality = (typeof PRINT_QUALITIES)[number];
+export type PrintStrength = (typeof PRINT_STRENGTHS)[number];
+
+/** Layer heights on the reference 0.4 mm nozzle; other nozzles scale from it. */
+const REFERENCE_NOZZLE_MM = 0.4;
+const LAYER_MM_ON_REFERENCE: Partial<Record<PrintQuality, number>> = { draft: 0.28, fine: 0.12 };
+const STRENGTH: Partial<Record<PrintStrength, { wall_loops: number; sparse_infill_density: string }>> = {
   strong: { wall_loops: 4, sparse_infill_density: "25%" },
   max: { wall_loops: 6, sparse_infill_density: "40%" },
 };
 
 /** The call's arguments with `quality` and `strength` written out as slicer settings. */
-export function withPrintQuality<T extends Record<string, unknown> | undefined>(args: T, nozzleDiameter?: number): T {
-  if (!args || (args.quality === undefined && args.strength === undefined)) return args;
-  const quality = args.quality ?? "standard";
-  const strength = args.strength ?? "standard";
+export function withPrintQuality(args: Record<string, unknown>, nozzleDiameter?: number): Record<string, unknown> {
+  if (args.quality === undefined && args.strength === undefined) return args;
+  const quality = args.quality === undefined ? "standard" : args.quality;
+  const strength = args.strength === undefined ? "standard" : args.strength;
   if (typeof quality !== "string" || !(PRINT_QUALITIES as readonly string[]).includes(quality)) {
     throw new Error(`quality must be one of ${PRINT_QUALITIES.join(", ")}.`);
   }
@@ -26,15 +31,15 @@ export function withPrintQuality<T extends Record<string, unknown> | undefined>(
     throw new Error(`strength must be one of ${PRINT_STRENGTHS.join(", ")}.`);
   }
   const out: Record<string, unknown> = { ...args };
-  const scale = typeof nozzleDiameter === "number" && Number.isFinite(nozzleDiameter) && nozzleDiameter > 0 ? nozzleDiameter / 0.4 : 1;
-  if (quality in LAYER_MM_AT_04 && out.layer_height === undefined) {
-    out.layer_height = Math.round(LAYER_MM_AT_04[quality] * scale * 100) / 100;
+  const scale = typeof nozzleDiameter === "number" && Number.isFinite(nozzleDiameter) && nozzleDiameter > 0 ? nozzleDiameter / REFERENCE_NOZZLE_MM : 1;
+  const layer = LAYER_MM_ON_REFERENCE[quality as PrintQuality];
+  if (layer !== undefined && out.layer_height === undefined) out.layer_height = Math.round(layer * scale * 100) / 100;
+  const walls = STRENGTH[strength as PrintStrength];
+  if (walls) {
+    if (out.wall_loops === undefined) out.wall_loops = walls.wall_loops;
+    if (out.sparse_infill_density === undefined) out.sparse_infill_density = walls.sparse_infill_density;
   }
-  if (strength in STRENGTH) {
-    if (out.wall_loops === undefined) out.wall_loops = STRENGTH[strength].wall_loops;
-    if (out.sparse_infill_density === undefined) out.sparse_infill_density = STRENGTH[strength].sparse_infill_density;
-  }
-  return out as T;
+  return out;
 }
 
 /** slice_stl input-schema properties for both arguments. */

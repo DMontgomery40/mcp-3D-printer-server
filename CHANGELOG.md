@@ -4,7 +4,7 @@
 
 ### Added
 
-- `slice_stl` takes `quality` (`draft`, `standard`, `fine`) and `strength` (`standard`, `strong`, `max`). The server turns them into the slicer's own settings: Draft and Fine set the layer height for the nozzle in use (0.28 and 0.12 mm on a 0.4 mm nozzle, scaled with it), Strong and Max set walls and infill (4 walls at 25%, 6 at 40%), and Standard leaves the resolved preset alone. An explicit `layer_height`, `wall_loops` or `sparse_infill_density` still wins. Clients such as Counterpart can now send the person's choice instead of carrying slicer numbers. Checked with stand-in slicers only. Same change as bambu-printer-mcp 1.1.56.
+- `slice_stl` and `slice_with_template` take `quality` (`draft`, `standard`, `fine`) and `strength` (`standard`, `strong`, `max`). The server turns them into the slicer's own settings: Draft and Fine set the layer height for the nozzle in use (0.28 and 0.12 mm on a 0.4 mm nozzle, scaled with it), Strong and Max set walls and infill (4 walls at 25%, 6 at 40%), and Standard leaves the resolved preset alone. An explicit `layer_height`, `wall_loops` or `sparse_infill_density` still wins. Clients such as Counterpart can now send the person's choice instead of carrying slicer numbers. Checked with stand-in slicers only. For PrusaSlicer, Slic3r and generic OrcaSlicer the layer height scales with `nozzle_diameter` (or `NOZZLE_DIAMETER`), which must match the profile's nozzle; Cura takes only Standard. Same change as bambu-printer-mcp 1.1.56.
 
 ## [1.2.29] – 2026-11-04
 
