@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -178,6 +178,35 @@ function shellQuote(value: string): string {
 function trimEnv(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+/**
+ * The client identity FULU's GUI gives the plug-in before agent start
+ * (GUI_App::init_http_extra_header). Through the Linux bridge FULU presents
+ * itself as Bambu Studio at the version its plug-in ABI belongs to
+ * (PJarczakLinuxBridgeConfig.cpp forced_client_version, "02.05.02.51").
+ * Bambu's cloud issues the printer-control certificate and creates print
+ * tasks for this client, so an agent started without it is an unknown client.
+ * The device id is kept in the config folder so it stays the same per install.
+ * Ported from bambu-printer-mcp src/bambu-network-bridge.ts.
+ */
+export function bambuNetworkClientHeaders(configDir: string, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const idFile = path.join(configDir, "client-device-id");
+  let deviceId = "";
+  try { deviceId = fs.readFileSync(idFile, "utf8").trim(); } catch { /* first start */ }
+  if (!deviceId) {
+    deviceId = randomUUID();
+    try { fs.mkdirSync(configDir, { recursive: true }); fs.writeFileSync(idFile, `${deviceId}\n`, { mode: 0o600 }); } catch { /* still send this run's id */ }
+  }
+  return {
+    "X-BBL-Client-Type": "slicer",
+    "X-BBL-Client-Name": trimEnv(env.BAMBU_NETWORK_CLIENT_NAME) ?? "BambuStudio",
+    "X-BBL-Client-Version": trimEnv(env.BAMBU_NETWORK_CLIENT_VERSION) ?? "02.05.02.51",
+    "X-BBL-OS-Type": "linux",
+    "X-BBL-OS-Version": os.release(),
+    "X-BBL-Device-ID": deviceId,
+    "X-BBL-Language": "en",
+  };
 }
 
 function fileExists(filePath: string): boolean {
@@ -493,6 +522,8 @@ export class BambuNetworkBridge {
     // plug-in verifies a LAN printer with printer.cer from this folder, and
     // FULU's host crashes on connect_printer when no folder was ever set.
     const certificates = await withAgent("net.set_cert_file", { folder: certDir, filename: "slicer_base64.cer" }, false);
+    // FULU's GUI order: set_cert_file, then the client headers, then start.
+    await withAgent("net.set_extra_http_header", { headers: bambuNetworkClientHeaders(configDir) }, false);
     await withAgent("net.set_country_code", { country_code: countryCode });
     await withAgent("net.start");
     // The plug-in runs callbacks through queue_on_main; FULU's host executes

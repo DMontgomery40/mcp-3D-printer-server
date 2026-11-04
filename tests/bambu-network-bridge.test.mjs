@@ -370,6 +370,16 @@ test("FULU agent setup passes Bambu's pinned certificates, works through a cat w
   assert.ok(methods.indexOf("net.set_cert_file") > methods.indexOf("net.init_log"));
   assert.ok(methods.indexOf("net.set_cert_file") < methods.indexOf("net.start"));
   for (const callback of ["net.set_queue_on_main_fn", "net.set_on_local_connect_fn"]) assert.ok(methods.includes(callback), callback);
+  // FULU's GUI identifies itself (init_http_extra_header) after set_cert_file and before start.
+  assert.ok(methods.indexOf("net.set_extra_http_header") > methods.indexOf("net.set_cert_file"));
+  assert.ok(methods.indexOf("net.set_extra_http_header") < methods.indexOf("net.start"));
+  const { headers } = entries.find(entry => entry.method === "net.set_extra_http_header").payload;
+  assert.equal(headers["X-BBL-Client-Name"], "BambuStudio");
+  assert.equal(headers["X-BBL-Client-Version"], "02.05.02.51");
+  assert.equal(headers["X-BBL-Client-Type"], "slicer");
+  assert.equal(headers["X-BBL-OS-Type"], "linux");
+  assert.match(headers["X-BBL-Device-ID"], /^[0-9a-f-]{36}$/);
+  assert.equal(fs.readFileSync(path.join(dir, "config", "client-device-id"), "utf8").trim(), headers["X-BBL-Device-ID"]);
   const certFolder = entries.find(entry => entry.method === "net.set_cert_file").payload;
   assert.deepEqual({ folder: certFolder.folder, filename: certFolder.filename }, { folder: path.join(dir, "config", "cert"), filename: "slicer_base64.cer" });
   for (const [name, { sha256 }] of Object.entries(BAMBU_NETWORK_CERTIFICATES)) {

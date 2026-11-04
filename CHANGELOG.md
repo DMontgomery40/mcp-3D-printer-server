@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.27] – 2026-11-04
+
+### Added
+
+- Every tool now carries the four MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) from one table, `src/tool-annotations.ts`, so clients can tell reads from actions without parsing descriptions. Before, 7 of 45 tools had partial annotations. Destructive means the tool may end or replace something that exists: `cancel_print`, `upload_gcode` (same file name), `camera_snapshot` with `save_path`, `get_slice_settings` (a same-named 3MF replaces the extracted settings file), `save_template`, `counterpart_print_route` with a route, and the pass-through calls `fulu_bambu_network_rpc`, `blender_mcp_call` and `fusion_mcp_call`. Starting a print and heating are marked additive, matching the no-confirmation decision. Annotations are hints for clients; every safety check still applies. A test lists the tools over stdio and fails for any tool without all four.
+
+### Fixed
+
+- Resume a Bambu job that the printer paused itself. A P1S paused by Pause or by a `pause_at_layers` stop reports `print_error` 0300_8013 ("paused by the user" / "paused by the pause command in the file"), and Resume refused it as a print error, so a paused job could only be resumed at the printer. The notice is excused only for Resume, only while the printer reports PAUSE; any other print error still refuses, and starting a job still needs no error. Ported from bambu-printer-mcp.
+- FULU's BambuNetwork agent now receives the client headers FULU's own GUI sends before `net.start` (Bambu Studio 02.05.02.51 on Linux, with a per-install device id kept in the config folder). Bambu's cloud issues the printer-control certificate and creates print tasks for this client; without the headers the agent was an unknown client. `BAMBU_NETWORK_CLIENT_NAME` and `BAMBU_NETWORK_CLIENT_VERSION` override the name and version. Ported from bambu-printer-mcp.
+- Evidence: mocked Bambu MQTT/FTPS boundaries and the fake FULU host only; no printer was contacted.
+
 ## [1.2.26] – 2026-11-04
 
 ### Changed

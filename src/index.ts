@@ -38,6 +38,7 @@ import { STLManipulator, type BambuSliceOptions, type ProcessOverrides, type Sli
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
+import { annotateTools } from "./tool-annotations.js";
 import {
   CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
   CONTROL_OUTPUT_SCHEMA,
@@ -1303,7 +1304,7 @@ class ThreeDPrinterMCPServer {
     // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
-        tools: [
+        tools: annotateTools([
           {
             name: "get_printer_status",
             description: "Get the current status of the 3D printer",
@@ -1526,14 +1527,12 @@ class ThreeDPrinterMCPServer {
             description: "Describe this printer for the counterpart/1 contract: server name and version, printer kind and identity, and which features work (progress, layers, camera, filaments, pause, resume, cancel, print_3mf, G-code), detected from the firmware. Read-only.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
             outputSchema: PRINTER_INFO_OUTPUT_SCHEMA,
-            annotations: { readOnlyHint: true, openWorldHint: true },
           },
           {
             name: "counterpart_print_progress",
             description: "Read the printer's state and current job in the counterpart/1 shape: state, job name, progress (0-100), elapsed and remaining seconds, layers when the firmware reports them, temperatures and problems. job.name matches the jobName that upload_gcode and start_print return. Read-only.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
             outputSchema: PRINT_PROGRESS_OUTPUT_SCHEMA,
-            annotations: { readOnlyHint: true, openWorldHint: true },
           },
           {
             name: "camera_snapshot",
@@ -1547,7 +1546,6 @@ class ThreeDPrinterMCPServer {
               },
             },
             outputSchema: CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
-            annotations: { readOnlyHint: true, openWorldHint: true },
           },
           {
             name: "get_printer_filaments",
@@ -1561,21 +1559,18 @@ class ThreeDPrinterMCPServer {
               },
             },
             outputSchema: FILAMENTS_OUTPUT_SCHEMA,
-            annotations: { readOnlyHint: true, openWorldHint: true },
           },
           {
             name: "pause_print",
             description: "Pause the current print (Bambu Lab, OctoPrint, Klipper/Moonraker, PrusaLink, Duet M25, Repetier, and Creality printers that run Moonraker). Bambu pauses over the same connection that prints. Pause is never gated.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES, ...CONNECTION_PROPERTIES } },
             outputSchema: CONTROL_OUTPUT_SCHEMA,
-            annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
           },
           {
             name: "resume_print",
             description: "Resume a paused print. Resume reheats and moves the printer, so it only resumes a job this server instance inspected and started, and only when the printer freshly reports that job paused. Bambu re-reads the job over FTPS (or the plate G-code the printer extracted) and compares its SHA-256, and resumes over the same connection that printed. When the file cannot be re-read, a person confirms through MCP elicitation first (Bambu: only for files Bambu's plug-in placed; a file this server uploaded must re-read). Resume other jobs at the printer.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES, ...CONNECTION_PROPERTIES } },
             outputSchema: CONTROL_OUTPUT_SCHEMA,
-            annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
           },
           {
             name: "set_printer_temperature",
@@ -2016,7 +2011,6 @@ class ThreeDPrinterMCPServer {
           {
             name: "inspect_print_file",
             description: "Inspect an exact private snapshot of a prepared sliced 3MF or textual G-code file and selected plate without contacting a printer. Returns versioned file-only evidence; no printer readiness or permission to dispatch is established. Does not auto-slice.",
-            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
             inputSchema: {
               type: "object",
               additionalProperties: false,
@@ -2396,7 +2390,7 @@ class ThreeDPrinterMCPServer {
             },
             outputSchema: FUSION_EXPORT_OUTPUT_SCHEMA,
           }
-        ]
+        ])
       };
     });
 

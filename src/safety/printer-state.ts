@@ -326,12 +326,24 @@ function logHiddenNotices(raw: Record<string, any>, serial: string, model: strin
   }
 }
 
+/**
+ * 0300_8013, "Printing was paused by the user" / "paused due to the pause command added to the
+ * printing file": the printer's report of a deliberate pause (a Pause, or a pause_at_layers stop),
+ * which Resume clears. A paused P1S reports it as print_error, so it is not an error for resuming
+ * a paused job. requireIdle is false only for Resume here; starting a job still needs no error.
+ * Ported from bambu-printer-mcp src/safety/printer-state.ts.
+ */
+export const PAUSE_NOTICE = 0x03008013;
+export function isPauseNotice(raw: Record<string, any>, requireIdle: boolean): boolean {
+  const state = typeof raw?.gcode_state === "string" ? raw.gcode_state.toUpperCase() : "";
+  return !requireIdle && state === "PAUSE" && finiteNumber(raw?.print_error) === PAUSE_NOTICE;
+}
 function validateErrors(raw: Record<string,any>, requireIdle: boolean, serial: string, model: string) {
   const state = typeof raw.gcode_state === "string" ? raw.gcode_state.toUpperCase() : "UNKNOWN";
   const terminal = isCancelledX2DJob(raw, model) || isFinishedP1SJob(raw, model);
   if (requireIdle && !["IDLE","FINISH"].includes(state) && !terminal) throw new Error(`Printer state ${state} is not safely idle.`);
   if (!requireIdle && !["IDLE","FINISH","RUNNING","PAUSE"].includes(state) && !terminal) throw new Error(`Printer state ${state} is unknown or failed.`);
-  if (finiteNumber(raw.print_error) !== 0) throw new Error("Printer reports a print error or did not report its error state.");
+  if (finiteNumber(raw.print_error) !== 0 && !isPauseNotice(raw, requireIdle)) throw new Error("Printer reports a print error or did not report its error state.");
   if (!Array.isArray(raw.hms)) throw new Error("Printer HMS error state is missing or malformed.");
   for (const reported of raw.hms) {
     const entry = hmsCode(reported);
