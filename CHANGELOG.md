@@ -1,6 +1,29 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.26] – 2026-11-04
+
+### Changed
+
+- Start prints and positive heating without a server-side confirmation prompt, on every printer type. The client's own print action is the approval and the printer runs its own checks, so clients without MCP elicitation support now print and heat normally. `PRINT_REQUIRE_CONFIRMATION` and `BAMBU_REQUIRE_CONFIRMATION` are removed. File inspection, hardware and material ceilings, declared materials, fresh printer state (read, rechecked before upload and again before dispatch) and Bambu identity checks are unchanged. Matches bambu-printer-mcp.
+- `resume_print` asks a person only when the printer cannot hand the file back for re-reading (PrusaLink, Repetier, Creality), where the job is matched by name only. OctoPrint, Klipper and Duet (DSF) re-read the file, compare its SHA-256 and resume without a prompt. `PRINT_CONFIRMATION_TIMEOUT_MS` now bounds that prompt and the Bambu printer-model prompt.
+- Stop treating a finished job as a bed-clearance case: a printer that reports a finished or cancelled job (Moonraker complete or cancelled, PrusaLink FINISHED or STOPPED, Creality finished, Bambu FINISH) starts the next print like an idle one. Matches bambu-printer-mcp's bed-check removal ([bambu-printer-mcp #90](https://github.com/DMontgomery40/bambu-printer-mcp/pull/90)).
+- Evidence: mocked Bambu MQTT/FTPS boundaries and loopback HTTP printer APIs only; no real printer was used.
+
+### Fixed
+
+- Include the authenticated control reply module in the npm package. The route imported it but the explicit package allowlist omitted it, so a packed install exited before MCP initialization. The packed-install smoke test covers startup and discovery through all three entrypoints.
+
+- Keep authenticated FULU Pause, Resume and Stop request IDs as strings in Studio's 20000–29999 window, with a shared counter across LAN, cloud and retries that wraps inside the window. A cloud-bound P1S 01.10 rejects larger IDs with 0502400A even when their signatures are valid. Preserve reply correlation and the delivery hold; remove guidance claiming controls require Studio/Handy or Developer Mode. Automated regressions cover both transports and wraparound; hardware validation is limited to the maintainer's P1S.
+
+- An `ams_mapping` object (and the 3MF's own mapping) is ordered by project filament index, as bambu-printer-mcp orders it. Before, its tray values were sorted, so `{"0": 3, "1": 0}` sent tray 0 for filament 0.
+- Bambu printers slice with Bambu Studio when `SLICER_TYPE` is not set, as bambu-printer-mcp does. The previous default, FULU OrcaSlicer-bambulab, crashes on every command-line slice in its only release (v1.0.0, macOS DMG and Linux builds; fixes in FULU #56 and #57 are not released), so `slice_stl`, estimates and auto-slicing failed for every Bambu user without a slicer setting. FULU's Orca stays fully supported with `SLICER_TYPE=orcaslicer-bambulab`.
+- A relative `TEMP_DIR` (such as `./temp`) is resolved against the server's working directory, as bambu-printer-mcp 1.1.44 does. Bambu Studio fails every 3MF export to a relative output folder ("Project export to temp/…/…_sliced.3mf failed").
+
+- Accept Bambu Studio 2.9 layer-temperature changes (`M104 M S<temperature>` with an optional `T` selector) in the Bambu file inspector. Preserve hardware/material ceilings, tool validation, and rejection of numeric markers, other heaters and extra parameters. Reproduced using isolated Studio 02.09.01.70 output; no physical print was run. This ports the fix prepared in [bambu-printer-mcp #97](https://github.com/DMontgomery40/bambu-printer-mcp/pull/97).
+
+- Update `basic-ftp` to 6.2.5, including its 6.2.4 fix for directory listings containing inherited-property fact names. Offline listing reproduction fails with 6.2.3 and preserves the file name and size with 6.2.5; no printer was contacted.
+
+- Resolve H2C first-layer temperature tables by the selected filament index and extruder variant instead of treating every variant row as a filament. Preserve unique bindings, header agreement and independent base/offset ceilings. Ports the correction reported by [Steve Pritchard (sjpritchard)](https://github.com/DMontgomery40/bambu-printer-mcp/issues/81); an unchanged Studio 2.9 H2C slice passes offline inspection after reproducing the failure.
 
 ### Added
 
@@ -24,26 +47,11 @@
   - The bridge host is `BAMBU_NETWORK_BRIDGE_COMMAND` (bambu-printer-mcp's name), else `FULU_BAMBU_BRIDGE_COMMAND`, else the host `check_fulu_orca_setup` discovers next to FULU's OrcaSlicer-bambulab. Its config folder defaults to `~/.config/mcp-3d-printer-server/bambu-network` (`BAMBU_NETWORK_CONFIG_DIR`). `fulu_bambu_network_rpc` still refuses raw print methods.
   - Evidence: a fake FULU host process that reproduces the real v1.0.0 host and plug-in behaviour bambu-printer-mcp recorded on a P1S, plus patched printer state; no real FULU host, plug-in, printer or Bambu Cloud was used by this server.
 
-### Changed
-
-- Start prints and positive heating without a server-side confirmation prompt, on every printer type. The client's own print action is the approval and the printer runs its own checks, so clients without MCP elicitation support now print and heat normally. `PRINT_REQUIRE_CONFIRMATION` and `BAMBU_REQUIRE_CONFIRMATION` are removed. File inspection, hardware and material ceilings, declared materials, fresh printer state (read, rechecked before upload and again before dispatch) and Bambu identity checks are unchanged. Matches bambu-printer-mcp.
-- `resume_print` asks a person only when the printer cannot hand the file back for re-reading (PrusaLink, Repetier, Creality), where the job is matched by name only. OctoPrint, Klipper and Duet (DSF) re-read the file, compare its SHA-256 and resume without a prompt. `PRINT_CONFIRMATION_TIMEOUT_MS` now bounds that prompt and the Bambu printer-model prompt.
-- Stop treating a finished job as a bed-clearance case: a printer that reports a finished or cancelled job (Moonraker complete or cancelled, PrusaLink FINISHED or STOPPED, Creality finished, Bambu FINISH) starts the next print like an idle one. Matches bambu-printer-mcp's bed-check removal ([bambu-printer-mcp #90](https://github.com/DMontgomery40/bambu-printer-mcp/pull/90)).
-- Evidence: mocked Bambu MQTT/FTPS boundaries and loopback HTTP printer APIs only; no real printer was used.
+- Serves design guidance for agents that design or edit models to print as MCP prompts: `fdm_design`, `fdm_multicolor`, `fdm_assembly` and `fdm_after_slice`, plus the resource `guidance://fdm/capability-guidance` for bridges and overhangs. The server's `instructions` point every client to them. The text is David Montgomery's FDM design prompt pack of 3 November 2026, unchanged; bambu-printer-mcp serves the same guidance. Tested over a real stdio MCP connection; whether an agent follows it is a model behavior, not tested here.
 
 ### Documentation
 
 - README, `docs/FULU.md`, `docs/SETUP.md` and `.env.example` describe Bambu AMS inventory and tray choice, Bambu pause, resume and stop, the connection routes (`BAMBU_DEFAULT_CONNECTION_MODE`, `BAMBU_DEFAULT_CONNECTION_TYPE`, `counterpart_print_route`) and printing and controlling through FULU's BambuNetwork route, including its evidence limits here (a fake FULU host only).
-
-### Fixed
-
-- Include the authenticated control reply module in the npm package. The route imported it but the explicit package allowlist omitted it, so a packed install exited before MCP initialization. The packed-install smoke test covers startup and discovery through all three entrypoints.
-
-- Keep authenticated FULU Pause, Resume and Stop request IDs as strings in Studio's 20000–29999 window, with a shared counter across LAN, cloud and retries that wraps inside the window. A cloud-bound P1S 01.10 rejects larger IDs with 0502400A even when their signatures are valid. Preserve reply correlation and the delivery hold; remove guidance claiming controls require Studio/Handy or Developer Mode. Automated regressions cover both transports and wraparound; hardware validation is limited to the maintainer's P1S.
-
-- An `ams_mapping` object (and the 3MF's own mapping) is ordered by project filament index, as bambu-printer-mcp orders it. Before, its tray values were sorted, so `{"0": 3, "1": 0}` sent tray 0 for filament 0.
-- Bambu printers slice with Bambu Studio when `SLICER_TYPE` is not set, as bambu-printer-mcp does. The previous default, FULU OrcaSlicer-bambulab, crashes on every command-line slice in its only release (v1.0.0, macOS DMG and Linux builds; fixes in FULU #56 and #57 are not released), so `slice_stl`, estimates and auto-slicing failed for every Bambu user without a slicer setting. FULU's Orca stays fully supported with `SLICER_TYPE=orcaslicer-bambulab`.
-- A relative `TEMP_DIR` (such as `./temp`) is resolved against the server's working directory, as bambu-printer-mcp 1.1.44 does. Bambu Studio fails every 3MF export to a relative output folder ("Project export to temp/…/…_sliced.3mf failed").
 
 ## [1.2.25] – 2026-11-02
 
