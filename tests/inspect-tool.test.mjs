@@ -114,3 +114,47 @@ test('unsliced/checksum/case-colliding archives never return inspection evidence
   await assert.rejects(access(s.networkLog), { code: 'ENOENT' });
 });
 
+
+test("include_preview draws the exact file's G-code, never its thumbnails (the Nov 4 caliper card)", async t => {
+  // 2026-11-04: the app showed a design render and the sliced file carried the designer's old plate PNGs,
+  // while the G-code had lost the card's fine markings. The preview reads only the G-code.
+  const { encodePng } = await import('../dist/safety/print-preview.js');
+  const s = await server(t);
+  const square = (x, y, size, z, e = 0.05) => [`G1 Z${z}`, `G1 X${x} Y${y}`, `G1 X${x + size} Y${y} E${e}`, `G1 X${x + size} Y${y + size} E${e}`, `G1 X${x} Y${y + size} E${e}`, `G1 X${x} Y${y} E${e}`].join('\n');
+  const job = (marking) => header().replace('filament_type = PLA', 'filament_type = PLA;PLA') + 'M104 S220\nM140 S60\nG90\nM83\n'
+    + '; FEATURE: Custom\nG1 X5 Y1 E2\nG1 X250 Y1 E10\n'           // start-up prime line: never drawn
+    + '; CHANGE_LAYER\n; FEATURE: Outer wall\nT0\n' + square(100, 100, 40, 0.2)
+    + (marking ? '\nT1\n' + square(110, 110, 10, 0.2) : '')         // a marking only the G-code knows about
+    + '\n; CHANGE_LAYER\nT0\n' + square(100, 100, 40, 0.4) + '\n';
+  // A thumbnail that shows the marking even when the G-code has none: a preview must not trust it.
+  const staleThumbnail = encodePng(1, 1, new Uint8Array([255, 255, 0]));
+  const sliced = async (marking) => archive(s, {
+    'Metadata/plate_1.gcode': job(marking), 'Metadata/plate_1.png': staleThumbnail,
+    'Metadata/project_settings.config': { printer_model: 'Bambu Lab P1S', nozzle_diameter: ['0.4'], filament_type: ['PLA', 'PLA'], filament_colour: ['#000000', '#FFFF00'], curr_bed_type: 'Textured PEI Plate' },
+  });
+  const inspect = async (path, extra = {}) => { const result = await s.call({ file_path: path, bambu_model: 'p1s', ...extra }); assert.equal(result.isError, undefined, JSON.stringify(result.content)); return s.decode(result); };
+  const withMarking = await sliced(true);
+  assert.equal((await inspect(withMarking.path)).preview, undefined, 'no preview unless asked: agents never get the pictures');
+  const r = await inspect(withMarking.path, { include_preview: true });
+  assert.equal(r.preview.artifact_sha256, r.artifact.sha256, 'the preview names the exact bytes it was drawn from');
+  assert.deepEqual(r.preview.views.map(v => v.name), ['top', 'bed_side']);
+  assert.deepEqual(r.preview.filaments_used, [0, 1]);
+  assert.ok(r.preview.extent_mm[0] > 90 && r.preview.extent_mm[2] < 150, `the prime line is not drawn: ${r.preview.extent_mm}`);
+  const yellowPixels = async (view) => {
+    const { inflateSync } = await import('node:zlib');
+    const png = Buffer.from(view.png_base64, 'base64');
+    let offset = 8, idat = [];
+    while (offset < png.length) { const len = png.readUInt32BE(offset); const type = png.toString('ascii', offset + 4, offset + 8); if (type === 'IDAT') idat.push(png.subarray(offset + 8, offset + 8 + len)); offset += 12 + len; }
+    const raw = inflateSync(Buffer.concat(idat)); let count = 0;
+    for (let y = 0; y < view.height; y++) for (let x = 0; x < view.width; x++) {
+      const o = y * (view.width * 3 + 1) + 1 + x * 3; if (raw[o] > 200 && raw[o + 1] > 200 && raw[o + 2] < 120) count++;
+    }
+    return count;
+  };
+  const bed = r.preview.views.find(v => v.name === 'bed_side');
+  assert.ok(await yellowPixels(bed) > 50, 'the marking on the bed side shows');
+  const missing = await inspect((await sliced(false)).path, { include_preview: true });
+  assert.equal(await yellowPixels(missing.preview.views.find(v => v.name === 'bed_side')), 0, 'a marking missing from the G-code is missing from the preview, whatever the thumbnail says');
+  const bare = await archive(s, { 'Metadata/plate_1.gcode': job(true) });
+  assert.ok((await inspect(bare.path, { include_preview: true })).preview, 'a sliced file with no thumbnails still previews');
+});
