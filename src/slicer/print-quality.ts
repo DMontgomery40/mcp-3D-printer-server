@@ -2,8 +2,10 @@
  * slice_stl's `quality` and `strength` (PRD §8.4): a client's print-sheet choice, mapped here to the
  * slicer's own numbers so no client carries layer heights, wall counts or infill. Draft and Fine set
  * the layer height for the nozzle in use (0.28 and 0.12 mm on a 0.4 mm nozzle, scaled with it); Strong
- * and Max set walls and infill. Standard sends nothing: the resolved preset decides. An explicit
- * layer_height, wall_loops or sparse_infill_density in the same call wins over these.
+ * and Max raise walls and infill to at least their values: a process that already has more (a
+ * designer's 3MF at 100% infill) keeps it, so a stronger choice never prints weaker. Standard sends
+ * nothing: the resolved process decides. An explicit layer_height, wall_loops or
+ * sparse_infill_density in the same call wins over these and is written as given.
  */
 export const PRINT_QUALITIES = ["draft", "standard", "fine"] as const;
 export const PRINT_STRENGTHS = ["standard", "strong", "max"] as const;
@@ -36,8 +38,8 @@ export function withPrintQuality(args: Record<string, unknown>, nozzleDiameter?:
   if (layer !== undefined && out.layer_height === undefined) out.layer_height = Math.round(layer * scale * 100) / 100;
   const walls = STRENGTH[strength as PrintStrength];
   if (walls) {
-    if (out.wall_loops === undefined) out.wall_loops = walls.wall_loops;
-    if (out.sparse_infill_density === undefined) out.sparse_infill_density = walls.sparse_infill_density;
+    if (out.wall_loops === undefined) out.wall_loops_floor = walls.wall_loops;
+    if (out.sparse_infill_density === undefined) out.sparse_infill_density_floor = walls.sparse_infill_density;
   }
   return out;
 }
@@ -50,6 +52,22 @@ export const PRINT_QUALITY_PROPERTIES = {
   },
   strength: {
     type: "string", enum: [...PRINT_STRENGTHS],
-    description: "Part strength: standard (the preset's walls and infill), strong or max (more walls and denser infill). The server picks the values; explicit wall_loops or sparse_infill_density win.",
+    description: "Part strength: standard (the process's own walls and infill), strong or max (at least more walls and denser infill; a process that already has more keeps it). The server picks the values; explicit wall_loops or sparse_infill_density win.",
   },
 } as const;
+
+/**
+ * Process keys written over a resolved process profile. `wall_loops_floor` and
+ * `sparse_infill_density_floor` (a strength choice) only raise the profile's own value.
+ */
+export function mergeProcessKeys(profile: Record<string, unknown>, keys: Record<string, string>): Record<string, unknown> {
+  const { wall_loops_floor: wallFloor, sparse_infill_density_floor: densityFloor, ...exact } = keys;
+  const out: Record<string, unknown> = { ...profile };
+  const number = (value: unknown) => {
+    const parsed = Number.parseFloat(String(Array.isArray(value) ? value[0] : value ?? ""));
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+  if (wallFloor !== undefined && (number(out.wall_loops) ?? -1) < Number(wallFloor)) out.wall_loops = wallFloor;
+  if (densityFloor !== undefined && (number(out.sparse_infill_density) ?? -1) < Number.parseFloat(densityFloor)) out.sparse_infill_density = densityFloor;
+  return { ...out, ...exact };
+}

@@ -55,6 +55,7 @@ import {
   listTemplateRegistry,
   resolveTemplatePath,
   resolveTemplateSlicerProfilePath,
+  hasBambuProjectSettings,
   saveTemplate,
 } from "./slicer/templates.js";
 import { parse3MF, ThreeMFData } from './3mf_parser.js';
@@ -462,6 +463,9 @@ function parseProcessOverrides(args: Record<string, unknown> | undefined): Proce
     }
     overrides.sparseInfillDensity = `${value}%`;
   }
+  // Written by withPrintQuality for strong/max, never by a caller: they only raise the process's own values.
+  if (typeof args?.wall_loops_floor === "number") overrides.wallLoopsFloor = args.wall_loops_floor;
+  if (typeof args?.sparse_infill_density_floor === "string") overrides.sparseInfillDensityFloor = args.sparse_infill_density_floor;
   if (args?.enable_support !== undefined) {
     if (typeof args.enable_support !== "boolean") throw new Error("Invalid enable_support: expected true or false.");
     overrides.enableSupport = args.enable_support;
@@ -947,7 +951,12 @@ class ThreeDPrinterMCPServer {
       );
     }
     let slicerProfile = explicitProfile;
-    const templatePath = requestedTemplate || (bambuCli && DEFAULT_TEMPLATE_3MF_PATH ? DEFAULT_TEMPLATE_3MF_PATH : undefined);
+    // A 3MF that carries its own process (a designer's project) slices with it: a configured default
+    // profile or template must not replace the designer's layer height, walls and infill. The machine
+    // still comes from bambu_model and nozzle_diameter.
+    const ownProcess = bambuCli && !explicitProfile && !requestedTemplate && String(args.stl_path).toLowerCase().endsWith(".3mf")
+      && await hasBambuProjectSettings(String(args.stl_path)) ? String(args.stl_path) : undefined;
+    const templatePath = ownProcess || requestedTemplate || (bambuCli && DEFAULT_TEMPLATE_3MF_PATH ? DEFAULT_TEMPLATE_3MF_PATH : undefined);
     if (!slicerProfile && templatePath) {
       if (!fs.existsSync(templatePath)) {
         throw new Error(`Template not found: ${templatePath}`);
@@ -1696,7 +1705,7 @@ class ThreeDPrinterMCPServer {
               "Slice an STL or 3MF file to generate G-code or a sliced 3MF. For Bambu-compatible CLI slicing " +
               "(bambustudio, orcaslicer-bambulab, or orcaslicer with bambu_model), the exact bambu_model/nozzle machine " +
               "preset from the selected slicer installation is required, profile inheritance is resolved before the CLI " +
-              "runs, and the result must contain plate G-code. Failures stop with the slicer's exit status and output.",
+              "runs, and the result must contain plate G-code. Failures stop with the slicer's exit status and output. A 3MF that carries its own process settings (a designer's Bambu Studio or Orca project) slices with them unless slicer_profile, template_name or template_3mf_path is given; the machine still comes from bambu_model. quality and strength adjust that process, and strength never lowers its walls or infill.",
             inputSchema: {
               type: "object",
               properties: {
@@ -3097,11 +3106,16 @@ class ThreeDPrinterMCPServer {
                 ) ?? DEFAULT_SLICER_PATH;
               try {
                 console.error(`3MF has no gcode — auto-slicing with ${slicerType} for ${printModel}`);
+                // A designer's project slices with its own process unless the call names a profile.
+                const explicitPrintProfile = typeof args?.slicer_profile === "string" && args.slicer_profile.trim().length > 0;
+                const printProfile = !explicitPrintProfile && usesBambuCli(slicerType, true) && await hasBambuProjectSettings(threeMFPath)
+                  ? await resolveTemplateSlicerProfilePath(threeMFPath, path.join(TEMP_DIR, "templates"))
+                  : slicerProfile || undefined;
                 threeMFPath = await this.stlManipulator.sliceSTL(
                   threeMFPath,
                   slicerType,
                   printSlicerPath,
-                  slicerProfile || undefined,
+                  printProfile,
                   undefined, // progressCallback
                   printPreset,
                   filamentProfile || undefined,

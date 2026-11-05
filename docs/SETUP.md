@@ -147,7 +147,7 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `BAMBU_PROFILES_ROOT` | found from `SLICER_PATH` | No | Profile tree containing `BBL/` for the active Bambu-compatible slicer. Set it for AppImages or non-standard installs. It is never replaced by another installation's tree |
 | `BAMBU_SLICER_PROFILE_DIRS` | the slicers' user `system/BBL` directories | No | Directories (separated with your OS path delimiter) searched for custom process and filament parents, never for machine presets. Set it empty to disable the search |
 | `BAMBU_TEMPLATE_DIR` | `~/Sync/bambu/templates` | No | Local template registry for `slice_with_template`, `list_templates`, `save_template`, and `get_slice_settings` |
-| `BAMBU_TEMPLATE_3MF_PATH` | | No | Default template 3MF whose slicer settings are reused as the process profile |
+| `BAMBU_TEMPLATE_3MF_PATH` | | No | Default template 3MF whose slicer settings are reused as the process profile. A 3MF that carries its own process settings slices with them instead |
 | `FULU_ORCA_PATH` | | No | FULU OrcaSlicer-bambulab executable when `SLICER_PATH` is unset. Aliases: `ORCASLICER_BAMBULAB_PATH`, `ORCA_SLICER_BAMBULAB_PATH` |
 | `FULU_ORCA_PLUGIN_DIR` | | No | Directory with FULU's runtime payload, such as `OrcaSlicer.app/Contents/MacOS`. Alias: `ORCASLICER_BAMBULAB_PLUGIN_DIR` |
 | `PJARCZAK_MAC_RUNTIME_DIR` | `~/Library/Application Support/OrcaSlicer/macos-bridge/runtime` | No | Installed FULU macOS runtime directory |
