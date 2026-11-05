@@ -414,6 +414,8 @@ test("fusion_mcp_setup installs on macOS only and reports a server without a .en
   const installed = await new FusionAddinSetup(() => 9877, [], mac.system, {}, pin).install();
   assert.equal(installed.installed.env, "no-env-file");
   assert.equal(installed.ready, false, "the bridge still needs its settings");
+  assert.match(installed.message, /no \.env file to add its Fusion settings to/, "what is missing, in words a client shows as they are");
+  assert.match(report.message, /macOS only/);
 });
 
 test("the Fusion bridge's default server and the add-in setup installs come from one pinned commit", () => {
