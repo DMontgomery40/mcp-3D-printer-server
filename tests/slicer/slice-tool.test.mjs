@@ -676,6 +676,7 @@ test("a designer's 3MF slices with its own process; strength never weakens it; a
   assert.deepEqual(left.filter(entry => /settings/.test(entry)), [], "no slice leaves its extraction behind");
   // The slice's own arguments, as slice_stl takes them: own_process is what that slice does, decided here.
   assert.equal((await settingsOf(designer, { quality: "standard", strength: "standard" })).own_process, true, "standard changes nothing");
+  assert.equal((await settingsOf(designer, { layer_height: 0.42, nozzle_diameter: "0.6" })).own_process, false, "a layer height valid for the slice's own nozzle is checked against it");
   for (const extra of [{ slicer_profile: path.join(install.root, "mine.json") }, { template_3mf_path: bare }, { layer_height: 0.2 }, { wall_loops: 3 },
     { sparse_infill_density: "20%" }, { quality: "fine" }, { strength: "strong" }, { enable_support: false }])
     assert.equal((await settingsOf(designer, extra)).own_process, false, `${Object.keys(extra)[0]} replaces or changes the designer's process`);
