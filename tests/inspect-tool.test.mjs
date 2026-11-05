@@ -186,3 +186,18 @@ test('the preview reads the G-code syntax file inspection accepts: compact, numb
     ['tool word touching nothing', 'G90\nM83\n; FEATURE: Outer wall\nT0\nG1 X10 Y10\nG1 X20 Y20 E1\n'],
   ]) assert.deepEqual(extrusionSegments(gcode).segments, spaced, name);
 });
+
+test('a later filament on the same layer shows over an earlier one at any layer height (no float32 depth)', async () => {
+  const { renderPrintPreview } = await import('../dist/safety/print-preview.js');
+  const { inflateSync } = await import('node:zlib');
+  const gcode = 'G90\nM83\n; FEATURE: Outer wall\nT0\nG1 Z0.2\nG1 X10 Y10\nG1 X30 Y10 E1\nT1\nG1 X10 Y10\nG1 X30 Y10 E1\n';
+  const top = renderPrintPreview(gcode, ['#FF0000', '#0000FF']).views.find(v => v.name === 'top');
+  const png = Buffer.from(top.png_base64, 'base64'); let offset = 8; const idat = [];
+  while (offset < png.length) { const len = png.readUInt32BE(offset); if (png.toString('ascii', offset + 4, offset + 8) === 'IDAT') idat.push(png.subarray(offset + 8, offset + 8 + len)); offset += 12 + len; }
+  const raw = inflateSync(Buffer.concat(idat)); let red = 0, blue = 0;
+  for (let y = 0; y < top.height; y++) for (let x = 0; x < top.width; x++) {
+    const o = y * (top.width * 3 + 1) + 1 + x * 3;
+    if (raw[o] > 200 && raw[o + 2] < 120) red++; if (raw[o + 2] > 200 && raw[o] < 120) blue++;
+  }
+  assert.ok(blue > 0 && red === 0, `the later filament shows: red ${red}, blue ${blue}`);
+});
