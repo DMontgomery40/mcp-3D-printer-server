@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- 1.2.34's notes omitted one change it shipped: the preview leaves out filament-change flushing only between a material-switch `M620 S…` and its `M621 S…`, so setup forms such as the H2C start template's `M620 O1` don't hide the part.
+
 ## [1.2.34] – 2026-11-05
 
 ### Added
