@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.40] – 2026-11-05
+
+### Fixed
+
+- A relative `BAMBU_NETWORK_CONFIG_DIR`, per-call config folder or `BAMBU_NETWORK_CERT_DIR` is made absolute before it is mounted into FULU's container or sent to the host. The host runs from `/plugins` in the container, so a relative path pointed it at a folder that wasn't mounted. A certificate folder outside the config folder is created before the mount, so Docker doesn't create it as root. Checked with a stand-in `docker` running the fake FULU host.
+
 ## [1.2.39] – 2026-11-05
 
 ### Fixed
