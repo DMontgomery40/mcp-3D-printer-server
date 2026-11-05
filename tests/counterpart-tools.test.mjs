@@ -100,7 +100,7 @@ test("OctoPrint over MCP: info, progress, filaments and a Classic Webcam snapsho
   const progress = (await call(client, "counterpart_print_progress")).structuredContent;
   assert.equal(progress.state, "printing");
   assert.equal(progress.job.name, "kan216-long.gcode");
-  assert.deepEqual((await call(client, "get_printer_filaments")).structuredContent, { slots: [{ id: "ext", source: "unknown" }] });
+  assert.deepEqual((await call(client, "get_printer_filaments")).structuredContent, { slots: [{ label: "Spool", id: "ext", source: "unknown" }] });
   const savePath = path.join(temp, "frame.jpg");
   const frame = (await call(client, "camera_snapshot", { save_path: savePath, timeout_ms: 3000, bambu_model: "ignored" })).structuredContent;
   assert.equal(frame.format, "image/jpeg");
@@ -182,7 +182,7 @@ test("Moonraker over MCP: webcam list, Spoolman slot, slicer-estimate remaining 
   await call(client, "counterpart_print_progress");
   assert.equal(printer.requests.filter((r) => r.url.startsWith("/server/files/metadata")).length, 1, "the estimate is cached between polls");
   assert.deepEqual((await call(client, "get_printer_filaments")).structuredContent.slots,
-    [{ id: "ext", material: "PLA", color: "#FF8800", name: "KAN-216 Test PLA Orange", source: "spoolman" }]);
+    [{ label: "Spool", id: "ext", material: "PLA", color: "#FF8800", name: "KAN-216 Test PLA Orange", source: "spoolman" }]);
   assert.equal((await call(client, "camera_snapshot")).structuredContent.source, "moonraker-webcam");
   const info = (await call(client, "counterpart_printer_info")).structuredContent;
   assert.equal(info.printer.name, "voron");
@@ -196,7 +196,7 @@ test("Moonraker over MCP: webcam list, Spoolman slot, slicer-estimate remaining 
 test("Moonraker without Spoolman reports an unknown slot", async (t) => {
   const printer = await mock(t, [["/server/spoolman/spool_id", 404, { error: { code: 404, message: "Not Found" } }]]);
   const { client } = await server(t, { PRINTER_TYPE: "klipper", PRINTER_PORT: printer.port });
-  assert.deepEqual((await call(client, "get_printer_filaments")).structuredContent, { slots: [{ id: "ext", source: "unknown" }] });
+  assert.deepEqual((await call(client, "get_printer_filaments")).structuredContent, { slots: [{ label: "Spool", id: "ext", source: "unknown" }] });
 });
 
 test("upload_gcode names the remote job (jobName)", async (t) => {
@@ -249,7 +249,7 @@ test("get_printer_filaments: slots[].profile is the installed slicer profile for
   const preset = await write("PLA preset.ini", "filament_type = PLA\n");
   const octoprint = await mock(t, [["/api/printer", 409, "Printer is not operational", "text/plain"]]);
   const configured = await server(t, { PRINTER_TYPE: "octoprint", PRINTER_PORT: octoprint.port, SLICER_TYPE: "prusaslicer", FILAMENT_PROFILE: preset });
-  assert.deepEqual((await call(configured.client, "get_printer_filaments")).structuredContent.slots, [{ id: "ext", source: "unknown", profile: preset }]);
+  assert.deepEqual((await call(configured.client, "get_printer_filaments")).structuredContent.slots, [{ label: "Spool", id: "ext", source: "unknown", profile: preset }]);
 });
 
 // printer-handoff (scan-to-make services/printer-handoff/src/print.ts) chooses a

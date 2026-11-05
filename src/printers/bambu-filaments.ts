@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectProfilesRoot } from "../slicer/profile-flatten.js";
 import type { FilamentSlot } from "../counterpart/contract.js";
+import { NO_COLOUR_NAMES, bambuTrayLabel, loadColourNames, spoolName, type ColourNames } from "../counterpart/filaments.js";
 
 export const FILAMENT_MODEL_CODES: Record<string, string> = {
   p1s: "P1S",
@@ -54,6 +55,10 @@ export type PrinterFilamentTray = {
   profile_resolution: ProfileResolution;
   match_confidence: "high" | "medium" | "low" | "none";
   display_name: string;
+  /** Where the tray sits, as Bambu Studio labels it ("A2", "AMS HT A", "External"). */
+  label: string | null;
+  /** The spool as a person names it: Bambu's colour name and product ("Sunflower Yellow PLA Basic"). */
+  spool_name: string | null;
   profile_candidates: string[];
 };
 
@@ -88,6 +93,23 @@ export interface FilamentProfileSource {
 }
 
 const indexCache = new Map<string, FilamentProfileIndex>();
+const colourNamesCache = new Map<string, ColourNames>();
+
+/** Bambu Studio's own colour names for its filaments, read once per slicer from its BBL profiles. */
+export function bambuColourNames(source: FilamentProfileSource): ColourNames {
+  const key = `${process.env.BAMBU_PROFILES_ROOT ?? ""}\n${source.slicerType ?? ""}\n${source.slicerPath ?? ""}`;
+  let names = colourNamesCache.get(key);
+  if (!names) {
+    let dir: string | undefined;
+    try {
+      dir = path.join(detectProfilesRoot(source.slicerPath, source.slicerType === "bambustudio" ? "bambustudio" : "orcaslicer"), "BBL", "filament");
+    } catch { dir = undefined; }
+    names = loadColourNames(dir);
+    // A slicer installed later still names its colours: only a table that loaded is kept.
+    if (names !== NO_COLOUR_NAMES) colourNamesCache.set(key, names);
+  }
+  return names;
+}
 
 function buildFilamentProfileIndex(source: FilamentProfileSource): FilamentProfileIndex {
   const byName = new Map<string, string>();
@@ -196,7 +218,7 @@ export function normalizeRgbColor(color: string | null | undefined): string | nu
 
 function trayEntry(
   tray: any,
-  ids: { amsId: number | null; trayId: number | null; slot: number | null; state: number },
+  ids: { amsId: number | null; trayId: number | null; slot: number | null; state: number; label?: string },
   source: FilamentProfileSource,
   bambuModel?: string,
   nozzleDiameter?: string
@@ -236,6 +258,9 @@ function trayEntry(
     profile_resolution: profileResolution.resolution,
     match_confidence: matchConfidence,
     display_name: displayParts.length > 0 ? displayParts.join(" ") : "empty/unknown",
+    label: ids.label ?? (ids.amsId !== null && ids.trayId !== null ? bambuTrayLabel(ids.amsId, ids.trayId) : null),
+    spool_name: trayType ? spoolName(traySubBrands || trayType,
+      trayInfoIdx && trayColor ? bambuColourNames(source).spool(trayInfoIdx, trayColor) : undefined) : null,
     profile_candidates: profileResolution.paths,
   };
 }
@@ -322,9 +347,13 @@ export function externalSpools(status: any, source: FilamentProfileSource, bambu
     .filter((slot) => [254, 255].includes(Number(slot?.id)))
     .map((slot) => ({ slot: Number(slot.id), tray: slot }));
   if (!spools.length && raw?.vt_tray && typeof raw.vt_tray === "object") spools.push({ slot: 254, tray: raw.vt_tray });
+  // vir_slot is the dual-nozzle report; a single-nozzle printer reports vt_tray.
+  const dual = virtual.length > 0;
   return spools.map(({ slot, tray }) => {
     const known = typeof tray?.tray_type === "string" && tray.tray_type.trim() !== "";
-    const entry = trayEntry(tray, { amsId: slot, trayId: 0, slot, state: known ? 1 : 0 }, source, bambuModel, nozzleDiameter);
+    // Dual-nozzle printers: 255 feeds the right (main) nozzle and 254 the left.
+    const label = !dual ? "External" : slot === 255 ? "Right external" : "Left external";
+    const entry = trayEntry(tray, { amsId: slot, trayId: 0, slot, state: known ? 1 : 0, label }, source, bambuModel, nozzleDiameter);
     return { ...entry, loaded: known };
   });
 }
@@ -334,11 +363,15 @@ export function counterpartSlots(inventory: PrinterFilamentInventory, external: 
   return [...inventory.trays, ...external].flatMap((tray): FilamentSlot[] => {
     if (tray.slot === null || !tray.loaded) return [];
     const rgb = normalizeRgbColor(tray.tray_color);
+    // print_3mf's tray value: an AMS-HT unit (id 128 and up, one tray) is its unit id, not ams_id × 4 + tray.
+    const id = tray.ams_id !== null && tray.ams_id >= 128 && tray.ams_id < 254 ? tray.ams_id : tray.slot;
     return [{
-      id: String(tray.slot),
+      id: String(id),
       ...(tray.tray_type ? { material: tray.tray_type } : {}),
       ...(rgb ? { color: `#${rgb.toUpperCase()}` } : {}),
-      ...(tray.display_name && tray.display_name !== "empty/unknown" ? { name: tray.display_name } : {}),
+      ...(tray.spool_name ? { name: tray.spool_name } : tray.display_name && tray.display_name !== "empty/unknown" ? { name: tray.display_name } : {}),
+      ...(tray.label ? { label: tray.label } : {}),
+      ...(tray.tray_info_idx ? { filamentId: tray.tray_info_idx } : {}),
       source: "printer",
       ...(tray.resolved_profile_path ? { profile: tray.resolved_profile_path } : {}),
     }];

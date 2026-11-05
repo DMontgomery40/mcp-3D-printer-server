@@ -18,7 +18,7 @@ const ONE_TRAY = {
   ams: { tray_now: "255", ams: [{ id: "0", tray: [{ id: "0", state: 11, tray_info_idx: "GFL99", tray_type: "PLA", tray_color: "FFFFFFFF", remain: -1 }] }] },
 };
 
-async function inventoryFixture(t, { binary, profiles, slicerType = "bambustudio", override = false, missing = false, invalidDirectory = false, status = ONE_TRAY }) {
+async function inventoryFixture(t, { binary, profiles, slicerType = "bambustudio", override = false, missing = false, invalidDirectory = false, status = ONE_TRAY, colourCodes, tool = "get_printer_filaments", args = {} }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-filament-inventory-"));
   const client = new Client({ name: "filament-inventory-test", version: "1" });
   t.after(async () => {
@@ -32,6 +32,7 @@ async function inventoryFixture(t, { binary, profiles, slicerType = "bambustudio
   await fs.writeFile(executable, "fixture executable; must never be launched");
   await fs.mkdir(path.join(profilesRoot, "BBL", "machine"), { recursive: true });
   await fs.mkdir(filamentDir, { recursive: true });
+  if (colourCodes) await fs.writeFile(path.join(filamentDir, "filaments_color_codes.json"), JSON.stringify({ data: colourCodes }));
   await fs.writeFile(path.join(filamentDir, "Generic PLA @base.json"), JSON.stringify({ name: "Generic PLA @base", filament_id: "GFL99" }));
   await fs.writeFile(path.join(filamentDir, "Generic PETG @base.json"), JSON.stringify({ name: "Generic PETG @base", filament_id: "GFG99" }));
   const expectedProfile = path.join(filamentDir, "Generic PLA @BBL P1S.json");
@@ -58,7 +59,7 @@ async function inventoryFixture(t, { binary, profiles, slicerType = "bambustudio
     stderr: "pipe",
   });
   await client.connect(transport);
-  const result = await client.callTool({ name: "get_printer_filaments", arguments: {} });
+  const result = await client.callTool({ name: tool, arguments: args });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   return { inventory: result.structuredContent, text: JSON.parse(result.content[0].text), expectedProfile };
 }
@@ -80,7 +81,7 @@ for (const [name, options] of [
     assert.equal(inventory.trays[0].slot, 0);
     assert.equal(inventory.trays[0].tray_color, "FFFFFFFF");
     assert.equal(inventory.recommended.load_filaments, inventory.trays[0].resolved_profile_path);
-    assert.deepEqual(inventory.slots, [{ id: "0", material: "PLA", color: "#FFFFFF", name: "PLA #ffffff", source: "printer", profile: inventory.trays[0].resolved_profile_path }]);
+    assert.deepEqual(inventory.slots, [{ id: "0", material: "PLA", color: "#FFFFFF", name: "PLA", label: "A1", filamentId: "GFL99", source: "printer", profile: inventory.trays[0].resolved_profile_path }]);
   });
 }
 
@@ -120,6 +121,13 @@ test("Bambu filament inventory reports every AMS unit, empty trays, and the exte
   assert.equal(inventory.trays[2].remain_percent, 80);
   assert.equal(inventory.trays[2].profile_resolution, "generic");
   assert.deepEqual(inventory.slots.map(slot => [slot.id, slot.material, slot.color]), [["0", "PLA", "#000000"], ["5", "PETG", "#FF0000"], ["254", "TPU", "#00FF00"]]);
+  assert.deepEqual(inventory.slots.map(slot => [slot.label, slot.name]), [["A1", "PLA"], ["B2", "PETG HF"], ["External", "TPU"]], "labels and names a person reads");
+});
+
+test("an AMS-HT slot is the unit id print_3mf takes (128), not ams_id × 4 + tray", async t => {
+  const status = { connected: true, model: "H2D", status: "IDLE", ams: { ams: [{ id: "128", tray: [{ id: "0", state: 11, tray_info_idx: "GFL99", tray_type: "PLA", tray_color: "FFFFFFFF" }] }] } };
+  const { inventory } = await inventoryFixture(t, { binary: "Bambu Studio/bambu-studio.exe", profiles: "Bambu Studio/resources/profiles", status });
+  assert.deepEqual(inventory.slots.map(slot => [slot.id, slot.label]), [["128", "AMS HT A"]]);
 });
 
 test("Bambu filament inventory reports both external spools of a dual-nozzle printer", async t => {
@@ -129,4 +137,38 @@ test("Bambu filament inventory reports both external spools of a dual-nozzle pri
   };
   const { inventory } = await inventoryFixture(t, { binary: "Bambu Studio/bambu-studio.exe", profiles: "Bambu Studio/resources/profiles", status });
   assert.deepEqual(inventory.slots.map(slot => slot.id), ["0", "255"], "an external spool of unknown type is not loaded");
+  assert.deepEqual(inventory.slots.map(slot => slot.label), ["A1", "Right external"], "255 feeds the right nozzle");
+});
+
+test("counterpart_propose_filaments: Bambu spools with Studio's colour names, the AMS and the external spool as separate feeds", async t => {
+  const status = {
+    connected: true, model: "P1S", status: "IDLE",
+    ams: { ams: [{ id: "0", tray: [{ id: "0", state: 11, tray_info_idx: "GFL99", tray_type: "PLA", tray_color: "000000FF" }, { id: "1", state: 11, tray_info_idx: "GFL99", tray_type: "PLA", tray_color: "FEC600FF" }] }] },
+    raw: { vt_tray: { tray_type: "PLA", tray_info_idx: "GFL99", tray_color: "FFFFFFFF" } },
+  };
+  const colourCodes = [
+    { fila_id: "GFL99", fila_color: ["#000000FF"], fila_color_name: { en: "Black" } },
+    { fila_id: "GFL99", fila_color: ["#FEC600FF"], fila_color_name: { en: "Sunflower Yellow" } },
+    { fila_id: "GFL99", fila_color: ["#FFFFFFFF"], fila_color_name: { en: "White" } },
+  ];
+  const { inventory: proposal } = await inventoryFixture(t, { binary: "Bambu Studio/bambu-studio.exe", profiles: "Bambu Studio/resources/profiles", status, colourCodes,
+    tool: "counterpart_propose_filaments", args: { filaments: [{ index: 1, name: "body", colour: "#000000", material: "PLA" }, { index: 2, name: "markings", colour: "#FFFFFF", material: "PLA" }] } });
+  assert.deepEqual(proposal.trays.map(tray => [tray.slot, tray.label, tray.name, tray.feed]),
+    [[0, "A1", "Black PLA", "ams"], [1, "A2", "Sunflower Yellow PLA", "ams"], [254, "External", "White PLA", "external"]]);
+  assert.ok(proposal.trays.every(tray => tray.sliceable && tray.profile), "each spool carries the profile slice_stl takes");
+  assert.deepEqual(proposal.proposal.map(row => [row.slot, row.verdict]), [[0, "same-colour"], [1, "closest"]]);
+  assert.equal(proposal.proposal[1].note, "White is loaded on External, but one print feeds from one source. Closest here: A2 Sunflower Yellow PLA.");
+  assert.deepEqual(proposal.mapping, [{ index: 1, slot: 0 }, { index: 2, slot: 1 }]);
+});
+
+test("counterpart_propose_filaments never offers a sliced file's colours on a dual-nozzle printer's two external spools as printable", async t => {
+  const status = {
+    connected: true, model: "H2D", status: "IDLE", ams: { ams: [] },
+    raw: { vir_slot: [{ id: "255", tray_type: "PLA", tray_info_idx: "GFL99", tray_color: "FFFFFFFF" }, { id: "254", tray_type: "PLA", tray_info_idx: "GFL99", tray_color: "000000FF" }] },
+  };
+  const { inventory: proposal } = await inventoryFixture(t, { binary: "Bambu Studio/bambu-studio.exe", profiles: "Bambu Studio/resources/profiles", status,
+    tool: "counterpart_propose_filaments", args: { sliced: true, filaments: [{ index: 1, colour: "#FFFFFF", material: "PLA" }] } });
+  assert.deepEqual(proposal.trays.map(tray => [tray.slot, tray.label]), [[255, "Right external"], [254, "Left external"]]);
+  assert.equal(proposal.mapping, undefined);
+  assert.deepEqual(proposal.problems.map(problem => problem.code), ["external-nozzle-unverified"]);
 });

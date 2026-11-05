@@ -27,6 +27,9 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   list_printer_files: read(true),
   counterpart_printer_info: read(true),
   counterpart_print_progress: read(true),
+  counterpart_discover_printers: read(true), // listens for printers' own announcements on the local network
+  counterpart_propose_filaments: read(true), // reads the printer's loaded filament
+  counterpart_setup_fields: read(false), // the settings this server reads; no configured values
   camera_snapshot: write(true, false, true), // save_path writes, and replaces, a file of the caller's choosing
   camera_frame: read(true),
   get_printer_filaments: read(true),

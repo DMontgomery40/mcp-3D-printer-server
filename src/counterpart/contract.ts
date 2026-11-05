@@ -86,7 +86,12 @@ export interface FilamentSlot {
   id: string;
   material?: string;
   color?: string;
+  /** The spool as a person names it ("Sunflower Yellow PLA Basic"). */
   name?: string;
+  /** Where it sits, as a person reads it: "A2", "AMS HT A", "External", "Spool". */
+  label?: string;
+  /** Bambu's filament id (tray_info_idx), when the printer reports one. */
+  filamentId?: string;
   source: "spoolman" | "printer" | "unknown";
   /** Absolute path of the slicer filament profile for this material, as slice_stl's load_filaments takes it. */
   profile?: string;
@@ -234,7 +239,9 @@ export const FILAMENTS_OUTPUT_SCHEMA = {
           id: { type: "string" },
           material: { type: "string" },
           color: { type: "string" },
-          name: { type: "string" },
+          name: { type: "string", description: "The spool as a person names it (Bambu: its colour name and product, \"Sunflower Yellow PLA Basic\")." },
+          label: { type: "string", description: "Where the spool sits, as a person reads it: \"A2\", \"AMS HT A\", \"External\", or \"Spool\" on a single-spool printer." },
+          filamentId: { type: "string" },
           source: { type: "string", enum: ["spoolman", "printer", "unknown"] },
           profile: {
             type: "string",
