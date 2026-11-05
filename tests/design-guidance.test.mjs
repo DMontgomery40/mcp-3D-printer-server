@@ -73,7 +73,8 @@ test("fdm_slicing says how the configured slicer orients, makes supports and che
   const prusa = await server(t, { PRINTER_TYPE: "octoprint", SLICER_TYPE: "prusaslicer" });
   const other = (await prusa.getPrompt({ name: "fdm_slicing" })).messages[0].content.text;
   assert.match(other, /PrusaSlicer doesn't auto-orient here/);
-  assert.match(other, /PrusaSlicer takes no support settings here/);
+  assert.match(other, /PrusaSlicer takes no support settings from slice_stl here: whether it generates supports is its configured profile's own setting/);
+  assert.doesNotMatch(other, /generates none|Model any support/, "a support-enabled profile still generates supports");
   assert.doesNotMatch(other, /Bambu Studio|enable_support true/, "no other slicer's behaviour");
 
   // Generic OrcaSlicer takes the support keys but doesn't orient (capabilities.slicing says the same).

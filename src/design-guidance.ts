@@ -206,7 +206,7 @@ export function slicingGuidance(slicerType: string, capabilities: { supports: bo
       : `- Orientation: ${slicer} doesn't auto-orient here. An STL prints in the orientation it's exported in.`,
     capabilities.supports
       ? "- Supports: set enable_support on every slice_stl call. With enable_support true it generates supports in the style support_type names (tree(auto) or normal(auto)); with false it generates none; left out, the process preset's own setting applies. Slice the checkpoint with enable_support set the way the print will be sliced. Supports in a checkpoint never reach the print: only the print's own request does."
-      : `- Supports: ${slicer} takes no support settings here, so it generates none. Model any support the part needs.`,
+      : `- Supports: ${slicer} takes no support settings from slice_stl here: whether it generates supports is its configured profile's own setting. Slice a checkpoint to see what that profile does before modeling any support yourself.`,
   ];
   return lines.join("\n");
 }

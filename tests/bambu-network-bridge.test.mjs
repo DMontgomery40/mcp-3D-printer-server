@@ -99,7 +99,7 @@ const dir = process.env.FAKE_DOCKER_DIR, args = process.argv.slice(2);
 fs.appendFileSync(path.join(dir, "docker.jsonl"), JSON.stringify(args) + "\\n");
 const at = args[0] === "--host" ? 2 : 0;
 if (args[at] === "info") process.exit(fs.existsSync(path.join(dir, "up")) ? 0 : 1);
-if (args[at] === "rm") process.exit(0);
+if (args[at] === "rm" || args[at] === "stop") process.exit(0);
 const env = { ...process.env };
 for (let i = at; i < args.length; i++) {
   if (args[i] === "-v" && !fs.existsSync(args[i + 1].split(":")[0])) process.exit(125);
@@ -159,6 +159,8 @@ test("the FULU host runs in its Docker image, mounting this server's own config 
   const removed = fs.readFileSync(path.join(tools, "docker.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter(args => args.includes("rm"));
   // Once before run (a container a dropped client left under this name), once on stop.
   assert.deepEqual(removed, [["--host", "unix:///colima/bambu-fulu/docker.sock", "rm", "-f", name], ["--host", "unix:///colima/bambu-fulu/docker.sock", "rm", "-f", name]]);
+  const stopped = fs.readFileSync(path.join(tools, "docker.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter(args => args.includes("stop"));
+  assert.equal(stopped.length, 2, "each removal stops the host first, with time to exit");
 });
 
 test("the FULU container mounts a symlinked config folder at the path the host is given, uses the Colima profile's socket, and clears stale snapshots", async t => {
@@ -201,7 +203,26 @@ test("concurrent calls on a cold Docker-backed bridge start one container", asyn
   const logged = fs.readFileSync(path.join(tools, "docker.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   assert.equal(logged.filter(args => args.includes("run")).length, 1, "one container");
   assert.equal(logged.filter(args => args.includes("rm")).length, 1, "removed once, before it started, never while it ran");
+  assert.equal(logged.filter(args => args.includes("stop")).length, 1);
   assert.ok(methods().includes("net.create_agent"));
+});
+
+test("stop returns even when a descendant of the bridge's shell keeps its pipes open", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-stop-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // A descendant of the shell (as a docker client can be) keeps the bridge's stdout and stderr open after the host
+  // has gone, so the shell's "close" never comes. Before, stop waited for it for ever.
+  const pidFile = path.join(dir, "holder.pid");
+  const { bridge } = await fakeFuluBridge(t, { BAMBU_NETWORK_BRIDGE_COMMAND: `sleep 30 < /dev/null & echo $! > ${shellQuoteArg(pidFile)}; ${shellQuoteArg(process.execPath)} ${shellQuoteArg(FAKE_FULU_HOST)}` });
+  await bridge.ensureAgent();
+  const holder = Number(fs.readFileSync(pidFile, "utf8"));
+  t.after(() => { try { process.kill(holder, "SIGKILL"); } catch { /* gone */ } });
+  const started = Date.now();
+  await bridge.stop();
+  assert.ok(Date.now() - started < 8000, `stop is bounded (${Date.now() - started} ms)`);
+  assert.doesNotThrow(() => process.kill(holder, 0), "the pipes were still held, so close never came");
+  // A bridge started afterwards works: nothing from the old one reaches it.
+  await bridge.ensureAgent();
 });
 
 test("the FULU container says plainly when Docker isn't running and no Colima profile is set", async t => {
