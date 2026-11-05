@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.38] – 2026-11-05
+
+### Fixed
+
+- Every extraction of a 3MF's process settings for slicing gets its own temporary directory, removed when the tool call that made it ends. 1.2.33 named them by content, so two slices of the same project at once still wrote one file, and a write could truncate the file the other slice was reading; nothing removed them either. The path `get_slice_settings` returns stays, named by content and written whole before it is renamed into place. Checked with concurrent extraction tests and a stand-in slicer.
+
+### Changed
+
+- `get_slice_settings` on a 3MF with no slicer settings returns `raw_key_count` 0 (and no `extracted_settings_path`) instead of an error, so a client can tell a file with no settings to keep from one that couldn't be read. A file that isn't a readable 3MF, or whose settings file is there but can't be parsed, is still an error. A PrusaSlicer project's `Metadata/Slic3r_PE.config` is now read like bambu-printer-mcp reads it, so its settings are reported instead of refused. Counterpart refuses an edit of a designer's 3MF when it can't read the designer's settings, and needs this to allow edits of a 3MF that has none.
+
 ## [1.2.37] – 2026-11-05
 
 ### Added

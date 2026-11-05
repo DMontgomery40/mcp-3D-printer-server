@@ -70,9 +70,16 @@ function parseBambuJSONConfig(jsonData: any): Partial<BambuSlicerConfig> {
     return config;
 }
 
+/** The files a 3MF's slicer settings are read from, first found wins: Bambu Studio/Orca, then PrusaSlicer. */
+export const SLICER_SETTINGS_FILES = [
+    'Metadata/project_settings.config',
+    'Metadata/Slic3r_PE.config',
+    'Metadata/model_settings.config',
+    'Metadata/slice_info.config',
+];
+
 async function parseBambuConfig(zip: JSZip): Promise<Partial<BambuSlicerConfig>> {
-    // Look for common Bambu config file names
-    const potentialFiles = ['Metadata/project_settings.config', 'Metadata/model_settings.config', 'Metadata/slice_info.config'];
+    const potentialFiles = SLICER_SETTINGS_FILES;
     let configFile = null;
     let configContent = '';
 

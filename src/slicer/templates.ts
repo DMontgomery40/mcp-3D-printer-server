@@ -10,9 +10,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import JSZip from "jszip";
-import { parse3MF } from "../3mf_parser.js";
+import { parse3MF, SLICER_SETTINGS_FILES } from "../3mf_parser.js";
 
 export type TemplateSourceType = "3mf" | "json" | "config";
 
@@ -162,24 +163,51 @@ export async function hasBambuProjectSettings(filePath: string): Promise<boolean
   }
 }
 
-/** Extract the embedded slicer settings from a Bambu/Orca project 3MF. */
-export async function extractBambuTemplateSettings(filePath: string, outputDir: string): Promise<string> {
+const extractionScope = new AsyncLocalStorage<string[]>();
+
+/** Runs one operation; the directory of every settings file extracted during it is removed when it settles. */
+export async function withExtractedSettingsCleanup<T>(operation: () => Promise<T>): Promise<T> {
+  const dirs: string[] = [];
+  try {
+    return await extractionScope.run(dirs, operation);
+  } finally {
+    await Promise.all(dirs.map(dir => fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)));
+  }
+}
+
+/** Whether a 3MF carries a slicer settings file at all (readable or not). */
+export async function hasSlicerSettingsFile(filePath: string): Promise<boolean> {
   const zip = await JSZip.loadAsync(await fs.promises.readFile(filePath));
-  const potentialFiles = [
-    "Metadata/project_settings.config",
-    "Metadata/Slic3r_PE.config",
-    "Metadata/model_settings.config",
-    "Metadata/slice_info.config",
-  ];
-  for (const name of potentialFiles) {
+  return SLICER_SETTINGS_FILES.some(name => zip.file(name));
+}
+
+/**
+ * Extract the embedded slicer settings from a Bambu/Orca project 3MF. Each extraction gets its own directory, removed
+ * when the surrounding withExtractedSettingsCleanup operation settles. `keep` is for a path handed back to the caller:
+ * it is named by content, so repeat calls reuse one file, and written whole before it is renamed into place.
+ */
+export async function extractBambuTemplateSettings(filePath: string, outputDir: string, options: { keep?: boolean } = {}): Promise<string> {
+  const zip = await JSZip.loadAsync(await fs.promises.readFile(filePath));
+  for (const name of SLICER_SETTINGS_FILES) {
     const file = zip.file(name);
     if (!file) continue;
     const content = await file.async("string");
     await fs.promises.mkdir(outputDir, { recursive: true });
+    if (options.keep) {
+      const stem = path.basename(filePath).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 64);
+      const digest = crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
+      const outputPath = path.join(outputDir, `${stem}_${digest}_${name.replace(/\//g, "_")}`);
+      const partial = `${outputPath}.${crypto.randomUUID()}.partial`;
+      await fs.promises.writeFile(partial, content, "utf8");
+      await fs.promises.rename(partial, outputPath);
+      return outputPath;
+    }
+    // Its own directory for every extraction, so two slices at once (of different projects, same-named ones or the
+    // same one) never share, overwrite or half-read one settings file.
+    const dir = await fs.promises.mkdtemp(path.join(outputDir, "slicer-settings-"));
+    extractionScope.getStore()?.push(dir);
     const stem = path.basename(filePath).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 64);
-    // Named by content too, so two same-named projects sliced at once never overwrite each other's settings.
-    const digest = crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
-    const outputPath = path.join(outputDir, `${stem}_${digest}_${name.replace(/\//g, "_")}`);
+    const outputPath = path.join(dir, `${stem}_${name.replace(/\//g, "_")}`);
     await fs.promises.writeFile(outputPath, content, "utf8");
     return outputPath;
   }
@@ -279,12 +307,17 @@ export async function inspectSliceSettings(sourcePath: string, tempDir: string) 
 
   if (extension === ".3mf") {
     const parsed = await parse3MF(sourcePath);
-    const extractedSettingsPath = await extractBambuTemplateSettings(sourcePath, settingsDir);
     const config = (parsed.slicerConfig || {}) as Record<string, any>;
+    // A 3MF with no settings file says so (raw_key_count 0) rather than failing, so a client can tell a file with
+    // none to keep from one whose settings couldn't be read, which stays an error.
+    const hasSettingsFile = await hasSlicerSettingsFile(sourcePath);
+    if (hasSettingsFile && !Object.keys(config).length) throw new Error(`The slicer settings in ${sourcePath} couldn't be read.`);
+    // Returned to the caller, so it stays.
+    const extractedSettingsPath = hasSettingsFile ? await extractBambuTemplateSettings(sourcePath, settingsDir, { keep: true }) : undefined;
     return {
       source_path: sourcePath,
       source_type: "3mf",
-      extracted_settings_path: extractedSettingsPath,
+      ...(extractedSettingsPath ? { extracted_settings_path: extractedSettingsPath } : {}),
       object_count: parsed.objects.length,
       build_item_count: parsed.build.items.length,
       metadata_keys: Object.keys(parsed.metadata),
