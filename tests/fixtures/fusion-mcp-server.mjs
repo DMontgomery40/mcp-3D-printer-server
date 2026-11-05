@@ -1,4 +1,4 @@
-// A stdio MCP peer that answers like faust-machines/fusion360-mcp-server@19b9f1e95192.
+// A stdio MCP peer that answers like faust-machines/fusion360-mcp-server@19b9f1e95192 (the fork the bridge pins adds document binding).
 // Text formats were recorded from that commit's --mode mock (KAN-216): success is
 // "**<tool>** OK" then "  key: value" lines; failures are "**<tool>** ERROR (<KIND>)"
 // with isError. It never imports Fusion or executes received Python.

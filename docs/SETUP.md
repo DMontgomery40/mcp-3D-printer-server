@@ -112,9 +112,9 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 # BLENDER_MCP_ARGS=["mcp-for-blender"]
 # BLENDER_MCP_TIMEOUT_MS=120000
 
-# --- Optional Autodesk Fusion (faust-machines/fusion360-mcp-server, pinned) ---
+# --- Optional Autodesk Fusion (DMontgomery40/fusion360-mcp-server: faust-machines with document binding, pinned; fusion_mcp_setup adds these on macOS) ---
 # FUSION_MCP_COMMAND=/full/path/to/uvx
-# FUSION_MCP_ARGS=["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]
+# FUSION_MCP_ARGS=["--from","git+https://github.com/DMontgomery40/fusion360-mcp-server@86a3016a5a5b","fusion360-mcp-server","--mode","socket"]
 # FUSION_MCP_TIMEOUT_MS=180000
 # FUSION_MCP_HOST=localhost
 # FUSION_MCP_PORT=9877
@@ -175,7 +175,7 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `BLENDER_MCP_TIMEOUT_MS` | `120000` | No | Connection, discovery, and call deadline, 100 to 300000 ms |
 | `BLENDER_MCP_BRIDGE_COMMAND` | | No | Legacy trusted shell command for `blender_mcp_edit_model`; separate from the standard MCP integration |
 | `FUSION_MCP_COMMAND` | | No | Trusted executable for the Fusion MCP server: the full path to `uvx`. See the [Fusion guide](./FUSION.md) |
-| `FUSION_MCP_ARGS` | the pinned faust-machines server in socket mode | No | JSON array of arguments; no shell parsing. The default is `["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]` |
+| `FUSION_MCP_ARGS` | the pinned server in socket mode | No | JSON array of arguments; no shell parsing. The default is `["--from","git+https://github.com/DMontgomery40/fusion360-mcp-server@86a3016a5a5b","fusion360-mcp-server","--mode","socket"]` |
 | `FUSION_MCP_TIMEOUT_MS` | `180000` | No | Connection, discovery, and call deadline, 100 to 600000 ms |
 | `FUSION_MCP_HOST` | `localhost` | No | Where the Fusion360MCP add-in listens, passed through to the Fusion server |
 | `FUSION_MCP_PORT` | `9877` | No | The add-in's port. Blender's MCP addon holds the add-in's own default, 9876, so Fusion uses 9877. The Fusion server and the add-in both read it; Fusion, a GUI app, needs it in its own environment (see the [Fusion guide](./FUSION.md)) |

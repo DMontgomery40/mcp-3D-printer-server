@@ -8,6 +8,8 @@ const send = (id, result) => process.stdout.write(`${JSON.stringify({ jsonrpc: "
 const fail = (id, code, message) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } })}\n`);
 const sceneTool = { name: "get_scene_info", inputSchema: { type: "object", properties: { user_prompt: { type: "string" } }, required: ["user_prompt"] } };
 const codeTool = { name: "execute_blender_code", description: "Execute arbitrary Python code in Blender.\n\n    Parameters: long details that status summaries omit.", inputSchema: { type: "object", properties: { code: { type: "string" }, user_prompt: { type: "string" } }, required: ["code"] } };
+// MCP for Blender's own handshake (mode "addon"): the running add-on is protocol 14, the package expects 15.
+const addonTool = { name: "get_addon_status", inputSchema: { type: "object", properties: {} } };
 const reader = readline.createInterface({ input: process.stdin });
 log({ event: "spawn", pid: process.pid, printerTokenPresent: Boolean(process.env.BAMBU_TOKEN) });
 reader.on("line", (line) => {
@@ -21,6 +23,7 @@ reader.on("line", (line) => {
     if (mode === "list-timeout") return;
     if (mode === "list-error") return fail(request.id, -32603, "list failed secret-should-not-leak");
     if (mode === "missing-tool") return send(request.id, { tools: [sceneTool] });
+    if (mode === "addon") return send(request.id, { tools: [sceneTool, codeTool, addonTool] });
     return send(request.id, request.params?.cursor ? { tools: [codeTool] } : { tools: [sceneTool], nextCursor: "page-two" });
   }
   if (request.method !== "tools/call") return;
@@ -31,6 +34,8 @@ reader.on("line", (line) => {
   if (mode === "scene-text-error") return send(request.id, { content: [{ type: "text", text: "Error getting scene info: Could not connect to Blender" }] });
   const args = request.params.arguments;
   if (request.params.name === "get_scene_info") return send(request.id, { content: [{ type: "text", text: '{"objects":[]}' }] });
+  if (request.params.name === "get_addon_status") return send(request.id, { content: [{ type: "text",
+    text: JSON.stringify({ up_to_date: false, protocol_version: 14, expected_protocol_version: 15, addon_version: [1, 2, 0], blender_version: "5.0.1" }) }] });
   if (typeof args?.code !== "string") return fail(request.id, -32602, "code required");
   const exportLine = args.code.split("\n").find((line) => line.startsWith("# MCP3D_EXPORT_PLAN "));
   if (exportLine) {

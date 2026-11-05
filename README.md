@@ -795,6 +795,14 @@ Inspect the Blender MCP configuration. With `connect: true`, it starts the confi
 }
 ```
 
+#### blender_mcp_setup
+
+Check or update the MCP for Blender add-on that the configured bridge needs, when it is the `mcp-for-blender` (or `blender-mcp`) package run with `uvx`. Without arguments it reports, changing nothing: the add-on file Blender loads (`target`, for the running Blender's version), its protocol, the package's `expected_protocol`, whether Blender is `listening`, and the running add-on's `get_addon_status` as `live` (or `live_error`). With `update: true` it stages the add-on with the package's own `mcp-for-blender install-addon` at that version, checks that the installed and staged files are both regular MCP for Blender add-ons and that the staged one carries the expected protocol, keeps the old file as a `backup` next to it and renames the new one into place. It never starts, stops or edits Blender. Another bridge reports `supported: false`.
+
+```json
+{ "update": true }
+```
+
 #### blender_mcp_call
 
 Call a tool the Blender MCP server advertises, such as `get_scene_info` or `execute_blender_code`, with arguments matching its discovered schema. The full MCP result, including images and errors, is returned. Calls can change the active Blender scene and are never retried automatically. Preserve the user's own words in `user_prompt` when the remote tool asks for it.
@@ -846,14 +854,22 @@ Legacy `BLENDER_MCP_BRIDGE_COMMAND` shell commands remain supported when no stan
 
 #### Fusion MCP
 
-Design parts from scratch in Autodesk Fusion through [faust-machines/fusion360-mcp-server](https://github.com/faust-machines/fusion360-mcp-server), pinned to commit `19b9f1e95192`. Set `FUSION_MCP_COMMAND` to the full path of `uvx`; `FUSION_MCP_ARGS` defaults to the pinned server in socket mode. Install that commit's Fusion360MCP add-in in Fusion and set it to Run on Startup. The client stays connected for the life of this server, only `FUSION_*` settings reach the Fusion server, and requests are never replayed. See the [Fusion guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FUSION.md) for setup, units, and the open-document requirement.
+Design parts from scratch in Autodesk Fusion through [DMontgomery40/fusion360-mcp-server](https://github.com/DMontgomery40/fusion360-mcp-server), pinned to commit `86a3016a5a5b`: [faust-machines/fusion360-mcp-server](https://github.com/faust-machines/fusion360-mcp-server) with document binding. On macOS, `fusion_mcp_setup` checks and installs the add-in, its port login item and this server's settings. Set `FUSION_MCP_COMMAND` to the full path of `uvx`; `FUSION_MCP_ARGS` defaults to the pinned server in socket mode. Install that commit's Fusion360MCP add-in in Fusion and set it to Run on Startup. The client stays connected for the life of this server, only `FUSION_*` settings reach the Fusion server, and requests are never replayed. See the [Fusion guide](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FUSION.md) for setup, units, and the open-document requirement.
 
 #### fusion_mcp_status
 
-Report `configured`, `connected`, `addinReachable`, `fusionRunning`, the Fusion server's `tools` with their schemas, `launched`, `pin` (the faust-machines commit), and `error` when the server could not start. `addinReachable` means the add-in answered its own `ping` within 2 s on `FUSION_MCP_PORT` (default 9877, because Blender's MCP addon holds 9876). `connected` is true only when the add-in also answered through the Fusion server. With `launch: true` and Fusion not running on this Mac, it runs `open -a "Autodesk Fusion" --env FUSION_MCP_PORT=<port>` and waits up to 90 s for the add-in.
+Report `configured`, `connected`, `addinReachable`, `fusionRunning`, the Fusion server's `tools` with their schemas, `launched`, `pin` (the pinned server commit), and `error` when the server could not start. `addinReachable` means the add-in answered its own `ping` within 2 s on `FUSION_MCP_PORT` (default 9877, because Blender's MCP addon holds 9876). `connected` is true only when the add-in also answered through the Fusion server. With `launch: true` and Fusion not running on this Mac, it runs `open -a "Autodesk Fusion" --env FUSION_MCP_PORT=<port>` and waits up to 90 s for the add-in.
 
 ```json
 { "launch": true }
+```
+
+#### fusion_mcp_setup
+
+On macOS, check or install what the Fusion bridge needs. Without arguments it reports, changing nothing: `fusion` (whether Fusion is installed, and where), `addin` (installed, `matches_pin`, `run_on_startup`), `port_agent` (the login item that gives Fusion `FUSION_MCP_PORT`, installed only when launchd has it loaded), `configured`, `env_file` and `ready`. With `install: true` it downloads the pinned commit's add-in and checks every file against its SHA-256 (a symlink, an extra file or a changed byte installs nothing), installs it set to run on startup (one already at the pin is left in place), loads the login item, and adds the `FUSION_MCP_*` settings this server is missing to its own `.env` after a copy of the file; a setting it already has is never rewritten. `installed` says what it did. It never starts or quits Fusion.
+
+```json
+{ "install": true }
 ```
 
 #### fusion_mcp_call

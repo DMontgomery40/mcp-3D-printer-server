@@ -383,3 +383,27 @@ test("Blender scene export publishes nothing on addon errors, bad receipts, or i
     });
   }
 });
+
+test("blender_mcp_setup reads the running add-on's own handshake through the configured bridge", async (t) => {
+  // A stand-in uvx: `python -c` answers the package's add-on inspection; anything else runs the Blender MCP peer.
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "mcp3d-blender-setup-"));
+  const addons = path.join(tools, "Library", "Application Support", "Blender", "5.0", "scripts", "addons");
+  fs.mkdirSync(addons, { recursive: true });
+  fs.writeFileSync(path.join(addons, "addon.py"), 'bl_info = {"name": "MCP for Blender"}\nADDON_PROTOCOL_VERSION = 15\n');
+  const report = JSON.stringify({ version: "2.2.7", protocol: 15, files: [{ path: path.join(addons, "addon.py"), protocol: 15 }] });
+  const uvx = path.join(tools, "uvx");
+  fs.writeFileSync(uvx, `#!/bin/sh\ncase " $* " in *" python "*) printf '%s\\n' '${report}' ;; *) exec '${process.execPath}' '${fixture}' addon ;; esac\n`, { mode: 0o755 });
+  // Blender is listening: something answers on the add-on's port.
+  const net = await import("node:net");
+  const listener = net.createServer(socket => socket.destroy());
+  await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => { listener.close(); fs.rmSync(tools, { recursive: true, force: true }); });
+  const peer = await start(t, "addon", { BLENDER_MCP_COMMAND: uvx, BLENDER_MCP_ARGS: '["blender-mcp"]', BLENDER_HOST: "127.0.0.1", BLENDER_PORT: String(listener.address().port) });
+  const result = await peer.call("blender_mcp_setup", {});
+  assert.equal(result.isError, undefined, errorText(result));
+  const setup = data(result);
+  assert.equal(setup.listening, true);
+  assert.deepEqual(setup.live, { up_to_date: false, protocol_version: 14, expected_protocol_version: 15, blender_version: "5.0.1" });
+  assert.deepEqual(setup.target, { path: path.join(addons, "addon.py"), protocol: 15 }, "the running Blender's 5.0 folder");
+  assert.equal(setup.current, true, "on disk it is current; the running Blender has the old add-on loaded");
+});

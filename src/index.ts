@@ -21,15 +21,18 @@ import fs from "fs";
 import path from "path";
 import os from "node:os";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
+import { BLENDER_SETUP_OUTPUT_SCHEMA, BlenderAddonSetup, FUSION_ADDIN_REPOSITORY, FUSION_SETUP_OUTPUT_SCHEMA, FusionAddinSetup, defaultSetupSystem, parseAddonHandshake, type BlenderAddonHandshake } from "./design-app-setup.js";
 import { resolveFilamentProfile } from "./slicer/filament-profiles.js";
 import { sliceCapabilities } from "./slicer/capabilities.js";
 import {
   FUSION_CALL_OUTPUT_SCHEMA,
   FUSION_EXPORT_OUTPUT_SCHEMA,
+  FUSION_MCP_DEFAULT_ARGS,
   FUSION_MCP_PINNED_COMMIT,
   FUSION_NEW_DESIGN_OUTPUT_SCHEMA,
   FUSION_STATUS_OUTPUT_SCHEMA,
   FusionMcpBridge,
+  addinAddress,
 } from "./fusion-mcp-bridge.js";
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
@@ -512,6 +515,7 @@ const OUTPUT_SCHEMA_TOOLS = new Set([
   "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
   "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
+  "blender_mcp_setup", "fusion_mcp_setup",
 ]);
 
 /** layer_height / wall_loops / sparse_infill_density / support settings (PRD §8.4), validated before slicing. */
@@ -848,6 +852,9 @@ class ThreeDPrinterMCPServer {
   private server: Server;
   private readonly blender = new BlenderMcpBridge();
   private readonly fusion = new FusionMcpBridge();
+  // Downloads and installer output are staged in this server's own temporary folder.
+  private readonly blenderSetup = new BlenderAddonSetup(() => this.blenderAddonHandshake(), { ...defaultSetupSystem, tmp: TEMP_DIR });
+  private readonly fusionSetup = new FusionAddinSetup(() => addinAddress().port, FUSION_MCP_DEFAULT_ARGS, { ...defaultSetupSystem, tmp: TEMP_DIR });
   private printerFactory: PrinterFactory;
   private readonly counterpart: CounterpartService;
   private stlManipulator: STLManipulator;
@@ -885,6 +892,14 @@ class ThreeDPrinterMCPServer {
 
     this.setupHandlers();
     this.setupErrorHandling();
+  }
+
+  /** The running Blender add-on's get_addon_status, read through this server's Blender bridge (undefined when it has none). */
+  private async blenderAddonHandshake(): Promise<BlenderAddonHandshake | undefined> {
+    const signal = AbortSignal.timeout(20_000);
+    const status = await this.blender.status({ connect: true, timeout_ms: 15_000 }, signal) as { connected?: boolean; tools?: { name?: string }[] };
+    if (status?.connected !== true || !status.tools?.some(tool => tool.name === "get_addon_status")) return undefined;
+    return parseAddonHandshake(await this.blender.call({ tool_name: "get_addon_status", arguments: {}, timeout_ms: 15_000 }, signal));
   }
 
   /** Human MCP elicitation for a physical check software cannot make (resuming a job that cannot be re-read). */
@@ -2521,8 +2536,28 @@ class ThreeDPrinterMCPServer {
             }
           },
           {
+            name: "blender_mcp_setup",
+            description: "Check or update the MCP for Blender add-on that the configured Blender bridge (BLENDER_MCP_COMMAND uvx, BLENDER_MCP_ARGS naming mcp-for-blender or blender-mcp) needs. Without update: which add-on file Blender loads, its protocol and the protocol the package expects, whether Blender is listening and the running add-on's own handshake. Changes nothing. With update: true, stages the add-on with the package's own installer (mcp-for-blender install-addon) at the inspected version, checks it, keeps the old file as a backup next to it and renames the new one into place. Never starts, stops or edits Blender; a running Blender uses the new add-on once it is re-enabled or restarted. A custom bridge returns supported false.",
+            inputSchema: {
+              type: "object",
+              properties: { update: { type: "boolean", description: "Replace the installed add-on with the package's own (default false: check only)." } },
+              additionalProperties: false
+            },
+            outputSchema: BLENDER_SETUP_OUTPUT_SCHEMA,
+          },
+          {
+            name: "fusion_mcp_setup",
+            description: `Check or install what the Fusion bridge needs on macOS: Autodesk Fusion itself (found, never installed), the Fusion360MCP add-in from ${FUSION_ADDIN_REPOSITORY} at ${FUSION_MCP_PINNED_COMMIT} (every file checked against its pinned SHA-256) set to run on startup, a login item that sets FUSION_MCP_PORT for Fusion however it is opened, and this server's FUSION_MCP_* settings. Without install: reports them and changes nothing. With install: true, installs what is missing and adds the missing settings to this server's own .env (after a copy of it), never rewriting one it already has. Never starts or quits Fusion; check the connection with fusion_mcp_status.`,
+            inputSchema: {
+              type: "object",
+              properties: { install: { type: "boolean", description: "Install what is missing (default false: check only)." } },
+              additionalProperties: false
+            },
+            outputSchema: FUSION_SETUP_OUTPUT_SCHEMA,
+          },
+          {
             name: "fusion_mcp_status",
-            description: `Check the Autodesk Fusion bridge: whether the Fusion MCP server is configured (faust-machines/fusion360-mcp-server@${FUSION_MCP_PINNED_COMMIT}), whether Fusion is running, whether its Fusion360MCP add-in answers on its port, and the server's tools and schemas. connected is true only when the add-in answered. With launch: true and Fusion not running on this Mac, opens Autodesk Fusion and waits up to 90 s for the add-in.`,
+            description: `Check the Autodesk Fusion bridge: whether the Fusion MCP server is configured (by default ${FUSION_ADDIN_REPOSITORY}@${FUSION_MCP_PINNED_COMMIT}, faust-machines' server with document binding; fusion_mcp_setup installs it), whether Fusion is running, whether its Fusion360MCP add-in answers on its port, and the server's tools and schemas. connected is true only when the add-in answered. With launch: true and Fusion not running on this Mac, opens Autodesk Fusion and waits up to 90 s for the add-in.`,
             inputSchema: {
               type: "object",
               properties: {
@@ -3503,6 +3538,14 @@ class ThreeDPrinterMCPServer {
             // The text stays the STL path clients read; structuredContent says whether it was laid flat.
             return { content: [{ type: "text", text: layFlatResult.path }], structuredContent: layFlatResult };
           }
+
+          case "blender_mcp_setup":
+            if (args?.update !== undefined && typeof args.update !== "boolean") throw new Error("update must be a boolean.");
+            return structured(args?.update === true ? await this.blenderSetup.update(extra.signal) : await this.blenderSetup.check());
+
+          case "fusion_mcp_setup":
+            if (args?.install !== undefined && typeof args.install !== "boolean") throw new Error("install must be a boolean.");
+            return structured(args?.install === true ? await this.fusionSetup.install(extra.signal) : await this.fusionSetup.check());
 
           case "fusion_mcp_status":
             return structured(await this.fusion.status(args ?? {}, extra.signal));

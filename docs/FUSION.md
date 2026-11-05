@@ -16,14 +16,30 @@ and touch-ups still use [Blender](BLENDER.md).
 
 ## Set it up
 
-The server and the add-in are pinned to commit `19b9f1e95192`. The PyPI
-release (0.1.0) crashes under `mcp` 2.x ([issue #30](https://github.com/faust-machines/fusion360-mcp-server/issues/30)),
-and that commit pins `mcp>=1.0,<2`.
+The server and the add-in are pinned to commit `86a3016a5a5b` of
+[DMontgomery40/fusion360-mcp-server](https://github.com/DMontgomery40/fusion360-mcp-server):
+faust-machines' server and add-in with document binding, while that change is
+reviewed upstream (bambu-printer-mcp pins the same commit). The PyPI release
+(0.1.0) crashes under `mcp` 2.x ([issue #30](https://github.com/faust-machines/fusion360-mcp-server/issues/30)),
+and the pinned commit keeps `mcp>=1.0,<2`.
+
+On macOS, `fusion_mcp_setup` does steps 2 and 3 and the port login item below.
+Without arguments it reports, changing nothing: whether Fusion is installed,
+whether the add-in is at the pin and runs on startup, whether the login item is
+installed and whether this server has its Fusion settings. With
+`{"install": true}` it downloads the pinned commit's archive, checks every
+add-in file against its SHA-256 (a symlink, an extra file or a changed byte
+installs nothing), installs it set to run on startup (an add-in already at the
+pin is left in place), loads a login LaunchAgent,
+`com.scantomake.mac.fusion-port`, that runs `launchctl setenv FUSION_MCP_PORT
+9877`, and adds the settings this server is missing to its own `.env` after a
+copy of the file. A setting the server or its `.env` already has is never
+rewritten. It never starts or quits Fusion.
 
 1. Install [Autodesk Fusion](https://www.autodesk.com/products/fusion-360) and
    [uv](https://docs.astral.sh/uv/getting-started/installation/).
 2. Install the add-in from the same commit: copy the repository's `addon/`
-   folder at `19b9f1e95192` to
+   folder at `86a3016a5a5b` to
    `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/Fusion360MCP`.
    In Fusion, open **Utilities → Add-Ins → Scripts and Add-Ins**, select
    **Fusion360MCP**, and turn on **Run on Startup**.
@@ -33,7 +49,7 @@ and that commit pins `mcp>=1.0,<2`.
    | Variable | Value |
    |---|---|
    | `FUSION_MCP_COMMAND` | The full path to `uvx` |
-   | `FUSION_MCP_ARGS` | `["--from","git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192","fusion360-mcp-server","--mode","socket"]` (the default when unset) |
+   | `FUSION_MCP_ARGS` | `["--from","git+https://github.com/DMontgomery40/fusion360-mcp-server@86a3016a5a5b","fusion360-mcp-server","--mode","socket"]` (the default when unset) |
    | `FUSION_MCP_TIMEOUT_MS` | Optional, default `180000`. The first start downloads the pinned server |
    | `FUSION_MCP_HOST` | Optional, default `localhost`. Passed through to the Fusion server |
    | `FUSION_MCP_PORT` | `9877` (the default). Blender's MCP addon holds 9876, the add-in's own default |
