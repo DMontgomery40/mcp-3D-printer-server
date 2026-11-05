@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.43] – 2026-11-05
+
+### Fixed
+
+- The FULU container test expected the real path on both sides of the config mount, so `npm test` failed on macOS, where `/var` is a link to `/private/var`. The server mounts the real folder at the path the host is given, and the test now expects that. Test only; found when bambu-printer-mcp's macOS CI ran the same test.
+
 ## [1.2.42] – 2026-11-05
 
 ### Added

@@ -140,7 +140,8 @@ test("the FULU host runs in its Docker image, mounting this server's own config 
   assert.equal(runs.length, 1);
   const run = runs[0];
   const mounts = run.flatMap((arg, i) => arg === "-v" ? [run[i + 1]] : []);
-  assert.deepEqual(mounts, [`${fs.realpathSync(config)}:${fs.realpathSync(config)}:rw`],
+  // The real folder, mounted at the path the host is told about (on macOS, /var is a link to /private/var).
+  assert.deepEqual(mounts, [`${fs.realpathSync(config)}:${config}:rw`],
     "this server's config folder (mcp-3d-printer-server's own, here), which holds the print snapshots too");
   const { bridgeSnapshotRoot } = await import("../dist/bambu-network-bridge.js");
   assert.equal(bridgeSnapshotRoot(), path.join(config, "print-snapshots"), "print snapshots go where the host can read them");
