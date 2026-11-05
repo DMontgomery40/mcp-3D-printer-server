@@ -586,6 +586,33 @@ test("template tools save, list, inspect, and slice with a process template", as
   assert.doesNotMatch(text(result), /printer connectivity/i);
 });
 
+test("a designer's 3MF slices with its own process; strength never weakens it; a bare 3MF keeps the preset", async (t) => {
+  // 2026-11-04: a designer's caliper card (0.16 mm, 100% infill, 2 walls) was sliced at the preset's values,
+  // and Strong lowered its infill to 25%: its fold hinges and snaps no longer worked.
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install);
+  const model = '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/><vertex x="0" y="0" z="10"/></vertices><triangles><triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/><triangle v1="0" v2="3" v3="2"/><triangle v1="1" v2="2" v3="3"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>';
+  const designer = path.join(install.root, "designer.3mf");
+  await fs.writeFile(designer, await zipBytes({ "3D/3dmodel.model": model, "Metadata/project_settings.config": JSON.stringify({
+    layer_height: "0.16", sparse_infill_density: "100%", wall_loops: "2", print_settings_id: "Designer",
+    filament_settings_id: ["Bambu PLA Basic @BBL X1C"], filament_type: ["PLA"], filament_colour: ["#000000"] }) }));
+  const bare = path.join(install.root, "bare.3mf");
+  await fs.writeFile(bare, await zipBytes({ "3D/3dmodel.model": model }));
+  const sliceWith = async (file, extra = {}) => {
+    const result = await call("slice_stl", { stl_path: file, bambu_model: "p1s", nozzle_diameter: "0.4", slice_plate: 1, arrange: false, orient: false, ...extra });
+    assert.equal(result.isError, undefined, text(result));
+    const args = await install.args();
+    const { layer_height, wall_loops, sparse_infill_density } = JSON.parse(await fs.readFile(args[args.indexOf("--load-settings") + 1].split(";")[1], "utf8"));
+    return { layer_height, wall_loops, sparse_infill_density };
+  };
+  assert.deepEqual(await sliceWith(designer), { layer_height: "0.16", wall_loops: "2", sparse_infill_density: "100%" }, "the designer's own process");
+  assert.deepEqual(await sliceWith(designer, { strength: "strong" }), { layer_height: "0.16", wall_loops: "4", sparse_infill_density: "100%" },
+    "strong adds walls but keeps the designer's denser infill");
+  assert.equal((await sliceWith(designer, { quality: "fine" })).layer_height, "0.12", "a chosen quality still applies");
+  assert.equal((await sliceWith(designer, { sparse_infill_density: "20%" })).sparse_infill_density, "20%", "an explicit value is written as given");
+  assert.equal((await sliceWith(bare)).layer_height, "0.2", "a 3MF without its own process keeps the preset");
+});
+
 test("machine settings inside a template or process profile never replace the selected preset", async (t) => {
   const install = await createFakeInstall(t);
   const { call } = await startServer(t, install);
@@ -868,9 +895,23 @@ test("unsupported slicers refuse pause_at_layers before running rather than igno
 
 test("quality and strength map to slicer settings; explicit values win; bad values are refused", async () => {
   const { withPrintQuality } = await import("../../dist/slicer/print-quality.js");
-  assert.deepEqual(withPrintQuality({ quality: "fine", strength: "strong" }, 0.4), { quality: "fine", strength: "strong", layer_height: 0.12, wall_loops: 4, sparse_infill_density: "25%" });
+  assert.deepEqual(withPrintQuality({ quality: "fine", strength: "strong" }, 0.4), { quality: "fine", strength: "strong", layer_height: 0.12, wall_loops_floor: 4, sparse_infill_density_floor: "25%" }, "strength only raises the process's own walls and infill");
   assert.equal(withPrintQuality({ quality: "fine", layer_height: 0.16 }, 0.4).layer_height, 0.16);
   assert.deepEqual(withPrintQuality({ stl_path: "x" }, 0.4), { stl_path: "x" });
   assert.throws(() => withPrintQuality({ quality: "ultra" }, 0.4), /quality must be one of/);
   assert.throws(() => withPrintQuality({ quality: null }, 0.4), /quality must be one of/, "null is not Standard");
+});
+
+test("PrusaSlicer strength floors keep a loaded config's own higher walls and infill", async () => {
+  const { prusaSlicerOverrideArgs } = await import("../../dist/stl/stl-manipulator.js");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "prusa-floor-"));
+  const dense = path.join(dir, "dense.ini"), light = path.join(dir, "light.ini");
+  await fs.writeFile(dense, "perimeters = 2\nfill_density = 100%\n");
+  await fs.writeFile(light, "perimeters = 2\nfill_density = 15%\n");
+  const strong = { wallLoopsFloor: 4, sparseInfillDensityFloor: "25%" };
+  assert.deepEqual(prusaSlicerOverrideArgs(strong, [dense]), ["--perimeters", "4", "--fill-density", "100%"]);
+  assert.deepEqual(prusaSlicerOverrideArgs(strong, [light]), ["--perimeters", "4", "--fill-density", "25%"]);
+  assert.deepEqual(prusaSlicerOverrideArgs({ ...strong, sparseInfillDensity: "10%" }, [dense]), ["--perimeters", "4", "--fill-density", "10%"], "an explicit value is written as given");
+  assert.deepEqual(prusaSlicerOverrideArgs(strong), ["--perimeters", "4", "--fill-density", "25%"], "no config: the minimum");
+  await fs.rm(dir, { recursive: true, force: true });
 });

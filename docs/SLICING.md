@@ -84,7 +84,7 @@ Generic OrcaSlicer writes `plate_1.gcode`; the server renames it after the input
 
 ### Layer height, walls and infill
 
-`slice_stl` and `slice_with_template` take `quality` (`draft`, `standard`, `fine`) and `strength` (`standard`, `strong`, `max`), so a client can send the person's choice without slicer numbers. The server picks the layer height for the nozzle (0.28 and 0.12 mm on a 0.4 mm nozzle; it scales with `nozzle_diameter`, or `NOZZLE_DIAMETER` when that's not given, which for PrusaSlicer, Slic3r and generic OrcaSlicer must match the nozzle in `slicer_profile`) and the walls and infill (4 walls at 25%, 6 at 40%). Standard keeps the preset; explicit values win. Cura takes only Standard.
+`slice_stl` and `slice_with_template` take `quality` (`draft`, `standard`, `fine`) and `strength` (`standard`, `strong`, `max`), so a client can send the person's choice without slicer numbers. The server picks the layer height for the nozzle (0.28 and 0.12 mm on a 0.4 mm nozzle; it scales with `nozzle_diameter`, or `NOZZLE_DIAMETER` when that's not given, which for PrusaSlicer, Slic3r and generic OrcaSlicer must match the nozzle in `slicer_profile`) and the walls and infill (at least 4 walls and 25%, or 6 and 40%: a process that already has more, such as a designer's 3MF at 100% infill, keeps it). Standard keeps the process as it is; explicit values win. Cura takes only Standard.
 
 `slice_stl` and `slice_with_template` accept `layer_height` (mm), `wall_loops` (a whole number of walls), and `sparse_infill_density` (a percentage such as `"15%"`; a bare number is read as a percentage). They are written over the profile the slice would otherwise use, so they win over the preset, `SLICER_PROFILE`, and a template:
 
@@ -124,7 +124,7 @@ A template is a saved `.3mf`, `.json`, or `.config` file whose slicer settings a
 - `get_slice_settings` shows a template's or file's layer height, infill, walls, supports, brim, bed, printer, and filaments without slicing.
 - `slice_with_template` slices with a named template. The machine preset still comes from `bambu_model` and `nozzle_diameter`, and an explicit `slicer_profile` in the call overrides the template.
 
-`slice_stl` accepts `template_3mf_path` or `template_name` too, and uses `BAMBU_TEMPLATE_3MF_PATH` as a default template when set.
+`slice_stl` accepts `template_3mf_path` or `template_name` too, and uses `BAMBU_TEMPLATE_3MF_PATH` as a default template when set. A 3MF that carries its own process settings (a designer's Bambu Studio or Orca project) slices with them instead of the default template or profile, unless the call names one; the machine still comes from `bambu_model`.
 
 ## Printing what you sliced
 

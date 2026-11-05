@@ -9,6 +9,7 @@ import { EventEmitter } from 'events';
 import * as crypto from 'crypto';
 import { detectProfilesRoot } from '../slicer/profile-flatten.js';
 import { flattenOrcaFilament } from '../slicer/filament-profiles.js';
+import { mergeProcessKeys } from '../slicer/print-quality.js';
 import {
   BambuCliProfilePreparer,
   assertSlicedProjectOutput,
@@ -36,6 +37,10 @@ export interface ProcessOverrides {
   wallLoops?: number;
   /** e.g. "15%" */
   sparseInfillDensity?: string;
+  /** From a strength choice: at least this many walls, keeping a profile's own higher count. */
+  wallLoopsFloor?: number;
+  /** From a strength choice: at least this density, keeping a profile's own denser infill. */
+  sparseInfillDensityFloor?: string;
   enableSupport?: boolean;
   /** normal(auto), tree(auto), normal(manual) or tree(manual) */
   supportType?: string;
@@ -61,20 +66,41 @@ export function orcaProcessOverrides(overrides: ProcessOverrides | undefined): R
   if (overrides?.layerHeight !== undefined) keys.layer_height = String(overrides.layerHeight);
   if (overrides?.wallLoops !== undefined) keys.wall_loops = String(overrides.wallLoops);
   if (overrides?.sparseInfillDensity !== undefined) keys.sparse_infill_density = overrides.sparseInfillDensity;
+  if (overrides?.wallLoopsFloor !== undefined) keys.wall_loops_floor = String(overrides.wallLoopsFloor);
+  if (overrides?.sparseInfillDensityFloor !== undefined) keys.sparse_infill_density_floor = overrides.sparseInfillDensityFloor;
   if (overrides?.enableSupport !== undefined) keys.enable_support = overrides.enableSupport ? "1" : "0";
   if (overrides?.supportType !== undefined) keys.support_type = overrides.supportType;
   if (overrides?.supportThresholdAngle !== undefined) keys.support_threshold_angle = String(overrides.supportThresholdAngle);
   return keys;
 }
 
-/** PrusaSlicer/Slic3r command-line options, which override the loaded config. */
-export function prusaSlicerOverrideArgs(overrides: ProcessOverrides | undefined): string[] {
+/**
+ * PrusaSlicer/Slic3r command-line options, which override the loaded config. A strength floor keeps the
+ * loaded config's own `perimeters` / `fill_density` when they are already higher.
+ */
+export function prusaSlicerOverrideArgs(overrides: ProcessOverrides | undefined, loadedConfigs: string[] = []): string[] {
   const unsupported = supportOverrideNames(overrides);
   if (unsupported.length) throw new Error(`${unsupported.join(", ")} apply to Bambu Studio and OrcaSlicer only; set them in the PrusaSlicer config passed as slicer_profile.`);
   const args: string[] = [];
   if (overrides?.layerHeight !== undefined) args.push('--layer-height', String(overrides.layerHeight));
-  if (overrides?.wallLoops !== undefined) args.push('--perimeters', String(overrides.wallLoops));
-  if (overrides?.sparseInfillDensity !== undefined) args.push('--fill-density', overrides.sparseInfillDensity);
+  const own = (key: string) => {
+    let value: number | undefined;
+    for (const config of loadedConfigs) {
+      let text = '';
+      try { text = fs.readFileSync(config, 'utf8'); } catch { continue; }
+      const match = new RegExp(`^\\s*${key}\\s*=\\s*([\\d.]+)`, 'm').exec(text);
+      if (match) value = Number(match[1]);
+    }
+    return value;
+  };
+  const floor = (exact: number | undefined, minimum: number | undefined, key: string) =>
+    exact ?? (minimum === undefined ? undefined : Math.max(minimum, own(key) ?? -1));
+  const walls = floor(overrides?.wallLoops, overrides?.wallLoopsFloor, 'perimeters');
+  const densityValue = floor(overrides?.sparseInfillDensity === undefined ? undefined : Number.parseFloat(overrides.sparseInfillDensity),
+    overrides?.sparseInfillDensityFloor === undefined ? undefined : Number.parseFloat(overrides.sparseInfillDensityFloor), 'fill_density');
+  const density = overrides?.sparseInfillDensity ?? (densityValue === undefined ? undefined : `${densityValue}%`);
+  if (walls !== undefined) args.push('--perimeters', String(walls));
+  if (density !== undefined) args.push('--fill-density', density);
   return args;
 }
 import { execFile } from 'child_process';
@@ -215,7 +241,7 @@ export class STLManipulator extends EventEmitter {
         { slicerType: 'orcaslicer' });
     }
     const merged = path.join(outputDir, `process-overrides-${path.basename(profiles.settingsProfiles[index])}`);
-    fs.writeFileSync(merged, JSON.stringify({ ...parsed[index], ...keys }, null, 2));
+    fs.writeFileSync(merged, JSON.stringify(mergeProcessKeys(parsed[index], keys), null, 2));
     const settingsProfiles = [...profiles.settingsProfiles];
     settingsProfiles[index] = merged;
     return { ...profiles, settingsProfiles };
@@ -1296,7 +1322,7 @@ export class STLManipulator extends EventEmitter {
               '--output', outputFilePath,
               ...(slicerProfile ? ['--load', slicerProfile] : []),
               ...filaments.flatMap((filament) => ['--load', filament]),
-              ...prusaSlicerOverrideArgs(processOverrides),
+              ...prusaSlicerOverrideArgs(processOverrides, slicerProfile ? [slicerProfile] : []),
               stlFilePath
             ];
             break;

@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { flattenForCli, detectProfilesRoot, resolveBblMachineProfile } from "./profile-flatten.js";
+import { mergeProcessKeys } from "./print-quality.js";
 
 export type BambuCliSlicerType = "bambustudio" | "orcaslicer" | "orcaslicer-bambulab";
 
@@ -537,7 +538,7 @@ export class BambuCliProfilePreparer {
       if (processPath) {
         bundle.settingsArg = [
           machinePath,
-          this.writeTempJson(outputBase, "process_overrides", { ...this.readJsonFile(processPath), ...options.processOverrides }),
+          this.writeTempJson(outputBase, "process_overrides", mergeProcessKeys(this.readJsonFile(processPath), options.processOverrides)),
           ...rest,
         ].join(";");
       }

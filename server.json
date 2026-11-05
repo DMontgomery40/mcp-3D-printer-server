@@ -7,12 +7,12 @@
     "url": "https://github.com/DMontgomery40/mcp-3D-printer-server",
     "source": "github"
   },
-  "version": "1.2.32",
+  "version": "1.2.33",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "mcp-3d-printer-server",
-      "version": "1.2.32",
+      "version": "1.2.33",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

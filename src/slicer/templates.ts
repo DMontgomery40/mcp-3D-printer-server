@@ -148,6 +148,19 @@ export function saveTemplate(sourcePath: string, templateName?: string, template
   };
 }
 
+/** Whether a 3MF carries its own Bambu Studio/Orca process (a designer's project, not a bare mesh archive). */
+export async function hasBambuProjectSettings(filePath: string): Promise<boolean> {
+  try {
+    const zip = await JSZip.loadAsync(await fs.promises.readFile(filePath));
+    const settings = zip.file("Metadata/project_settings.config");
+    if (!settings) return false;
+    const parsed = JSON.parse(await settings.async("string"));
+    return !!parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.layer_height !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 /** Extract the embedded slicer settings from a Bambu/Orca project 3MF. */
 export async function extractBambuTemplateSettings(filePath: string, outputDir: string): Promise<string> {
   const zip = await JSZip.loadAsync(await fs.promises.readFile(filePath));
