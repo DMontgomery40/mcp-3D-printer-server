@@ -159,7 +159,8 @@ export type BambuNetworkBridgeStatus = {
  * which the host must already be able to read.
  */
 export function bambuNetworkCertDir(configDir: string, env: NodeJS.ProcessEnv = process.env): string {
-  return trimEnv(env.BAMBU_NETWORK_CERT_DIR) || path.join(configDir, "cert");
+  // Absolute, as every folder given to the host is: a containerized host runs from /plugins, not this server's folder.
+  return path.resolve(trimEnv(env.BAMBU_NETWORK_CERT_DIR) || path.join(configDir, "cert"));
 }
 
 export function prepareBambuNetworkCertDir(configDir: string, env: NodeJS.ProcessEnv = process.env): string {
@@ -239,7 +240,7 @@ function explicitBridgeCommand(env: NodeJS.ProcessEnv = process.env): string | u
 }
 
 function configuredBridgeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  return trimEnv(env.BAMBU_NETWORK_CONFIG_DIR) || trimEnv(env.PJARCZAK_BAMBU_PROBE_LOG_DIR) || defaultBambuNetworkConfigDir();
+  return path.resolve(trimEnv(env.BAMBU_NETWORK_CONFIG_DIR) || trimEnv(env.PJARCZAK_BAMBU_PROBE_LOG_DIR) || defaultBambuNetworkConfigDir());
 }
 
 /**
@@ -282,7 +283,11 @@ export function bridgeContainerMounts(configDir: string, env: NodeJS.ProcessEnv 
   const snapshots = bridgeSnapshotRoot(env);
   if (snapshots) folders.push(path.resolve(snapshots));
   const certDir = trimEnv(env.BAMBU_NETWORK_CERT_DIR);
-  if (certDir) folders.push(path.resolve(certDir));
+  if (certDir) {
+    // Made here, so Docker doesn't create it (as root, inside the VM) for the mount.
+    fs.mkdirSync(certDir, { recursive: true });
+    folders.push(path.resolve(certDir));
+  }
   const unique = [...new Set(folders)].filter((dir, _i, all) => !all.some(other => other !== dir && dir.startsWith(other + path.sep)));
   // The host is given these paths as written, so each is mounted there; the VM reads the folder it really is
   // (a symlinked folder's link target need not be shared with the VM).
@@ -556,7 +561,8 @@ export class BambuNetworkBridge {
   }
 
   resolveConfigDir(override?: string): string {
-    return trimEnv(override) || configuredBridgeConfigDir();
+    const dir = trimEnv(override);
+    return dir ? path.resolve(dir) : configuredBridgeConfigDir();
   }
 
   resolveCountryCode(override?: string): string {

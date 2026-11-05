@@ -225,6 +225,30 @@ test("stop returns even when a descendant of the bridge's shell keeps its pipes 
   await bridge.ensureAgent();
 });
 
+test("a relative config folder reaches the containerized host as the absolute path that was mounted", async t => {
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
+  t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
+  const { docker } = fakeContainerTools(tools);
+  fs.writeFileSync(path.join(tools, "up"), "");
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-relative-"));
+  const previous = process.cwd();
+  process.chdir(work);
+  t.after(() => { process.chdir(previous); fs.rmSync(work, { recursive: true, force: true }); });
+  const { bridge, calls } = await fakeFuluBridge(t, { BAMBU_NETWORK_BRIDGE_COMMAND: undefined, PJARCZAK_BAMBU_PLUGIN_DIR: undefined,
+    BAMBU_NETWORK_CONFIG_DIR: "relative-config", BAMBU_NETWORK_CERT_DIR: "relative-certs",
+    BAMBU_NETWORK_BRIDGE_IMAGE: "bpm-fulu-e2e:runtime", BAMBU_NETWORK_BRIDGE_DOCKER: docker, FAKE_DOCKER_DIR: tools });
+  await bridge.ensureAgent();
+  const config = path.join(fs.realpathSync(work), "relative-config");
+  const agent = calls().find(c => c.method === "net.create_agent").payload;
+  assert.equal(path.isAbsolute(agent.log_dir), true, agent.log_dir);
+  assert.equal(fs.realpathSync(agent.log_dir), config, "the folder the host is told about is the one mounted");
+  const run = fs.readFileSync(path.join(tools, "docker.jsonl"), "utf8").trim().split("\n").map(JSON.parse).find(args => args.includes("run"));
+  const mounts = run.flatMap((arg, i) => arg === "-v" ? [run[i + 1].split(":")[1]] : []);
+  assert.ok(mounts.includes(agent.log_dir), `${agent.log_dir} is mounted: ${mounts}`);
+  const certs = calls().find(c => c.method === "net.set_cert_file")?.payload.folder;
+  if (certs) assert.ok(path.isAbsolute(certs) && mounts.some(dir => certs === dir || certs.startsWith(dir + path.sep)), certs);
+});
+
 test("the FULU container says plainly when Docker isn't running and no Colima profile is set", async t => {
   const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
   t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
