@@ -378,6 +378,8 @@ export type FusionSetupReport = {
   env_file: string | null;
   /** Add-in at the pin, port agent installed and the bridge configured. Fusion itself may still need opening. */
   ready: boolean;
+  /** When not ready: what is missing and what to do, in plain words clients show as they are. */
+  message?: string;
   /** Set by install. */
   installed?: { addin: "installed" | "already-current"; port_agent: "installed" | "already-current"; env: "written" | "already-configured" | "no-env-file"; env_backup?: string };
 };
@@ -464,6 +466,16 @@ export class FusionAddinSetup {
     const portAgent = supported && await this.portAgentInstalled();
     const configured = Boolean(this.env.FUSION_MCP_COMMAND?.trim());
     const env = envFile(this.system);
+    const envFound = await regularFile(env);
+    const ready = supported && addin.matches && addin.runOnStartup && portAgent && configured;
+    const missing = !supported ? ["Fusion setup installs on macOS only. Install the add-in from the repository's addon folder by hand."]
+      : [
+        ...(fusionPath === null ? ["Autodesk Fusion isn't installed on this Mac. Install it, then set up again."] : []),
+        ...(!addin.matches || !addin.runOnStartup ? ["The Fusion360MCP add-in isn't installed at the pinned version, set to run on startup."] : []),
+        ...(!portAgent ? ["The login item that gives Fusion its port isn't loaded."] : []),
+        ...(!configured ? [envFound ? "This server's Fusion settings (FUSION_MCP_COMMAND) aren't set."
+          : "This server has no .env file to add its Fusion settings to: add FUSION_MCP_COMMAND and FUSION_MCP_ARGS to its configuration."] : []),
+      ];
     return {
       platform: this.system.platform, supported,
       fusion: { installed: fusionPath !== null, path: fusionPath },
@@ -472,8 +484,9 @@ export class FusionAddinSetup {
       port: this.port(),
       port_agent: { path: this.portAgent, installed: portAgent },
       configured,
-      env_file: await regularFile(env) ? env : null,
-      ready: supported && addin.matches && addin.runOnStartup && portAgent && configured,
+      env_file: envFound ? env : null,
+      ready,
+      ...(!ready && missing.length ? { message: missing.join(" ") } : {}),
     };
   }
 
@@ -618,6 +631,7 @@ export const FUSION_SETUP_OUTPUT_SCHEMA = {
     configured: { type: "boolean", description: "FUSION_MCP_COMMAND is set for this server." },
     env_file: { type: ["string", "null"], description: "The .env this server read at start, when there is one." },
     ready: { type: "boolean", description: "The add-in is at the pin and runs on startup, the port login item is installed and the bridge is configured. Fusion may still need opening: see fusion_mcp_status." },
+    message: { type: "string", description: "When not ready: what is missing and what to do, in plain words. Clients show it as it is." },
     installed: { type: "object", description: "install: what it did.", properties: {
       addin: { type: "string", enum: ["installed", "already-current"] }, port_agent: { type: "string", enum: ["installed", "already-current"] },
       env: { type: "string", enum: ["written", "already-configured", "no-env-file"] }, env_backup: { type: "string" } } },

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.46] – 2026-11-05
+
+### Added
+
+- `fusion_mcp_setup` returns `message` when it isn't ready: what is missing (Fusion itself, the add-in at the pin, the port login item, or this server's Fusion settings, or a `.env` to write them to) and what to do, in plain words a client shows as they are. Counterpart's Mac app read the `no-env-file` outcome to word that itself. Checked with the setup tests.
+
 ## [1.2.45] – 2026-11-05
 
 ### Added
