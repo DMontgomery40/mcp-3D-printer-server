@@ -22,6 +22,7 @@ import path from "path";
 import os from "node:os";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
 import { resolveFilamentProfile } from "./slicer/filament-profiles.js";
+import { sliceCapabilities } from "./slicer/capabilities.js";
 import {
   FUSION_CALL_OUTPUT_SCHEMA,
   FUSION_EXPORT_OUTPUT_SCHEMA,
@@ -75,7 +76,7 @@ import {
   trayColour,
 } from "./ams-mapping.js";
 import { isDualNozzleModel } from "./safety/limits.js";
-import { BambuNetworkBridge, describeBambuNetworkPrintError, type BridgeJobUpdate } from "./bambu-network-bridge.js";
+import { BambuNetworkBridge, bridgeSnapshotRoot, describeBambuNetworkPrintError, type BridgeJobUpdate } from "./bambu-network-bridge.js";
 import { PRINT_ROUTES, connectionForRoute, routeOf, routeOptions, writeEnvValues, type PrintRoute } from "./counterpart/route.js";
 import { resolveStudioPrintOptions, usedNozzleCount, type CallerPrintOptions } from "./studio-print-options.js";
 import { inspectPrintFile } from "./safety/print-file.js";
@@ -105,7 +106,7 @@ import { uniquePrintName, withPrinterOperation, withPrintSnapshot } from "./safe
 import { checkedFile } from "./printers/bambu.js";
 import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
 import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "./safety/expected-peaks.js";
-import { DESIGN_PROMPTS, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_RESOURCE, FDM_CAPABILITY_URI, SERVER_INSTRUCTIONS } from "./design-guidance.js";
+import { DESIGN_PROMPTS, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_RESOURCE, FDM_CAPABILITY_URI, FDM_SLICING_PROMPT, SERVER_INSTRUCTIONS, slicingGuidance } from "./design-guidance.js";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -1277,15 +1278,23 @@ class ThreeDPrinterMCPServer {
         sha256: inspection.sha256,
         params: { ...params, password: "[redacted]" },
       };
-    }));
+    }, bridgeSnapshotRoot()));
   }
 
   /** The FDM design guidance as MCP prompts: the client decides when to attach each one. */
   setupPromptHandlers() {
     this.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-      prompts: DESIGN_PROMPTS.map(({ name, title, description }) => ({ name, title, description })),
+      prompts: [...DESIGN_PROMPTS, FDM_SLICING_PROMPT].map(({ name, title, description }) => ({ name, title, description })),
     }));
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      if (request.params.name === FDM_SLICING_PROMPT.name) {
+        // The slicer slice_stl uses by default, and what it applies there (as counterpart_printer_info reports it).
+        const bambu = DEFAULT_TYPE.toLowerCase() === "bambu";
+        return {
+          description: FDM_SLICING_PROMPT.description,
+          messages: [{ role: "user" as const, content: { type: "text" as const, text: slicingGuidance(DEFAULT_SLICER_TYPE, sliceCapabilities(DEFAULT_SLICER_TYPE, bambu)) } }],
+        };
+      }
       const prompt = DESIGN_PROMPTS.find(item => item.name === request.params.name);
       if (!prompt) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${request.params.name}`);
       return {

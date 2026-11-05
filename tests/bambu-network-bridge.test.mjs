@@ -51,7 +51,10 @@ const FAKE_FULU_ENV = ["FAKE_FULU_WITH_RECORD_RESULT", "FAKE_FULU_START_PRINT_RE
   "BAMBU_NETWORK_USER_INFO", "BAMBU_NETWORK_CERT_DIR", "PJARCZAK_BAMBU_NETWORK_SO", "PJARCZAK_BAMBU_SOURCE_SO",
   "FAKE_FULU_EXIT_CODE", "FAKE_FULU_PUBLISH_FAILURES", "FAKE_FULU_UNSUPPORTED", "FAKE_FULU_CONNECT_STATUS", "FAKE_FULU_CONTROL_RESULT",
   "FAKE_FULU_CERT_EVENT", "FAKE_FULU_CERT_DELAY_MS", "FAKE_FULU_REQUIRE_CERT_READY", "FAKE_FULU_CONTROL_FAILURES",
-  "FAKE_FULU_REFUSE", "FAKE_FULU_LOGGED_IN", "FAKE_FULU_CLOUD_CERT_ON_INSTALL", "FAKE_FULU_CLOUD_REQUIRE_CERT"];
+  "FAKE_FULU_REFUSE", "FAKE_FULU_LOGGED_IN", "FAKE_FULU_CLOUD_CERT_ON_INSTALL", "FAKE_FULU_CLOUD_REQUIRE_CERT",
+  "BAMBU_NETWORK_BRIDGE_IMAGE", "BAMBU_NETWORK_BRIDGE_DOCKER", "BAMBU_NETWORK_BRIDGE_DOCKER_HOST", "BAMBU_NETWORK_BRIDGE_COLIMA",
+  "BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE", "BAMBU_NETWORK_BRIDGE_COLIMA_HOME", "FAKE_DOCKER_DIR", "TMPDIR",
+  "FULU_BAMBU_BRIDGE_COMMAND", "FULU_BAMBU_NETWORK_BRIDGE_COMMAND", "PJARCZAK_BAMBU_BRIDGE_COMMAND"];
 const fakeFuluEnvSnapshots = new WeakSet();
 
 async function fakeFuluBridge(t, env = {}, { wrapped = false } = {}) {
@@ -84,6 +87,142 @@ async function fakeFuluBridge(t, env = {}, { wrapped = false } = {}) {
 
 const controlSends = (calls, command = "stop") => calls().filter(c => c.method === "net.send_message_to_printer" && JSON.parse(c.payload.msg).print?.command === command);
 
+
+// A stand-in for `docker` (and `colima`): logs its arguments, answers `info` once Colima has started,
+// and runs the fake host for `run`, with the container's -e settings and only after every -v folder exists.
+function fakeContainerTools(dir) {
+  const docker = path.join(dir, "docker"), colima = path.join(dir, "colima");
+  fs.writeFileSync(docker, `#!${process.execPath}
+// CommonJS: an extensionless script is CommonJS on Node 18.
+const fs = require("node:fs"), path = require("node:path"), { spawn } = require("node:child_process");
+const dir = process.env.FAKE_DOCKER_DIR, args = process.argv.slice(2);
+fs.appendFileSync(path.join(dir, "docker.jsonl"), JSON.stringify(args) + "\\n");
+const at = args[0] === "--host" ? 2 : 0;
+if (args[at] === "info") process.exit(fs.existsSync(path.join(dir, "up")) ? 0 : 1);
+if (args[at] === "rm") process.exit(0);
+const env = { ...process.env };
+for (let i = at; i < args.length; i++) {
+  if (args[i] === "-v" && !fs.existsSync(args[i + 1].split(":")[0])) process.exit(125);
+  if (args[i] === "-e") { const [name, ...value] = args[i + 1].split("="); env[name] = value.length ? value.join("=") : process.env[name]; }
+}
+const child = spawn(process.execPath, [${JSON.stringify(FAKE_FULU_HOST)}], { env, stdio: "inherit" });
+child.on("exit", code => process.exit(code ?? 1));
+`, { mode: 0o755 });
+  fs.writeFileSync(colima, `#!/bin/sh\nprintf '%s|%s\\n' "$COLIMA_HOME" "$*" >> "$FAKE_DOCKER_DIR/colima.log"\ntouch "$FAKE_DOCKER_DIR/up"\n`, { mode: 0o755 });
+  return { docker, colima };
+}
+
+test("the FULU host runs in its Docker image, mounting this server's own config folder, where print snapshots go", async t => {
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
+  t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
+  const { docker, colima } = fakeContainerTools(tools);
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-container-"));
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  // The VM shares neither /tmp nor /var/folders, so the server's TMPDIR is never mounted.
+  const tmp = path.join(work, "tmp"), config = path.join(work, "home", ".config", "mcp-3d-printer-server", "bambu-network");
+  fs.mkdirSync(tmp);
+  const { bridge, methods, calls } = await fakeFuluBridge(t, {
+    BAMBU_NETWORK_BRIDGE_COMMAND: undefined, PJARCZAK_BAMBU_PLUGIN_DIR: undefined, BAMBU_NETWORK_CONFIG_DIR: config, TMPDIR: tmp,
+    BAMBU_NETWORK_BRIDGE_IMAGE: "bpm-fulu-e2e:runtime", BAMBU_NETWORK_BRIDGE_DOCKER: docker, BAMBU_NETWORK_BRIDGE_DOCKER_HOST: "unix:///colima/bambu-fulu/docker.sock",
+    BAMBU_NETWORK_BRIDGE_COLIMA: colima, BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE: "bambu-fulu", BAMBU_NETWORK_BRIDGE_COLIMA_HOME: "/Volumes/Spillover/colima", FAKE_DOCKER_DIR: tools,
+  });
+
+  const status = bridge.getStatus();
+  assert.equal(status.configured, true);
+  assert.match(status.command, /^'[^']*docker' '--host' 'unix:\/\/\/colima\/bambu-fulu\/docker.sock' 'run'/);
+
+  await bridge.ensureAgent();
+  assert.ok(methods().includes("net.create_agent"));
+  assert.equal(calls().find(c => c.method === "net.create_agent").payload.log_dir, config, "the host writes to the folder the server mounted");
+  // Docker didn't answer, so the profile was started once, in its own COLIMA_HOME, without taking over Docker's context.
+  assert.deepEqual(fs.readFileSync(path.join(tools, "colima.log"), "utf8").trim().split("\n"), ["/Volumes/Spillover/colima|start --profile bambu-fulu --activate=false"]);
+  const runs = fs.readFileSync(path.join(tools, "docker.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter(args => args.includes("run"));
+  assert.equal(runs.length, 1);
+  const run = runs[0];
+  const mounts = run.flatMap((arg, i) => arg === "-v" ? [run[i + 1]] : []);
+  assert.deepEqual(mounts, [`${fs.realpathSync(config)}:${fs.realpathSync(config)}:rw`],
+    "this server's config folder (mcp-3d-printer-server's own, here), which holds the print snapshots too");
+  const { bridgeSnapshotRoot } = await import("../dist/bambu-network-bridge.js");
+  assert.equal(bridgeSnapshotRoot(), path.join(config, "print-snapshots"), "print snapshots go where the host can read them");
+  assert.ok(fs.statSync(path.join(config, "print-snapshots")).isDirectory());
+  for (const value of ["PJARCZAK_BAMBU_PLUGIN_DIR=/plugins", "PJARCZAK_BAMBU_NETWORK_SO=/plugins/libbambu_networking.so", "SSL_CERT_FILE=/fulu/ca-certificates.crt",
+    "PJARCZAK_BAMBU_COUNTRY_CODE", "PJARCZAK_EXPECTED_BAMBU_NETWORK_VERSION"]) {
+    assert.ok(run.some((arg, i) => arg === "-e" && run[i + 1] === value), value);
+  }
+  assert.deepEqual(run.slice(-4), ["bpm-fulu-e2e:runtime", "/bin/sh", "-c", "/fulu/pjarczak_bambu_linux_host | cat"]);
+  assert.deepEqual(run.slice(0, 3), ["--host", "unix:///colima/bambu-fulu/docker.sock", "run"]);
+  // An init process forwards stop's SIGTERM to the host, and stop removes the container by its own name.
+  assert.ok(run.includes("--init"));
+  const name = run[run.indexOf("--name") + 1];
+  assert.match(name, /^bambu-fulu-host-\d+-[0-9a-f]{8}$/);
+  await bridge.stop();
+  const removed = fs.readFileSync(path.join(tools, "docker.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter(args => args.includes("rm"));
+  // Once before run (a container a dropped client left under this name), once on stop.
+  assert.deepEqual(removed, [["--host", "unix:///colima/bambu-fulu/docker.sock", "rm", "-f", name], ["--host", "unix:///colima/bambu-fulu/docker.sock", "rm", "-f", name]]);
+});
+
+test("the FULU container mounts a symlinked config folder at the path the host is given, uses the Colima profile's socket, and clears stale snapshots", async t => {
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-container-paths-"));
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  const real = path.join(work, "real-config"), linked = path.join(work, "linked-config");
+  fs.mkdirSync(real);
+  fs.symlinkSync(real, linked);
+  const { bridgeContainer, bridgeContainerMounts, bridgeContainerArgs, bridgeSnapshotRoot } = await import("../dist/bambu-network-bridge.js");
+  const env = { BAMBU_NETWORK_BRIDGE_IMAGE: "fulu:runtime", BAMBU_NETWORK_CONFIG_DIR: linked, BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE: "fulu", BAMBU_NETWORK_BRIDGE_COLIMA_HOME: "/colima-home" };
+  // A profile started with --activate=false doesn't become Docker's default, so its own socket is used.
+  const container = bridgeContainer(env);
+  assert.equal(container.dockerHost, "unix:///colima-home/fulu/docker.sock");
+  assert.equal(bridgeContainer({ ...env, BAMBU_NETWORK_BRIDGE_DOCKER_HOST: "tcp://elsewhere:2375" }).dockerHost, "tcp://elsewhere:2375", "an explicit host wins");
+  assert.equal(bridgeContainer({ BAMBU_NETWORK_BRIDGE_IMAGE: "fulu:runtime" }).dockerHost, undefined, "no profile, no host: Docker's own default");
+  // A snapshot a killed server left more than a day ago is removed; a recent one (an upload in flight) stays.
+  const snapshots = path.join(real, "print-snapshots");
+  fs.mkdirSync(path.join(snapshots, "bambu-print-old"), { recursive: true });
+  fs.mkdirSync(path.join(snapshots, "bambu-print-new"));
+  const dayAgo = (Date.now() - 25 * 60 * 60 * 1000) / 1000;
+  fs.utimesSync(path.join(snapshots, "bambu-print-old"), dayAgo, dayAgo);
+  // The host is told the linked path (log_dir, snapshots), so the real folder is mounted there.
+  const mounts = bridgeContainerMounts(linked, env);
+  assert.deepEqual(mounts, [`${fs.realpathSync(real)}:${linked}`]);
+  const args = bridgeContainerArgs(container, mounts, "bambu-fulu-host-test");
+  assert.ok(args.some((arg, i) => args[i - 1] === "-v" && arg === `${fs.realpathSync(real)}:${linked}:rw`));
+  assert.equal(bridgeSnapshotRoot(env), path.join(linked, "print-snapshots"));
+  assert.deepEqual(fs.readdirSync(snapshots), ["bambu-print-new"], "the first look at the folder cleared it");
+});
+
+test("concurrent calls on a cold Docker-backed bridge start one container", async t => {
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
+  t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
+  const { docker } = fakeContainerTools(tools);
+  fs.writeFileSync(path.join(tools, "up"), "");
+  const { bridge, methods } = await fakeFuluBridge(t, { BAMBU_NETWORK_BRIDGE_COMMAND: undefined, PJARCZAK_BAMBU_PLUGIN_DIR: undefined,
+    BAMBU_NETWORK_BRIDGE_IMAGE: "bpm-fulu-e2e:runtime", BAMBU_NETWORK_BRIDGE_DOCKER: docker, FAKE_DOCKER_DIR: tools });
+  // A status probe and a print reaching the bridge at once: each would otherwise remove the other's container.
+  await Promise.all([bridge.ensureAgent(), bridge.ensureAgent(), bridge.ensureAgent()]);
+  const logged = fs.readFileSync(path.join(tools, "docker.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  assert.equal(logged.filter(args => args.includes("run")).length, 1, "one container");
+  assert.equal(logged.filter(args => args.includes("rm")).length, 1, "removed once, before it started, never while it ran");
+  assert.ok(methods().includes("net.create_agent"));
+});
+
+test("the FULU container says plainly when Docker isn't running and no Colima profile is set", async t => {
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
+  t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
+  const { docker } = fakeContainerTools(tools);
+  const { bridge } = await fakeFuluBridge(t, { BAMBU_NETWORK_BRIDGE_COMMAND: undefined, BAMBU_NETWORK_BRIDGE_IMAGE: "bpm-fulu-e2e:runtime",
+    BAMBU_NETWORK_BRIDGE_DOCKER: docker, FAKE_DOCKER_DIR: tools });
+  await assert.rejects(bridge.ensureAgent(), /Docker didn't answer .* Start Docker, or set BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE/);
+  const logged = fs.readFileSync(path.join(tools, "docker.jsonl"), "utf8");
+  assert.doesNotMatch(logged, /"run"/, "nothing ran");
+  assert.equal(fs.existsSync(path.join(tools, "colima.log")), false);
+});
+
+test("an explicit bridge command still wins over the Docker image", async t => {
+  const { bridge } = await fakeFuluBridge(t, { BAMBU_NETWORK_BRIDGE_IMAGE: "bpm-fulu-e2e:runtime", BAMBU_NETWORK_BRIDGE_DOCKER: "/nonexistent/docker" });
+  assert.doesNotMatch(bridge.getStatus().command, /docker/);
+  const { bridgeSnapshotRoot } = await import("../dist/bambu-network-bridge.js");
+  assert.equal(bridgeSnapshotRoot(), undefined, "a native host reads snapshots from the system temporary folder");
+  await bridge.ensureAgent();
+});
 
 // P1S 01.10, Nov 3: valid RSA signatures with IDs outside Studio's 20000–29999
 // window receive 0502400A. Numeric IDs fail too. Exercise the actual LAN/cloud sends.

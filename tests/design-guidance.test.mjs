@@ -6,17 +6,17 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { DESIGN_PROMPTS, FDM_AFTER_SLICE, FDM_ASSEMBLY, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_URI, FDM_CORE, FDM_MULTICOLOR } from "../dist/design-guidance.js";
+import { DESIGN_PROMPTS, FDM_SLICING_PROMPT, slicingGuidance, FDM_AFTER_SLICE, FDM_ASSEMBLY, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_URI, FDM_CORE, FDM_MULTICOLOR } from "../dist/design-guidance.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-async function server(t) {
+async function server(t, env = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "design-guidance-"));
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(root, "dist/index.js")],
     cwd: directory,
-    env: { ...process.env, MCP_TRANSPORT: "stdio", BAMBU_MODEL: "p1s", PRINTER_HOST: "127.0.0.1", BAMBU_SERIAL: "01PTESTSERIAL", BAMBU_TOKEN: "printer-secret-never-returned" },
+    env: { ...process.env, MCP_TRANSPORT: "stdio", BAMBU_MODEL: "p1s", PRINTER_HOST: "127.0.0.1", BAMBU_SERIAL: "01PTESTSERIAL", BAMBU_TOKEN: "printer-secret-never-returned", ...env },
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => {});
@@ -31,7 +31,7 @@ test("the FDM design guidance is served as MCP prompts, a resource and the serve
   assert.ok(client.getServerCapabilities()?.prompts, "the server declares prompts");
 
   const { prompts } = await client.listPrompts();
-  assert.deepEqual(prompts.map(prompt => prompt.name), ["fdm_design", "fdm_multicolor", "fdm_assembly", "fdm_after_slice"]);
+  assert.deepEqual(prompts.map(prompt => prompt.name), ["fdm_design", "fdm_multicolor", "fdm_assembly", "fdm_after_slice", "fdm_slicing"]);
   for (const [name, text] of [["fdm_design", FDM_CORE], ["fdm_multicolor", FDM_MULTICOLOR], ["fdm_assembly", FDM_ASSEMBLY], ["fdm_after_slice", FDM_AFTER_SLICE]]) {
     const result = await client.getPrompt({ name });
     assert.equal(result.messages.length, 1, name);
@@ -46,7 +46,7 @@ test("the FDM design guidance is served as MCP prompts, a resource and the serve
 
   // Any client, not only Counterpart, learns where the guidance is.
   const instructions = client.getInstructions() ?? "";
-  for (const prompt of DESIGN_PROMPTS) assert.ok(instructions.includes(prompt.name), prompt.name);
+  for (const prompt of [...DESIGN_PROMPTS, FDM_SLICING_PROMPT]) assert.ok(instructions.includes(prompt.name), prompt.name);
   assert.ok(instructions.includes(FDM_CAPABILITY_URI));
   assert.ok(instructions.includes("sufficiently specific measured capability"), "the pack's own condition for the capability reference");
   assert.ok(instructions.includes("before presenting the manufacturing recommendation"), "the review comes before the recommendation");
@@ -58,4 +58,27 @@ test("the guidance is the prompt pack's own words, with no numeric bans added", 
   assert.match(FDM_AFTER_SLICE, /Return a concise decision: keep, revise, or validate one specific uncertainty\./);
   assert.match(FDM_CAPABILITY_GUIDANCE, /`step = h \* tan\(alpha\)`/, "backticks survive the template literal");
   assert.match(FDM_CAPABILITY_GUIDANCE, /All sources inspected 3 November 2026\.$/);
+});
+
+test("fdm_slicing says how the configured slicer orients, makes supports and checks a slice", async t => {
+  const bambu = await server(t, { PRINTER_TYPE: "bambu", SLICER_TYPE: "bambustudio" });
+  const text = (await bambu.getPrompt({ name: "fdm_slicing" })).messages[0].content.text;
+  assert.equal(text, slicingGuidance("bambustudio", { supports: true, orient: true }));
+  assert.match(text, /Its slicer is Bambu Studio\./);
+  assert.match(text, /Bambu Studio's own auto-orient .* keeps overhang area low; it does not check cantilevers/);
+  assert.match(text, /set enable_support on every slice_stl call/);
+  assert.match(text, /left out, the process preset's own setting applies/);
+  assert.match(text, /slicer_result/);
+
+  const prusa = await server(t, { PRINTER_TYPE: "octoprint", SLICER_TYPE: "prusaslicer" });
+  const other = (await prusa.getPrompt({ name: "fdm_slicing" })).messages[0].content.text;
+  assert.match(other, /PrusaSlicer doesn't auto-orient here/);
+  assert.match(other, /PrusaSlicer takes no support settings here/);
+  assert.doesNotMatch(other, /Bambu Studio|enable_support true/, "no other slicer's behaviour");
+
+  // Generic OrcaSlicer takes the support keys but doesn't orient (capabilities.slicing says the same).
+  const orca = await server(t, { PRINTER_TYPE: "octoprint", SLICER_TYPE: "orcaslicer" });
+  const orcaText = (await orca.getPrompt({ name: "fdm_slicing" })).messages[0].content.text;
+  assert.match(orcaText, /OrcaSlicer doesn't auto-orient here/);
+  assert.match(orcaText, /set enable_support on every slice_stl call/);
 });
