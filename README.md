@@ -735,7 +735,7 @@ Copy a local `.3mf`, `.json`, or `.config` file into the template registry. `tem
 
 #### get_slice_settings
 
-Read the slicer settings in a 3MF, an extracted `project_settings.config`, or a profile JSON without slicing: layer height, infill, walls, supports, brim, bed, printer, and filaments. Pass `source_path`, or `template_name` to read a saved template. For a 3MF it also returns `own_process`: true when `slice_stl`, given the same `slicer_type` and `bambu_model` (pass them here too) and no `slicer_profile` or template, slices that 3MF with its own process (a designer's project).
+Read the slicer settings in a 3MF, an extracted `project_settings.config`, or a profile JSON without slicing: layer height, infill, walls, supports, brim, bed, printer, and filaments. Pass `source_path`, or `template_name` to read a saved template. For a 3MF it also returns `own_process`: true when `slice_stl`, given the same `slicer_type` and `bambu_model` (pass them here too) and no `slicer_profile` or template, slices that 3MF with its own process (a designer's project). A 3MF with no slicer settings returns `raw_key_count` 0 and no `extracted_settings_path`; a file that can't be read is an error.
 
 ```json
 {

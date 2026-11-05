@@ -620,6 +620,23 @@ test("a designer's 3MF slices with its own process; strength never weakens it; a
   assert.equal((await settingsOf(designer, { slicer_type: "prusaslicer" })).own_process, false, "PrusaSlicer never takes a 3MF's Bambu process");
   assert.equal((await settingsOf(designer, { slicer_type: "orcaslicer" })).own_process, false, "generic OrcaSlicer keeps its own profile without a bambu_model");
   assert.equal((await settingsOf(designer, { slicer_type: "orcaslicer", bambu_model: "p1s" })).own_process, true);
+  // A 3MF with no settings says so, so a client can tell "none to keep" from a file it couldn't read.
+  const none = await settingsOf(bare);
+  assert.equal(none.raw_key_count, 0);
+  assert.equal(none.own_process, false);
+  assert.equal(none.extracted_settings_path, undefined);
+  const unreadable = path.join(install.root, "unreadable.3mf");
+  await fs.writeFile(unreadable, "not a zip");
+  assert.equal((await call("get_slice_settings", { source_path: unreadable })).isError, true, "a file that can't be read is an error, not a file without settings");
+  const corrupt = path.join(install.root, "corrupt.3mf");
+  await fs.writeFile(corrupt, await zipBytes({ "3D/3dmodel.model": model, "Metadata/project_settings.config": '{"layer_height": "0.16", "sparse_infill_dens' }));
+  assert.equal((await call("get_slice_settings", { source_path: corrupt })).isError, true, "settings that can't be read are an error, not a file without settings");
+  // Each slice extracted the designer's settings to its own directory and removed it when the call ended;
+  // get_slice_settings hands its path back, so that one stays.
+  assert.ok(existsSync((await settingsOf(designer)).extracted_settings_path));
+  const extractions = path.join(install.root, "server-temp", "templates");
+  const left = existsSync(extractions) ? await fs.readdir(extractions) : [];
+  assert.deepEqual(left.filter(entry => /settings/.test(entry)), [], "no slice leaves its extraction behind");
 });
 
 test("machine settings inside a template or process profile never replace the selected preset", async (t) => {
@@ -940,4 +957,32 @@ test("two same-named projects' settings extract to distinct files, so concurrent
   assert.equal(JSON.parse(await fs.readFile(a, "utf8")).layer_height, "0.16");
   assert.equal(JSON.parse(await fs.readFile(b, "utf8")).layer_height, "0.28");
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("every extraction has its own path, even of the same project, and an operation removes what it extracted", async (t) => {
+  const { extractBambuTemplateSettings, withExtractedSettingsCleanup } = await import("../../dist/slicer/templates.js");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "template-extract-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const project = path.join(dir, "model.3mf");
+  await fs.writeFile(project, await zipBytes({ "Metadata/project_settings.config": JSON.stringify({ layer_height: "0.16" }) }));
+  const out = path.join(dir, "out");
+  const exists = file => fs.access(file).then(() => true, () => false);
+  // The same project sliced twice at once: one call's write can't truncate the file the other is reading.
+  const same = await Promise.all([1, 2, 3].map(() => extractBambuTemplateSettings(project, out)));
+  assert.equal(new Set(same).size, 3);
+  let during, kept;
+  await withExtractedSettingsCleanup(async () => {
+    during = await Promise.all([1, 2].map(() => extractBambuTemplateSettings(project, out)));
+    kept = await Promise.all([1, 2].map(() => extractBambuTemplateSettings(project, out, { keep: true })));
+    for (const file of during) assert.ok(await exists(file), "present while the operation runs");
+  });
+  for (const file of during) assert.equal(await exists(path.dirname(file)), false, "removed when it settles");
+  assert.equal(kept[0], kept[1], "a path handed back to the caller is named by content, so repeat calls reuse one file");
+  assert.equal(JSON.parse(await fs.readFile(kept[0], "utf8")).layer_height, "0.16", "and it stays");
+  assert.deepEqual((await fs.readdir(out)).filter(entry => entry.endsWith(".partial")), []);
+  await assert.rejects(withExtractedSettingsCleanup(async () => {
+    during = [await extractBambuTemplateSettings(project, out)];
+    throw new Error("slice failed");
+  }), /slice failed/);
+  assert.equal(await exists(during[0]), false, "removed when the operation fails too");
 });

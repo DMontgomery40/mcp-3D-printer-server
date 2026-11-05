@@ -56,6 +56,7 @@ import {
   listTemplateRegistry,
   resolveTemplatePath,
   resolveTemplateSlicerProfilePath,
+  withExtractedSettingsCleanup,
   hasBambuProjectSettings,
   saveTemplate,
 } from "./slicer/templates.js";
@@ -1866,7 +1867,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "get_slice_settings",
-            description: "Inspect slicer settings in a 3MF template or JSON/config profile without slicing (layer height, infill, walls, supports, brim, bed, printer, filaments). For a 3MF, own_process is true when slice_stl, given the same slicer_type and bambu_model and no slicer_profile or template, slices it with the process the file carries (a designer's Bambu Studio or Orca project).",
+            description: "Inspect slicer settings in a 3MF template or JSON/config profile without slicing (layer height, infill, walls, supports, brim, bed, printer, filaments). For a 3MF, own_process is true when slice_stl, given the same slicer_type and bambu_model and no slicer_profile or template, slices it with the process the file carries (a designer's Bambu Studio or Orca project). A 3MF with no slicer settings reports raw_key_count 0; a file that can't be read is an error.",
             inputSchema: {
               type: "object",
               properties: {
@@ -2549,7 +2550,8 @@ class ThreeDPrinterMCPServer {
     });
 
     // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    // A designer's settings extracted for this call are removed when it settles.
+    this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withExtractedSettingsCleanup(async () => {
       const { name, arguments: args } = request.params;
       
       // Set default values for common parameters
@@ -3529,7 +3531,7 @@ class ThreeDPrinterMCPServer {
           isError: true
         };
       }
-    });
+    }));
   }
 
   // Delegating methods to printer implementations
