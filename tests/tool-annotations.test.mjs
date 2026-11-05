@@ -104,7 +104,7 @@ test('every listed tool declares its remote scope, and the arguments its configu
     else if (/^(?:set_|clear_|pause_|resume_|cancel_|skip_|reread_)/.test(tool.name)) at('control');
     // A tool that writes anything is never read.
     if (!tool.annotations.readOnlyHint && declared.scope === 'read')
-      assert.ok(['camera_snapshot', 'blender_mcp_status', 'fusion_mcp_status'].includes(tool.name), `${tool.name} changes something but is read`);
+      assert.ok(['camera_snapshot', 'blender_mcp_status', 'fusion_mcp_status', 'blender_mcp_setup', 'fusion_mcp_setup'].includes(tool.name), `${tool.name} changes something but is read`);
     byName[tool.name] = declared;
   }
   assert.deepEqual(Object.keys(REMOTE_SCOPES).sort(), tools.map(tool => tool.name).sort(), 'the scope table names exactly the listed tools');
@@ -117,6 +117,9 @@ test('every listed tool declares its remote scope, and the arguments its configu
   assert.equal(byName.blender_mcp_call.arguments.password, 'config');
   assert.deepEqual(byName.fusion_mcp_status.raisedBy, { launch: 'design' });
   assert.deepEqual(byName.blender_mcp_status.raisedBy, { connect: 'design' });
+  // Setup checks are reads; changing the person's Blender or Fusion is the highest scope.
+  assert.deepEqual(byName.blender_mcp_setup.raisedBy, { update: 'raw' });
+  assert.deepEqual(byName.fusion_mcp_setup.raisedBy, { install: 'raw' });
   assert.equal(byName.slice_stl.arguments.stl_path, 'path');
   assert.equal(byName.camera_snapshot.arguments.save_path, 'output');
   assert.equal(byName.counterpart_print_route.arguments?.route, undefined, 'the route tool takes route from the caller');

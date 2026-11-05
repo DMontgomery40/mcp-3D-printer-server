@@ -33,6 +33,18 @@ without Blender configured.
    Blender and this server must share a filesystem, because STL paths are
    passed between them.
 
+Check the add-on: `blender_mcp_setup` reports which add-on file Blender loads
+(for the running Blender's version), its protocol and the one the configured
+package expects, whether Blender is listening and the running add-on's own
+`get_addon_status`, and changes nothing. With `update: true` it stages the
+add-on with the package's own `mcp-for-blender install-addon` at that version,
+checks that the installed and staged files are both regular MCP for Blender
+add-ons and that the staged one carries the expected protocol, keeps the old
+file as a backup next to it and renames the new one into place. It never starts,
+stops or edits Blender: re-enable the add-on or restart Blender to load it. It
+works when the bridge is that package run with `uvx`; another bridge reports
+`supported: false`.
+
 Check it: ask your agent to call `blender_mcp_status` with `connect: true`.
 It lists the Blender tools it discovered. A connected MCP server does not by
 itself prove the addon is running; `get_scene_info` through `blender_mcp_call`
@@ -43,6 +55,7 @@ does.
 | Step | Tool | What it does |
 |---|---|---|
 | Inspect the input | `get_stl_info` | Size, bounding box, and triangle count of the downloaded model |
+| Check or update the add-on | `blender_mcp_setup` | The installed add-on, the protocol the package expects, and the running add-on's handshake; `update` replaces it, keeping a backup |
 | Discover Blender | `blender_mcp_status` | Tool names and summaries; `tool_names` returns full schemas for the tools you'll call |
 | Model or edit | `blender_mcp_call` | Forwards any Blender MCP tool, usually `execute_blender_code`, with the user's own words in `user_prompt` |
 | Export for printing | `blender_mcp_export_stl` | Writes named scene objects to a new STL and reports the measured size |

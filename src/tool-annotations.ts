@@ -79,6 +79,10 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   fusion_mcp_call: write(true, false, true), // any Fusion tool, execute_code included
   fusion_mcp_new_design: write(false, false, true),
   fusion_mcp_export: write(false, false, true), // never overwrites files
+  // Install add-ons into the person's own Blender or Fusion: the add-on file is replaced (kept as a backup), and
+  // the Fusion add-in folder, a login item and this server's .env are written. Repeating finds them current.
+  blender_mcp_setup: write(true, true, true),
+  fusion_mcp_setup: write(true, true, true),
 };
 
 /** Give each listed tool its annotations. tests/tool-annotations.test.mjs fails for a tool without an entry. */

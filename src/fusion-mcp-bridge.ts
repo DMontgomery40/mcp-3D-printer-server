@@ -19,13 +19,18 @@ import net from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
 import { ClosingStdioTransport, editDeadline, regularStl } from "./blender-mcp-bridge.js";
+import { FUSION_ADDIN_COMMIT, FUSION_ADDIN_REPOSITORY } from "./design-app-setup.js";
 
 const execFileAsync = promisify(execFile);
 
-/** The pinned faust-machines commit (PRD §8.9). The PyPI 0.1.0 release crashes under mcp 2.x (issue #30). */
-export const FUSION_MCP_PINNED_COMMIT = "19b9f1e95192";
+/**
+ * The server and add-in commit fusion_mcp_setup installs (FUSION_ADDIN_COMMIT, PRD §8.9): David Montgomery's fork
+ * of faust-machines/fusion360-mcp-server with document binding, while that change is reviewed upstream, as
+ * bambu-printer-mcp pins it. The PyPI 0.1.0 release crashes under mcp 2.x (faust issue #30).
+ */
+export const FUSION_MCP_PINNED_COMMIT = FUSION_ADDIN_COMMIT.slice(0, 12);
 export const FUSION_MCP_DEFAULT_ARGS = [
-  "--from", `git+https://github.com/faust-machines/fusion360-mcp-server@${FUSION_MCP_PINNED_COMMIT}`,
+  "--from", `git+https://github.com/${FUSION_ADDIN_REPOSITORY}@${FUSION_MCP_PINNED_COMMIT}`,
   "fusion360-mcp-server", "--mode", "socket",
 ];
 /** PRD §8.9: Blender's MCP addon holds the add-in's own default, 9876, so Fusion uses 9877. */
@@ -69,7 +74,7 @@ function configuration(): { command: string; args: string[] } {
   if (!command) {
     throw new FusionError(
       "No Fusion MCP server configured. Set FUSION_MCP_COMMAND to the full path of uvx; FUSION_MCP_ARGS defaults to the pinned " +
-      `faust-machines/fusion360-mcp-server@${FUSION_MCP_PINNED_COMMIT} in socket mode. Install the Fusion360MCP add-in from the same commit and set it to Run on Startup.`
+      `${FUSION_ADDIN_REPOSITORY}@${FUSION_MCP_PINNED_COMMIT} in socket mode. Install the Fusion360MCP add-in from the same commit and set it to Run on Startup, or run fusion_mcp_setup.`
     );
   }
   let args: unknown = FUSION_MCP_DEFAULT_ARGS;
@@ -96,7 +101,7 @@ function fusionEnvironment(): Record<string, string> {
   return env;
 }
 
-function addinAddress(): { host: string; port: number } {
+export function addinAddress(): { host: string; port: number } {
   const host = process.env.FUSION_MCP_HOST?.trim() || "localhost";
   const port = Number(process.env.FUSION_MCP_PORT?.trim() || FUSION_ADDIN_DEFAULT_PORT);
   return { host, port: Number.isInteger(port) && port > 0 && port < 65536 ? port : FUSION_ADDIN_DEFAULT_PORT };

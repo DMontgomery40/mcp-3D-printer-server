@@ -54,9 +54,9 @@ test("Fusion's add-in port defaults to 9877, off Blender's 9876, and launches pa
   assert.deepEqual(fusionLaunchArguments(9877), ["-a", "Autodesk Fusion", "--env", "FUSION_MCP_PORT=9877"]);
 });
 
-test("the pinned faust-machines command is the default FUSION_MCP_ARGS", () => {
-  assert.equal(FUSION_MCP_PINNED_COMMIT, "19b9f1e95192");
-  assert.deepEqual(FUSION_MCP_DEFAULT_ARGS, ["--from", "git+https://github.com/faust-machines/fusion360-mcp-server@19b9f1e95192", "fusion360-mcp-server", "--mode", "socket"]);
+test("the pinned server command is the default FUSION_MCP_ARGS", () => {
+  assert.equal(FUSION_MCP_PINNED_COMMIT, "86a3016a5a5b");
+  assert.deepEqual(FUSION_MCP_DEFAULT_ARGS, ["--from", "git+https://github.com/DMontgomery40/fusion360-mcp-server@86a3016a5a5b", "fusion360-mcp-server", "--mode", "socket"]);
 });
 
 test("fusion_mcp_status without configuration reports it and starts nothing", async (t) => {
@@ -68,7 +68,7 @@ test("fusion_mcp_status without configuration reports it and starts nothing", as
   assert.equal(result.structuredContent.addinReachable, false);
   assert.deepEqual(result.structuredContent.tools, []);
   assert.equal(result.structuredContent.launched, false);
-  assert.equal(result.structuredContent.pin, "19b9f1e95192");
+  assert.equal(result.structuredContent.pin, "86a3016a5a5b");
   const failed = await call("fusion_mcp_call", { tool_name: "ping" });
   assert.equal(failed.isError, true);
   assert.match(text(failed), /FUSION_MCP_COMMAND/);
@@ -83,7 +83,7 @@ test("one persistent Fusion session serves status, calls, a new design and an ex
   assert.equal(status.addinReachable, true);
   assert.equal(status.connected, true, "the add-in answered ping");
   assert.equal(status.fusionRunning, true);
-  assert.deepEqual([status.launched, status.transport, status.pin], [false, "stdio", "19b9f1e95192"]);
+  assert.deepEqual([status.launched, status.transport, status.pin], [false, "stdio", "86a3016a5a5b"]);
   assert.equal(status.server.name, "fusion360-mcp-server");
   assert.deepEqual(status.tools.find((tool) => tool.name === "export_stl").inputSchema.required, ["body_name"], "tools carry their schemas");
   assert.equal((await call("fusion_mcp_status", { tool_names: ["ping"] })).isError, true, "arguments match bambu-printer-mcp's");
