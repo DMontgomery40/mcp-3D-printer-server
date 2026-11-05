@@ -217,6 +217,17 @@ function defaultBambuStudioPath(): string {
 }
 
 /**
+ * The slice's arguments change a resolved process: an explicit value (layer height, walls, infill, supports), or a
+ * quality or strength other than standard. Invalid values throw, as slice_stl's own parsing does.
+ */
+function changesProcess(args: Record<string, unknown>): boolean {
+  // slice_stl's own validation of these values (quality, strength, layer height, walls, infill, supports).
+  parseProcessOverrides(withPrintQuality(args, Number(args.nozzle_diameter || DEFAULT_NOZZLE_DIAMETER)));
+  return ["layer_height", "wall_loops", "sparse_infill_density", "enable_support", "support_type", "support_threshold_angle"].some(key => args[key] !== undefined)
+    || (args.quality !== undefined && args.quality !== "standard") || (args.strength !== undefined && args.strength !== "standard");
+}
+
+/**
  * A designer's 3MF slices with its own process: a Bambu-compatible CLI, a call that names no slicer_profile or
  * template, and a 3MF that carries a process. slice_stl, print_3mf's auto-slice and get_slice_settings' own_process
  * all ask this, so what get_slice_settings reports is what slicing does.
@@ -1867,14 +1878,22 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "get_slice_settings",
-            description: "Inspect slicer settings in a 3MF template or JSON/config profile without slicing (layer height, infill, walls, supports, brim, bed, printer, filaments). For a 3MF, own_process is true when slice_stl, given the same slicer_type and bambu_model and no slicer_profile or template, slices it with the process the file carries (a designer's Bambu Studio or Orca project). A 3MF with no slicer settings reports raw_key_count 0; a file that can't be read is an error.",
+            description: "Inspect slicer settings in a 3MF template or JSON/config profile without slicing (layer height, infill, walls, supports, brim, bed, printer, filaments). For a 3MF given as source_path, own_process is true when slice_stl, given this call's other arguments as it would take them (slicer_type, bambu_model, slicer_profile, template_name, template_3mf_path, layer_height, wall_loops, sparse_infill_density, quality, strength), prints the process the file carries (a designer's Bambu Studio or Orca project) unchanged. A 3MF with no slicer settings reports raw_key_count 0; a file that can't be read is an error.",
             inputSchema: {
               type: "object",
               properties: {
                 source_path: { type: "string", description: "Path to a 3MF, extracted project_settings.config, or slicer profile JSON." },
                 slicer_type: { type: "string", description: "The slicer_type slice_stl would be given, for own_process. Defaults to SLICER_TYPE." },
                 bambu_model: { type: "string", description: "The bambu_model slice_stl would be given, for own_process." },
-                template_name: { type: "string", description: "Named template from the local registry; used when source_path is omitted." },
+                slicer_profile: { type: "string", description: "For own_process: the slicer_profile slice_stl would be given." },
+                template_3mf_path: { type: "string", description: "For own_process: the template_3mf_path slice_stl would be given." },
+                layer_height: { type: "number", description: "For own_process: the layer_height slice_stl would be given." },
+                wall_loops: { type: "number", description: "For own_process: the wall_loops slice_stl would be given." },
+                sparse_infill_density: { type: "string", description: "For own_process: the sparse_infill_density slice_stl would be given." },
+                enable_support: { type: "boolean", description: "For own_process: the enable_support slice_stl would be given." },
+                support_type: { type: "string", description: "For own_process: the support_type slice_stl would be given." },
+                ...PRINT_QUALITY_PROPERTIES,
+                template_name: { type: "string", description: "Named template from the local registry. Without source_path it is the source read; with source_path it is the slice's template, for own_process." },
                 template_dir: { type: "string", description: "Template directory override when resolving template_name." }
               }
             }
@@ -2858,10 +2877,18 @@ class ThreeDPrinterMCPServer {
                 )!;
             result = await inspectSliceSettings(settingsSource, TEMP_DIR);
             if (result.source_type === "3mf") {
-              // What slice_stl does with this slicer_type and bambu_model and no slicer_profile or template.
+              // What slice_stl does with the slice's own arguments (with source_path, template_name is its template),
+              // through the same test runSliceTool uses; an explicit value or a quality or strength changes the process.
+              const sliceArgs = (args ?? {}) as Record<string, unknown>;
               const slicerType = normalizeSlicerType(String(args?.slicer_type || DEFAULT_SLICER_TYPE));
               const bambuModel = typeof args?.bambu_model === "string" && args.bambu_model.trim() !== "";
-              result = { ...result, own_process: await slicesWithOwnProcess(settingsSource, usesBambuCli(slicerType, bambuModel), false) };
+              const explicitProfile = typeof args?.slicer_profile === "string" && args.slicer_profile.trim() !== "";
+              const requestedTemplate = args?.source_path ? (resolveTemplatePath(typeof args?.template_name === "string" ? args.template_name : undefined,
+                typeof args?.template_dir === "string" ? args.template_dir : undefined, ["json", "config", "3mf"])
+                || (typeof args?.template_3mf_path === "string" && args.template_3mf_path.trim() ? args.template_3mf_path.trim() : undefined)) : undefined;
+              // Validated first, so an invalid value is refused even when a named profile or template decides the answer.
+              const changed = changesProcess(sliceArgs);
+              result = { ...result, own_process: !changed && await slicesWithOwnProcess(settingsSource, usesBambuCli(slicerType, bambuModel), explicitProfile || !!requestedTemplate) };
             }
             break;
           }

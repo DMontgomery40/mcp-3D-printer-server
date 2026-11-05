@@ -643,6 +643,19 @@ test("a designer's 3MF slices with its own process; strength never weakens it; a
   const extractions = path.join(install.root, "server-temp", "templates");
   const left = existsSync(extractions) ? await fs.readdir(extractions) : [];
   assert.deepEqual(left.filter(entry => /settings/.test(entry)), [], "no slice leaves its extraction behind");
+  // The slice's own arguments, as slice_stl takes them: own_process is what that slice does, decided here.
+  assert.equal((await settingsOf(designer, { quality: "standard", strength: "standard" })).own_process, true, "standard changes nothing");
+  for (const extra of [{ slicer_profile: path.join(install.root, "mine.json") }, { template_3mf_path: bare }, { layer_height: 0.2 }, { wall_loops: 3 },
+    { sparse_infill_density: "20%" }, { quality: "fine" }, { strength: "strong" }, { enable_support: false }])
+    assert.equal((await settingsOf(designer, extra)).own_process, false, `${Object.keys(extra)[0]} replaces or changes the designer's process`);
+  // With source_path, template_name is the slice's template, as slice_stl takes it, never the file read.
+  await fs.mkdir(path.join(install.root, "templates"), { recursive: true });
+  await fs.writeFile(path.join(install.root, "templates", "house.json"), JSON.stringify({ layer_height: "0.2" }));
+  assert.equal((await settingsOf(designer, { template_name: "house" })).own_process, false, "a named template replaces the designer's process");
+  assert.equal((await call("get_slice_settings", { source_path: designer, template_name: "nowhere" })).isError, true, "an unknown template is refused, as slice_stl refuses it");
+  for (const invalid of [{ quality: "bogus" }, { layer_height: -1 }, { sparse_infill_density: "200%" }, { support_type: "organic" },
+    { slicer_profile: path.join(install.root, "mine.json"), layer_height: -1 }])
+    assert.equal((await call("get_slice_settings", { source_path: designer, ...invalid })).isError, true, `${JSON.stringify(invalid)} is refused, as slice_stl refuses it`);
 });
 
 test("machine settings inside a template or process profile never replace the selected preset", async (t) => {
