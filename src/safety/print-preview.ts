@@ -92,9 +92,10 @@ export function extrusionSegments(gcode: string): { segments: Segment[]; layers:
     const word = command[1] + String(Number(command[2].split(".")[0])) + (command[2].includes(".") ? "." + command[2].split(".")[1] : "");
     const words = parameterWords(line.slice(command[0].length));
     if (command[1] === "T") { const t = Number(command[2]); if (Number.isInteger(t) && t < 255) tool = t; continue; }
-    // Bambu's AMS filament change (cut, retract, flush into the chute) runs from M620 to M621: not the part.
-    if (word === "M620") { changingFilament = true; continue; }
-    if (word === "M621") { changingFilament = false; continue; }
+    // Bambu's AMS filament change (cut, retract, flush into the chute) runs from M620 S<slot> to M621 S<slot>: not
+    // the part. Other M620 forms (the H2C start template's M620 O1) are setup, as file inspection reads them too.
+    if (word === "M620") { if (words.has("S")) changingFilament = true; continue; }
+    if (word === "M621") { if (words.has("S")) changingFilament = false; continue; }
     if (word === "G90") { absoluteXY = true; continue; }
     if (word === "G91") { absoluteXY = false; continue; }
     if (word === "M82") { relativeE = false; continue; }

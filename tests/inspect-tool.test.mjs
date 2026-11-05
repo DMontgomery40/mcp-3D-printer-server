@@ -201,3 +201,11 @@ test('a later filament on the same layer shows over an earlier one at any layer 
   }
   assert.ok(blue > 0 && red === 0, `the later filament shows: red ${red}, blue ${blue}`);
 });
+
+test('only a material-switch M620 (with S) starts the flush the preview leaves out; setup M620 O1 does not hide the part', async () => {
+  const { extrusionSegments } = await import('../dist/safety/print-preview.js');
+  const setup = extrusionSegments('G90\nM83\nM620 O1\n; FEATURE: Outer wall\nG1 X10 Y10\nG1 X20 Y10 E1\n').segments;
+  assert.equal(setup.length, 1, 'the H2C start template\'s M620 O1 is not a filament change');
+  const flush = extrusionSegments('G90\nM83\n; FEATURE: Outer wall\nG1 X10 Y10\nG1 X20 Y10 E1\nM620 S1A\nT1\nG1 X-20 Y200 E30\nM621 S1A\nG1 X20 Y10\nG1 X20 Y20 E1\n').segments;
+  assert.equal(flush.length, 2, 'the flush between M620 S1A and M621 S1A is left out');
+});
