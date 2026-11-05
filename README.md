@@ -897,6 +897,7 @@ The server carries manufacturing judgment for agents that design or edit a model
 - `fdm_multicolor`: when several colours or support materials share a print: filament transitions across layers, colour placement, plate scheduling and flushing.
 - `fdm_assembly`: when a split, accent insert or joint could materially improve the result.
 - `fdm_after_slice`: a separate review turn after `slice_stl`, before presenting the manufacturing recommendation: keep, revise, or validate one specific uncertainty, using the returned slicer report.
+- `fdm_slicing`: for every design or model-editing task, next to `fdm_design`: how this server's configured slicer (`SLICER_TYPE`) orients a model and generates supports, and how to check a choice with a checkpoint `slice_stl`. Its text follows the slicer: Bambu Studio's auto-orient and `enable_support`, or plainly that a slicer here doesn't orient or take support settings.
 - `guidance://fdm/capability-guidance` (resource): planning bands and sources for bridges and overhangs, for when one is consequential and there is no sufficiently specific measured capability for the printer, material and profile.
 
 bambu-printer-mcp serves the same guidance.

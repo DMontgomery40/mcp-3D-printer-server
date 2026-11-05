@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.36] – 2026-11-05
+
+### Added
+
+- `fdm_slicing`, a design prompt next to `fdm_design`: how this server's configured slicer orients a model and generates supports, and how to check a choice with a checkpoint `slice_stl` (read `slicer_result`; set `orient`, and always set `enable_support`, since leaving it out applies the preset's own setting). The text follows `SLICER_TYPE` and the same rules as `capabilities.slicing`: the Bambu-compatible CLI route orients and takes supports; generic OrcaSlicer takes supports but doesn't orient; PrusaSlicer, Cura and Slic3r take neither here. Counterpart wrote Bambu Studio's behaviour into its own design prompt; it now comes from the MCP that knows its slicer. Checked with the server's prompt tests.
+- `BAMBU_NETWORK_BRIDGE_IMAGE` runs FULU's Linux host in a Docker image, as in bambu-printer-mcp, with `BAMBU_NETWORK_BRIDGE_DOCKER`, `BAMBU_NETWORK_BRIDGE_DOCKER_HOST` and an optional Colima profile that is started, never restarted, when Docker doesn't answer. It comes after an explicit bridge command and before a discovered FULU install. A Colima profile without `BAMBU_NETWORK_BRIDGE_DOCKER_HOST` uses that profile's own socket. Concurrent calls on a cold bridge start one container. The container runs with `--init` and a name of its own, and is removed when the bridge stops, so stopping the server no longer leaves FULU's host running. Checked with a stand-in `docker` and `colima`, and on a Mac against the real FULU host image in its own container: the agent started and wrote its logs and certificates to this server's folder, and no container was left afterwards. No print was sent through it.
+
+### Fixed
+
+- FULU through this server no longer aborts on its config folder. The hand-written launcher it was pointed at mounted bambu-printer-mcp's agent folder, not this server's `~/.config/mcp-3d-printer-server/bambu-network`, so the host couldn't open its `log_dir` (FULU #54). With `BAMBU_NETWORK_BRIDGE_IMAGE` the server mounts its own config folder and writes each print's checked snapshot inside it (Colima shares the home folder, not `/tmp` or `/var/folders`). A config folder reached through a symlink is mounted at the path the host is given. Snapshots a killed server left behind are removed after a day. Checked with a stand-in `docker` and `colima` running the fake FULU host, and against the real host image on a Mac (agent setup only; nothing printed).
+
 ## [1.2.35] – 2026-11-05
 
 ### Added

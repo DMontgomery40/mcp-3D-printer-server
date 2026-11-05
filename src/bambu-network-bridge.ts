@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -183,6 +183,172 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * FULU's Linux host run in a Docker image (BAMBU_NETWORK_BRIDGE_IMAGE), for a Mac or any machine without the
+ * x86-64 Linux runtime installed natively. The image holds FULU's host runtime in /fulu (pjarczak_bambu_linux_host
+ * and ca-certificates.crt) and the networking plug-in in /plugins (libbambu_networking.so, libBambuSource.so).
+ */
+export type BridgeContainer = {
+  image: string;
+  docker: string;
+  dockerHost?: string;
+  /** A Colima profile started (never stopped or restarted) when Docker doesn't answer. */
+  colima?: { executable: string; profile: string; home?: string };
+};
+
+export function bridgeContainer(env: NodeJS.ProcessEnv = process.env): BridgeContainer | undefined {
+  const image = trimEnv(env.BAMBU_NETWORK_BRIDGE_IMAGE);
+  if (!image) return undefined;
+  const dockerHost = trimEnv(env.BAMBU_NETWORK_BRIDGE_DOCKER_HOST);
+  const profile = trimEnv(env.BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE);
+  const home = trimEnv(env.BAMBU_NETWORK_BRIDGE_COLIMA_HOME);
+  // A Colima profile started with --activate=false leaves Docker's default context alone, so without an explicit
+  // host the server talks to that profile's own socket.
+  const colimaHome = home || path.join(os.homedir(), ".colima");
+  const host = dockerHost || (profile ? `unix://${path.join(colimaHome, profile, "docker.sock")}` : undefined);
+  return {
+    image,
+    docker: trimEnv(env.BAMBU_NETWORK_BRIDGE_DOCKER) || "docker",
+    ...(host ? { dockerHost: host } : {}),
+    ...(profile ? { colima: { executable: trimEnv(env.BAMBU_NETWORK_BRIDGE_COLIMA) || "colima", profile, ...(home ? { home } : {}) } } : {}),
+  };
+}
+
+/** `--host <socket>` for every docker call, when a host is set. */
+function dockerHostArgs(container: BridgeContainer): string[] {
+  return container.dockerHost ? ["--host", container.dockerHost] : [];
+}
+
+/** The image's fixed layout: FULU's runtime and the networking plug-in, with the CA bundle cloud calls need. */
+const CONTAINER_ENV = [
+  "LD_LIBRARY_PATH=/plugins:/fulu",
+  "SSL_CERT_FILE=/fulu/ca-certificates.crt",
+  "CURL_CA_BUNDLE=/fulu/ca-certificates.crt",
+  "SSL_CERT_DIR=/etc/ssl/certs",
+  "PJARCZAK_BAMBU_PLUGIN_DIR=/plugins",
+  "PJARCZAK_BAMBU_NETWORK_SO=/plugins/libbambu_networking.so",
+  "PJARCZAK_BAMBU_SOURCE_SO=/plugins/libBambuSource.so",
+];
+/** Set by the server for the host (country, expected network version): passed into the container from its env. */
+const CONTAINER_PASSED_ENV = ["PJARCZAK_BAMBU_COUNTRY_CODE", "PJARCZAK_EXPECTED_BAMBU_NETWORK_VERSION"];
+
+/** The explicit host command, when one is set: it wins over the Docker image. */
+function explicitBridgeCommand(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return trimEnv(env.BAMBU_NETWORK_BRIDGE_COMMAND) || trimEnv(env.FULU_BAMBU_NETWORK_BRIDGE_COMMAND)
+    || trimEnv(env.PJARCZAK_BAMBU_BRIDGE_COMMAND) || trimEnv(env.FULU_BAMBU_BRIDGE_COMMAND);
+}
+
+function configuredBridgeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
+  return trimEnv(env.BAMBU_NETWORK_CONFIG_DIR) || trimEnv(env.PJARCZAK_BAMBU_PROBE_LOG_DIR) || defaultBambuNetworkConfigDir();
+}
+
+/**
+ * Where a print's checked snapshot is written when the host runs in the Docker image: inside the agent's config
+ * folder, which the container mounts. The system temporary folder is no good there: Colima shares the home
+ * folder but not /tmp or /var/folders, so the host would see an empty folder. Undefined without the image.
+ */
+export function bridgeSnapshotRoot(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (explicitBridgeCommand(env) || !bridgeContainer(env)) return undefined;
+  const root = path.join(configuredBridgeConfigDir(env), "print-snapshots");
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  clearStaleSnapshots(root);
+  return root;
+}
+
+const STALE_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
+const clearedSnapshotRoots = new Set<string>();
+/**
+ * A snapshot kept for an upload still running is removed when the server exits; one a killed server left stays
+ * here, where no system cleanup reaches it. Once per server, snapshots older than a day are removed.
+ */
+function clearStaleSnapshots(root: string, now = Date.now()): void {
+  if (clearedSnapshotRoots.has(root)) return;
+  clearedSnapshotRoots.add(root);
+  for (const name of fs.readdirSync(root)) {
+    if (!name.startsWith("bambu-print-")) continue;
+    const dir = path.join(root, name);
+    try { if (now - fs.statSync(dir).mtimeMs > STALE_SNAPSHOT_MS) fs.rmSync(dir, { recursive: true, force: true }); } catch { /* gone already */ }
+  }
+}
+
+/**
+ * The folders the host must see at the same absolute paths: the agent's config folder (the plug-in writes its
+ * logs and session there; a host given a log_dir it can't open aborts, FULU #54), the folder print snapshots are
+ * written to, and the certificate folder.
+ */
+export function bridgeContainerMounts(configDir: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  fs.mkdirSync(configDir, { recursive: true });
+  const folders = [path.resolve(configDir)];
+  const snapshots = bridgeSnapshotRoot(env);
+  if (snapshots) folders.push(path.resolve(snapshots));
+  const certDir = trimEnv(env.BAMBU_NETWORK_CERT_DIR);
+  if (certDir) folders.push(path.resolve(certDir));
+  const unique = [...new Set(folders)].filter((dir, _i, all) => !all.some(other => other !== dir && dir.startsWith(other + path.sep)));
+  // The host is given these paths as written, so each is mounted there; the VM reads the folder it really is
+  // (a symlinked folder's link target need not be shared with the VM).
+  return unique.map(dir => {
+    let real = dir;
+    try { real = fs.realpathSync(dir); } catch { /* created later by the host */ }
+    if (dir.includes(":") || real.includes(":")) throw new Error(`The FULU container can't mount ${dir}: Docker volume paths can't contain ':'. Move that folder.`);
+    return `${real}:${dir}`;
+  });
+}
+
+/**
+ * docker run for the host: stdin/stdout are the bridge's framed protocol; the host is piped through cat (FULU #50).
+ * `--init` puts an init process first, so the SIGTERM docker forwards on stop reaches the host: a shell as the
+ * container's first process ignores it, and the container kept running after the server stopped. `name` lets stop
+ * remove the container even when the docker client was killed.
+ */
+export function bridgeContainerArgs(container: BridgeContainer, mounts: string[], name?: string): string[] {
+  return [
+    ...dockerHostArgs(container),
+    "run", "--rm", "-i", "--init", ...(name ? ["--name", name] : []),
+    "--platform", "linux/amd64", "--network", "host", "--log-driver=none", "--workdir", "/plugins",
+    ...mounts.flatMap(mount => ["-v", `${mount}:rw`]),
+    ...CONTAINER_ENV.flatMap(value => ["-e", value]),
+    ...CONTAINER_PASSED_ENV.flatMap(name => ["-e", name]),
+    container.image,
+    "/bin/sh", "-c", "/fulu/pjarczak_bambu_linux_host | cat",
+  ];
+}
+
+const runQuietly = (file: string, args: string[], options: { env?: NodeJS.ProcessEnv; timeout: number }) =>
+  new Promise<void>((resolve, reject) => {
+    execFile(file, args, { env: options.env ?? process.env, timeout: options.timeout, maxBuffer: 1024 * 1024 }, (error, _stdout, stderr) => {
+      if (error) reject(Object.assign(error, { stderr: String(stderr ?? "") }));
+      else resolve();
+    });
+  });
+
+/**
+ * Docker must answer before the host starts. When it doesn't and a Colima profile is configured, that profile is
+ * started without changing Docker's global context; a running profile is never stopped or restarted.
+ */
+export async function ensureBridgeContainerRuntime(container: BridgeContainer, timeouts = { infoMs: 20_000, startMs: 600_000 }): Promise<void> {
+  const info = () => runQuietly(container.docker, [...dockerHostArgs(container), "info"], { timeout: timeouts.infoMs });
+  try { await info(); return; } catch (error) {
+    if (!container.colima) {
+      throw new Error(`Docker didn't answer (${container.docker}${container.dockerHost ? ` --host ${container.dockerHost}` : ""} info), so the FULU container can't start. Start Docker, or set BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE.`);
+    }
+  }
+  const { executable, profile, home } = container.colima!;
+  try {
+    await runQuietly(executable, ["start", "--profile", profile, "--activate=false"], { env: { ...process.env, ...(home ? { COLIMA_HOME: home } : {}) }, timeout: timeouts.startMs });
+  } catch (error) {
+    const detail = String((error as { stderr?: string }).stderr ?? "").trim().split("\n").slice(-3).join(" ");
+    throw new Error(`Colima profile ${profile} didn't start for the FULU container${detail ? `: ${detail}` : "."}`);
+  }
+  try { await info(); } catch {
+    throw new Error(`Colima profile ${profile} started, but Docker still doesn't answer at ${container.dockerHost ?? "its default host"}.`);
+  }
+}
+
+/** `docker rm -f` for the bridge's own named container; a container that is already gone is fine. */
+async function removeBridgeContainer(container: BridgeContainer, name: string): Promise<void> {
+  await runQuietly(container.docker, [...dockerHostArgs(container), "rm", "-f", name], { timeout: 20_000 }).catch(() => undefined);
+}
+
 function trimEnv(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -349,6 +515,9 @@ function assertBridgeOk(value: unknown, method: string): void {
 export class BambuNetworkBridge {
   private child?: ChildProcessWithoutNullStreams;
   private commandLine?: string;
+  /** This bridge's own container, when the host runs in the Docker image: unique, so two servers never remove each other's. */
+  private readonly containerName = `bambu-fulu-host-${process.pid}-${randomUUID().slice(0, 8)}`;
+  private runningContainer?: BridgeContainer;
   private stdoutBuffer = Buffer.alloc(0);
   private pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
@@ -366,25 +535,24 @@ export class BambuNetworkBridge {
    */
   private localSessionTail: Promise<void> = Promise.resolve();
 
-  resolveBridgeCommand(override?: string): string {
-    return (
-      trimEnv(override) ||
-      trimEnv(process.env.BAMBU_NETWORK_BRIDGE_COMMAND) ||
-      trimEnv(process.env.FULU_BAMBU_NETWORK_BRIDGE_COMMAND) ||
-      trimEnv(process.env.PJARCZAK_BAMBU_BRIDGE_COMMAND) ||
-      trimEnv(process.env.FULU_BAMBU_BRIDGE_COMMAND) ||
-      discoveredFuluBridgeCommand() ||
-      ""
-    );
+  resolveBridgeCommand(override?: string, configDir?: string): string {
+    const explicit = this.explicitCommand(override);
+    if (explicit) return explicit;
+    // A configured Docker image comes before a discovered local FULU install.
+    const container = bridgeContainer();
+    if (container) {
+      const mounts = bridgeContainerMounts(this.resolveConfigDir(configDir));
+      return [container.docker, ...bridgeContainerArgs(container, mounts, this.containerName)].map(shellQuote).join(" ");
+    }
+    return discoveredFuluBridgeCommand() || "";
+  }
+
+  private explicitCommand(override?: string): string {
+    return trimEnv(override) || explicitBridgeCommand() || "";
   }
 
   resolveConfigDir(override?: string): string {
-    return (
-      trimEnv(override) ||
-      trimEnv(process.env.BAMBU_NETWORK_CONFIG_DIR) ||
-      trimEnv(process.env.PJARCZAK_BAMBU_PROBE_LOG_DIR) ||
-      defaultBambuNetworkConfigDir()
-    );
+    return trimEnv(override) || configuredBridgeConfigDir();
   }
 
   resolveCountryCode(override?: string): string {
@@ -397,7 +565,7 @@ export class BambuNetworkBridge {
   }
 
   getStatus(options: BambuNetworkBridgeOptions = {}): BambuNetworkBridgeStatus {
-    const command = this.resolveBridgeCommand(options.bridgeCommand);
+    const command = this.resolveBridgeCommand(options.bridgeCommand, options.configDir);
     const configDir = this.resolveConfigDir(options.configDir);
     const countryCode = this.resolveCountryCode(options.countryCode);
 
@@ -428,7 +596,7 @@ export class BambuNetworkBridge {
       runtime,
       note: command
         ? undefined
-        : "Set BAMBU_NETWORK_BRIDGE_COMMAND to the FULU OrcaSlicer-bambulab Linux host or macOS/WSL wrapper command.",
+        : "Set BAMBU_NETWORK_BRIDGE_COMMAND to the FULU OrcaSlicer-bambulab Linux host or macOS/WSL wrapper command, or BAMBU_NETWORK_BRIDGE_IMAGE to a Docker image holding FULU's Linux host.",
     };
   }
 
@@ -437,7 +605,7 @@ export class BambuNetworkBridge {
       throw new Error("BambuNetwork bridge method is required.");
     }
 
-    await this.ensureStarted(options.bridgeCommand);
+    await this.ensureStarted(options.bridgeCommand, options.configDir);
     await options.beforeDispatch?.(method);
 
     const id = this.nextRequestId++;
@@ -482,7 +650,7 @@ export class BambuNetworkBridge {
     agent: number;
     handshake: unknown;
   }> {
-    const command = this.resolveBridgeCommand(options.bridgeCommand);
+    const command = this.resolveBridgeCommand(options.bridgeCommand, options.configDir);
     const configDir = this.resolveConfigDir(options.configDir);
     const countryCode = this.resolveCountryCode(options.countryCode);
     const userInfo = trimEnv(options.userInfo) || trimEnv(process.env.BAMBU_NETWORK_USER_INFO) || "";
@@ -940,6 +1108,8 @@ export class BambuNetworkBridge {
 
   async stop(): Promise<void> {
     const child = this.child;
+    const running = this.runningContainer;
+    this.runningContainer = undefined;
     this.child = undefined;
     this.commandLine = undefined;
     this.agentId = undefined;
@@ -967,14 +1137,26 @@ export class BambuNetworkBridge {
         child.kill("SIGTERM");
       });
     }
+    // Whatever happened to the docker client, the container goes too.
+    if (running) await removeBridgeContainer(running, this.containerName);
   }
 
-  private async ensureStarted(commandOverride?: string): Promise<void> {
-    const command = this.resolveBridgeCommand(commandOverride);
+  /** A start in progress: concurrent callers wait for it, so a cold Docker host is started (and named) once. */
+  private starting?: Promise<void>;
+
+  private async ensureStarted(commandOverride?: string, configDir?: string): Promise<void> {
+    while (this.starting) await this.starting.catch(() => undefined);
+    const start = this.startBridge(commandOverride, configDir);
+    this.starting = start;
+    try { await start; } finally { if (this.starting === start) this.starting = undefined; }
+  }
+
+  private async startBridge(commandOverride?: string, configDir?: string): Promise<void> {
+    const command = this.resolveBridgeCommand(commandOverride, configDir);
     if (!command) {
       throw new Error(
-        "BAMBU_NETWORK_BRIDGE_COMMAND is required for FULU BambuNetwork support. " +
-        "Point it at pjarczak_bambu_linux_host or the OrcaSlicer-bambulab macOS/WSL wrapper."
+        "BAMBU_NETWORK_BRIDGE_COMMAND or BAMBU_NETWORK_BRIDGE_IMAGE is required for FULU BambuNetwork support. " +
+        "Point the command at pjarczak_bambu_linux_host or the OrcaSlicer-bambulab macOS/WSL wrapper, or name a Docker image holding FULU's Linux host."
       );
     }
 
@@ -984,6 +1166,14 @@ export class BambuNetworkBridge {
 
     if (this.child && this.commandLine !== command) {
       await this.stop();
+    }
+
+    const container = this.explicitCommand(commandOverride) ? undefined : bridgeContainer();
+    if (container) {
+      await ensureBridgeContainerRuntime(container);
+      // The docker client can exit (a dropped socket) while its container keeps running under this bridge's name.
+      await removeBridgeContainer(container, this.containerName);
+      this.runningContainer = container;
     }
 
     const shell = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "/bin/sh";

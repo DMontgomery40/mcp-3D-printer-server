@@ -185,4 +185,33 @@ export const DESIGN_PROMPTS: DesignPrompt[] = [
     description: "A separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation: keep, revise, or validate one specific uncertainty." },
 ];
 
-export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split or joint could help, and fdm_after_slice as a separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang is consequential and there is no sufficiently specific measured capability available.";
+const SLICER_NAMES: Record<string, string> = {
+  bambustudio: "Bambu Studio", orcaslicer: "OrcaSlicer", "orcaslicer-bambulab": "FULU OrcaSlicer-bambulab",
+  "orca-slicer-api": "the remote OrcaSlicer service (orca-slicer-api)", prusaslicer: "PrusaSlicer", cura: "Cura", slic3r: "Slic3r",
+};
+
+/**
+ * How this server's configured slicer orients, makes supports and checks a slice: the slicer-specific half of a
+ * design pass's print plan (the fdm_slicing prompt). `capabilities` is what slice_stl applies on that backend, as
+ * counterpart_printer_info reports it.
+ */
+export function slicingGuidance(slicerType: string, capabilities: { supports: boolean; orient: boolean }): string {
+  const slicer = SLICER_NAMES[slicerType] ?? slicerType;
+  const lines = [
+    `How this printer MCP slices. Its slicer is ${slicer}.`,
+    "- When they could change a decision, read the printer's loaded filaments with get_printer_filaments and its slicing settings with get_slice_settings.",
+    "- To check a consequential choice, slice a checkpoint with slice_stl and read its structured slicer_result (return code, error and each plate's warning), not only the file path. A checkpoint is only a check: the print slices the exported model again.",
+    capabilities.orient
+      ? `- Orientation: slice_stl with orient true lets ${slicer}'s own auto-orient choose how an STL sits on the bed. It keeps overhang area low; it does not check cantilevers. To see what it chooses, slice the checkpoint with orient true. When a print is oriented this way, don't promise a particular orientation on the bed: the slicer chooses it.`
+      : `- Orientation: ${slicer} doesn't auto-orient here. An STL prints in the orientation it's exported in.`,
+    capabilities.supports
+      ? "- Supports: set enable_support on every slice_stl call. With enable_support true it generates supports in the style support_type names (tree(auto) or normal(auto)); with false it generates none; left out, the process preset's own setting applies. Slice the checkpoint with enable_support set the way the print will be sliced. Supports in a checkpoint never reach the print: only the print's own request does."
+      : `- Supports: ${slicer} takes no support settings here, so it generates none. Model any support the part needs.`,
+  ];
+  return lines.join("\n");
+}
+
+export const FDM_SLICING_PROMPT = { name: "fdm_slicing", title: "How this MCP slices",
+  description: "Add to every design or model-editing task: how this server's slicer orients a model and generates supports, and how to check a choice with a checkpoint slice." };
+
+export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt and the fdm_slicing prompt. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split or joint could help, and fdm_after_slice as a separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang is consequential and there is no sufficiently specific measured capability available.";

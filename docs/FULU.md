@@ -165,6 +165,27 @@ Configure it in the server environment:
 | `BAMBU_NETWORK_COUNTRY_CODE`, `BAMBU_NETWORK_USER_INFO`, `BAMBU_NETWORK_CERT_DIR` | Region (default `US`), optional `net.change_user` JSON for cloud sign-in, and an optional certificate folder. By default the server writes Bambu's public `printer.cer` and `slicer_base64.cer` (pinned by SHA-256) to `cert` inside the config folder; LAN sessions need `printer.cer`. |
 | `BAMBU_NETWORK_CLIENT_NAME`, `BAMBU_NETWORK_CLIENT_VERSION` | The client identity sent with `net.set_extra_http_header` before the agent starts, as FULU's GUI sends it. Defaults `BambuStudio` and `02.05.02.51`; the device id is kept in `client-device-id` inside the config folder. |
 | `PJARCZAK_BAMBU_PLUGIN_DIR` | The networking plug-in folder (`libbambu_networking.so`, `libBambuSource.so`); on Linux the server passes their absolute paths to the host. |
+| `BAMBU_NETWORK_BRIDGE_IMAGE` | Instead of a command: a Docker image holding FULU's Linux host. See [Run the host in Docker](#run-the-host-in-docker). A command, when set, wins; the image comes before a discovered FULU install. |
+
+### Run the host in Docker
+
+On a Mac, or any machine without the x86-64 Linux runtime installed natively, the server can run FULU's Linux host in a Docker image itself, as bambu-printer-mcp does. Set `BAMBU_NETWORK_BRIDGE_IMAGE` instead of `BAMBU_NETWORK_BRIDGE_COMMAND`:
+
+| Setting | Purpose |
+|---|---|
+| `BAMBU_NETWORK_BRIDGE_IMAGE` | The image. It holds FULU's host runtime in `/fulu` (`pjarczak_bambu_linux_host` and `ca-certificates.crt`) and the 02.05.02.5x networking plug-in in `/plugins` (`libbambu_networking.so`, `libBambuSource.so`), on an x86-64 Linux with glibc 2.38 or later (Ubuntu 24.04). |
+| `BAMBU_NETWORK_BRIDGE_DOCKER` | The `docker` executable. Default `docker` on the server's `PATH`; a desktop client's `PATH` often lacks Homebrew, so give the full path. |
+| `BAMBU_NETWORK_BRIDGE_DOCKER_HOST` | Optional `docker --host`, such as a Colima profile's `unix://…/docker.sock`. The global Docker context is never changed. |
+| `BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE` | Optional. When Docker doesn't answer, the server runs `colima start --profile <name> --activate=false` once and waits for it. A running profile is never stopped or restarted. |
+| `BAMBU_NETWORK_BRIDGE_COLIMA_HOME` | Optional `COLIMA_HOME` for that profile. |
+| `BAMBU_NETWORK_BRIDGE_COLIMA` | Optional `colima` executable. Default `colima`. |
+
+The server runs `docker run --rm -i --platform linux/amd64 --network host` with the image's host piped through `cat` (FULU #50) and the plug-in paths, CA bundle and country/expected-version settings passed in. It mounts, at the same absolute paths, the folders the host must see:
+
+- this server's own agent config folder (`BAMBU_NETWORK_CONFIG_DIR`, default `~/.config/mcp-3d-printer-server/bambu-network`). The host aborts when it can't open that folder (FULU #54): a hand-written launcher that mounted only bambu-printer-mcp's folder made this server's FULU route crash. Each print's checked snapshot is written to `print-snapshots` inside it, because the plug-in uploads that file;
+- `BAMBU_NETWORK_CERT_DIR`, when it is set outside the config folder.
+
+The Docker VM must share those folders with the computer. Colima shares your home folder by default, but not `/tmp` or `/var/folders` (macOS's temporary folders), which is why the snapshots don't go there.
 
 `counterpart_print_route` reads the route and changes it (`{"route": "lan"}` or `{"route": "cloud"}`) in the running server and in the `.env` file in its working directory. Arguments override the defaults per call: `print_3mf`, `cancel_print`, `pause_print` and `resume_print` take `connection_mode` and `connection_type`. A job is always controlled over the connection that printed it, so Stop and Pause for a FULU print never fall back to plain MQTT.
 
