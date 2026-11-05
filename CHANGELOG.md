@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.39] – 2026-11-05
+
+### Fixed
+
+- `fdm_slicing` no longer tells a client that PrusaSlicer, Slic3r or Cura generate no supports. They take no support settings from `slice_stl` here, but a profile with supports enabled still generates them, so the text says supports follow the configured profile and to slice a checkpoint before modeling any. Checked with the prompt tests.
+- Stopping the FULU bridge can no longer hang. With `BAMBU_NETWORK_BRIDGE_IMAGE`, the container is stopped (`docker stop --time 2`) and removed before the server waits for the docker client. The wait for the bridge's shell is bounded, so a descendant that keeps its pipes open no longer blocks shutdown or a restart. Checked with a stand-in `docker` and with a shell whose background child holds the pipes: 30 s before the fix (until that child exited), 4 s after.
+
 ## [1.2.38] – 2026-11-05
 
 ### Fixed

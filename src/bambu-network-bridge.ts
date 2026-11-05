@@ -344,8 +344,12 @@ export async function ensureBridgeContainerRuntime(container: BridgeContainer, t
   }
 }
 
-/** `docker rm -f` for the bridge's own named container; a container that is already gone is fine. */
+/**
+ * Stops the bridge's own named container (SIGTERM to the host through --init, two seconds to exit), then removes
+ * it. A container that is already gone is fine.
+ */
 async function removeBridgeContainer(container: BridgeContainer, name: string): Promise<void> {
+  await runQuietly(container.docker, [...dockerHostArgs(container), "stop", "--time", "2", name], { timeout: 20_000 }).catch(() => undefined);
   await runQuietly(container.docker, [...dockerHostArgs(container), "rm", "-f", name], { timeout: 20_000 }).catch(() => undefined);
 }
 
@@ -1123,22 +1127,31 @@ export class BambuNetworkBridge {
       this.pending.delete(id);
     }
 
+    // The container goes first: a shell that keeps the docker client as its own child holds the pipes open until
+    // the client exits, so waiting for the shell before removing the container could wait for ever.
+    if (running) await removeBridgeContainer(running, this.containerName);
     if (child && child.exitCode === null) {
       await new Promise<void>((resolve) => {
+        let settleTimer: ReturnType<typeof setTimeout> | undefined;
         const forceTimer = setTimeout(() => {
           if (child.exitCode === null) {
             child.kill("SIGKILL");
           }
+          // A descendant can still hold the pipes after the shell is killed: stop waiting for it, and let go of
+          // those pipes so nothing it writes reaches a bridge started after this one.
+          settleTimer = setTimeout(() => {
+            for (const stream of [child.stdin, child.stdout, child.stderr]) stream.destroy();
+            resolve();
+          }, 2000);
         }, 2000);
         child.once("close", () => {
           clearTimeout(forceTimer);
+          if (settleTimer) clearTimeout(settleTimer);
           resolve();
         });
         child.kill("SIGTERM");
       });
     }
-    // Whatever happened to the docker client, the container goes too.
-    if (running) await removeBridgeContainer(running, this.containerName);
   }
 
   /** A start in progress: concurrent callers wait for it, so a cold Docker host is started (and named) once. */
