@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.44] – 2026-11-05
+
+### Fixed
+
+- `get_slice_settings` lists `nozzle_diameter` among the slice arguments it takes for `own_process`, so a schema-driven client checks layer heights against the same nozzle as the slice. It already read the argument; clients that send only listed arguments left it out, and a valid 0.42 mm layer for a 0.6 mm nozzle was refused. Checked with a stand-in slicer.
 ## [1.2.43] – 2026-11-05
 
 ### Fixed

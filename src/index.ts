@@ -1899,6 +1899,7 @@ class ThreeDPrinterMCPServer {
                 slicer_profile: { type: "string", description: "For own_process: the slicer_profile slice_stl would be given." },
                 template_3mf_path: { type: "string", description: "For own_process: the template_3mf_path slice_stl would be given." },
                 layer_height: { type: "number", description: "For own_process: the layer_height slice_stl would be given." },
+                nozzle_diameter: { type: "string", description: "For own_process: the nozzle_diameter slice_stl would be given; layer heights are checked against it." },
                 wall_loops: { type: "number", description: "For own_process: the wall_loops slice_stl would be given." },
                 sparse_infill_density: { type: "string", description: "For own_process: the sparse_infill_density slice_stl would be given." },
                 enable_support: { type: "boolean", description: "For own_process: the enable_support slice_stl would be given." },
