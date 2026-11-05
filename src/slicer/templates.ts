@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import JSZip from "jszip";
 import { parse3MF } from "../3mf_parser.js";
 
@@ -176,7 +177,9 @@ export async function extractBambuTemplateSettings(filePath: string, outputDir: 
     const content = await file.async("string");
     await fs.promises.mkdir(outputDir, { recursive: true });
     const stem = path.basename(filePath).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 64);
-    const outputPath = path.join(outputDir, `${stem}_${name.replace(/\//g, "_")}`);
+    // Named by content too, so two same-named projects sliced at once never overwrite each other's settings.
+    const digest = crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
+    const outputPath = path.join(outputDir, `${stem}_${digest}_${name.replace(/\//g, "_")}`);
     await fs.promises.writeFile(outputPath, content, "utf8");
     return outputPath;
   }

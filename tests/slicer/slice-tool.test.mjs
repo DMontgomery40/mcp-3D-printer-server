@@ -915,3 +915,20 @@ test("PrusaSlicer strength floors keep a loaded config's own higher walls and in
   assert.deepEqual(prusaSlicerOverrideArgs(strong), ["--perimeters", "4", "--fill-density", "25%"], "no config: the minimum");
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test("two same-named projects' settings extract to distinct files, so concurrent slices can't swap processes", async () => {
+  const { extractBambuTemplateSettings } = await import("../../dist/slicer/templates.js");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "template-extract-"));
+  const write = async (sub, layer) => {
+    await fs.mkdir(path.join(dir, sub));
+    const file = path.join(dir, sub, "model.3mf");
+    await fs.writeFile(file, await zipBytes({ "Metadata/project_settings.config": JSON.stringify({ layer_height: layer }) }));
+    return file;
+  };
+  const out = path.join(dir, "out");
+  const [a, b] = await Promise.all([write("a", "0.16"), write("b", "0.28")].map(async p => extractBambuTemplateSettings(await p, out)));
+  assert.notEqual(a, b);
+  assert.equal(JSON.parse(await fs.readFile(a, "utf8")).layer_height, "0.16");
+  assert.equal(JSON.parse(await fs.readFile(b, "utf8")).layer_height, "0.28");
+  await fs.rm(dir, { recursive: true, force: true });
+});
