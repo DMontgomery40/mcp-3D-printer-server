@@ -204,7 +204,9 @@ export class CounterpartService {
     const slots = await generic.counterpartFilaments(target.host, target.port, target.apiKey);
     const profiled = await Promise.all(slots.map(async (slot) => {
       const profile = await this.filamentProfile?.(slot.material).catch(() => undefined);
-      return profile ? { ...slot, profile } : slot;
+      // One spool feeds a single-extruder printer.
+      const labelled = { label: "Spool", ...slot };
+      return profile ? { ...labelled, profile } : labelled;
     }));
     return compact({ slots: profiled });
   }

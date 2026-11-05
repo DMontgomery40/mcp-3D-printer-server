@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.37] – 2026-11-05
+
+### Added
+
+- `counterpart_discover_printers` finds printers on the local network: Bambu Lab printers from their own SSDP announcements (serial, `bambu_model` value, name, firmware), and OctoPrint, Klipper (Moonraker) and PrusaLink hosts from their Bonjour adverts. It never connects to a printer; a Bambu port another app holds is `network: "unavailable"`, not "none found". Checked with captured SSDP packets and `dns-sd`/`avahi-browse` lines; not run against live printers.
+- `counterpart_setup_fields` lists every `PRINTER_TYPE` this server drives with the `.env` settings it reads for each (address, port, API key or password, and for Bambu the serial, model and access code), the Bambu model choices and the model each serial prefix names. Clients such as Counterpart offer printer setup from it instead of copying this server's tables. It also reports the slicer this server would run (`slicer`: type, path, whether it is there, and the Bambu profiles folder) with the `SLICER_TYPE`, `SLICER_PATH` and `BAMBU_PROFILES_ROOT` fields, required only when what they default to is missing, so a client can say "Bambu Studio isn't installed" or ask where it is instead of the person editing paths by hand.
+- `counterpart_propose_filaments` proposes which loaded spool prints each of a model's colours before slicing, with an explicit verdict and note per part: a colour that isn't loaded says so instead of quietly printing another colour, and a colour that is loaded but not chosen (on the other feed, in another material, or on a spool another colour already prints from) says which. It checks a person's chosen spools against what is loaded now and maps painted slots; a sliced file's painted materials count when it chooses the feed. Each spool carries the filament profile `slice_stl` takes. An already-sliced file binds each filament to a nozzle, which the proposal can't read yet: on a dual-nozzle printer with both external spools, a mapping onto them is reported as `external-nozzle-unverified` instead of offered. Checked with mocked Bambu reports and fixture profile trees; not printed.
+
+### Changed
+
+- `get_printer_filaments` slots carry `label` ("A2", "AMS HT A", "External", "Right external", "Spool") and `filamentId`, and a Bambu slot's `name` is the spool as a person names it ("Sunflower Yellow PLA Basic", from Bambu Studio's `filaments_color_codes.json`) instead of the raw "PLA Basic PLA #FEC600". An AMS-HT slot's `id` is its unit id (`"128"`), the tray value `print_3mf` takes, instead of `ams_id × 4 + tray` (`"512"`).
+
 ## [1.2.36] – 2026-11-05
 
 ### Added

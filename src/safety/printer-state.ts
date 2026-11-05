@@ -4,7 +4,7 @@ import type { BambuClient } from "bambu-node";
 import { isDualNozzleModel, normalizeMaterial, normalizeModel } from "./limits.js";
 
 const MAX_REPORT_AGE_MS = 15_000;
-const MODEL_IDS: Record<string, string> = {
+export const MODEL_IDS: Record<string, string> = {
   O1C: "H2C", O1C2: "H2C", O1D: "H2D", O1E: "H2D Pro", O1S: "H2S", N6: "X2D",
   N2S: "A1", A1M: "A1 Mini", C11: "P1P", C12: "P1S", C13: "X1E", "BL-P001": "X1C", "BL-P002": "X1",
 };
