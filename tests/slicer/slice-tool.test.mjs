@@ -611,6 +611,15 @@ test("a designer's 3MF slices with its own process; strength never weakens it; a
   assert.equal((await sliceWith(designer, { quality: "fine" })).layer_height, "0.12", "a chosen quality still applies");
   assert.equal((await sliceWith(designer, { sparse_infill_density: "20%" })).sparse_infill_density, "20%", "an explicit value is written as given");
   assert.equal((await sliceWith(bare)).layer_height, "0.2", "a 3MF without its own process keeps the preset");
+  // get_slice_settings says which of the two slice_stl just did, so a client never reads the 3MF itself.
+  const settingsOf = async (file, extra = {}) => JSON.parse(text(await call("get_slice_settings", { source_path: file, ...extra })));
+  assert.equal((await settingsOf(designer)).own_process, true, "the designer's 3MF slices with its own process");
+  const machineOnly = path.join(install.root, "machine-only.3mf");
+  await fs.writeFile(machineOnly, await zipBytes({ "3D/3dmodel.model": model, "Metadata/project_settings.config": JSON.stringify({ printer_model: "Bambu Lab P1S" }) }));
+  assert.equal((await settingsOf(machineOnly)).own_process, false, "settings without a process slice with the preset");
+  assert.equal((await settingsOf(designer, { slicer_type: "prusaslicer" })).own_process, false, "PrusaSlicer never takes a 3MF's Bambu process");
+  assert.equal((await settingsOf(designer, { slicer_type: "orcaslicer" })).own_process, false, "generic OrcaSlicer keeps its own profile without a bambu_model");
+  assert.equal((await settingsOf(designer, { slicer_type: "orcaslicer", bambu_model: "p1s" })).own_process, true);
 });
 
 test("machine settings inside a template or process profile never replace the selected preset", async (t) => {
