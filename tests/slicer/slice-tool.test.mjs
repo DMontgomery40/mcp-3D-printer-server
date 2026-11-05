@@ -121,7 +121,9 @@ async function startServer(t, install, extraEnv = {}) {
     FILAMENT_PROFILE: "", SLICER_FILAMENT_PROFILE: "", BAMBU_MODEL: "", NOZZLE_DIAMETER: "", BAMBU_NOZZLE_TYPE: "",
     BAMBU_PROFILES_ROOT: "", BAMBU_SLICER_PROFILE_DIRS: "", BAMBU_TEMPLATE_3MF_PATH: "",
     BAMBU_TEMPLATE_DIR: path.join(install.root, "templates"), MCP_ALLOW_EXECUTABLE_ARG: "1",
-    TEMP_DIR: tempDir, ...extraEnv,
+    // This stand-in slicer changes behaviour through its mode file, not its bytes: slices are never reused here
+    // unless a test asks (src/slicer/slice-cache.ts).
+    TEMP_DIR: tempDir, SLICE_CACHE: "off", ...extraEnv,
   };
   // cwd outside the repo so a developer .env cannot change the configuration.
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER_ENTRY], cwd: install.root, env, stderr: "pipe" });
@@ -143,6 +145,35 @@ async function assertSliced(outputPath) {
 async function assertNotExecuted(install) {
   assert.equal(existsSync(path.join(install.root, "args.json")), false, "the slicer must not run when preparation fails");
 }
+
+// Slicing the same model the same way again reuses the kept slice: the slicer doesn't run, and the result,
+// Studio's result.json included, is the first slice's. A changed input slices again.
+test("slice_stl reuses an identical earlier slice, and slices again when an input changes", async (t) => {
+  const install = await createFakeInstall(t);
+  const cache = { SLICE_CACHE: "on", SLICE_CACHE_DIR: path.join(install.root, "cache") };
+  const model = path.join(install.root, "model.stl");
+  await fs.copyFile(SAMPLE_STL, model);
+  await install.setMode("studio:p1s-floating-cantilever.json");
+  const slice = async (extra = cache) => {
+    const { call } = await startServer(t, install, extra);
+    return call("slice_stl", { stl_path: model, bambu_model: "p1s", nozzle_diameter: "0.4" });
+  };
+  const ran = async () => { const yes = existsSync(install.capture); await install.resetCapture(); return yes; };
+  const first = await slice();
+  assert.equal(first.isError, undefined, text(first));
+  assert.equal(await ran(), true);
+  // A new server process (an MCP restart) still has it.
+  const again = await slice();
+  assert.equal(again.isError, undefined, text(again));
+  assert.equal(await ran(), false, "the slicer did not run again");
+  await assertSliced(again.structuredContent?.path ?? text(again));
+  assert.deepEqual(again.structuredContent?.slicer_result, first.structuredContent?.slicer_result, "Studio's words come back with it");
+  await fs.appendFile(model, " ");
+  assert.equal((await slice()).isError, undefined);
+  assert.equal(await ran(), true, "a changed model slices again");
+  assert.equal((await slice({ ...cache, SLICE_CACHE: "off" })).isError, undefined);
+  assert.equal(await ran(), true, "SLICE_CACHE=off always slices");
+});
 
 test("slice_stl never passes the raw inherited machine preset to the CLI (P1S regression)", async (t) => {
   const install = await createFakeInstall(t);
@@ -899,6 +930,9 @@ test("slice_stl returns Bambu Studio's result.json, warnings and errors included
   assert.equal(text(result), result.structuredContent.path);
   await assertSliced(result.structuredContent.path);
   assert.deepEqual(result.structuredContent.slicer_result, await studioResult("p1s-floating-cantilever.json"));
+  // Its verdict and words, so a client never reads result.json's format (Counterpart PRD §8.0 item 9).
+  assert.equal(result.structuredContent.slicer_report.failed, false);
+  assert.match(result.structuredContent.slicer_report.message, /floating cantilever/);
 
   // Studio's auto-orient failure: return code -100, exit 156, five empty-layer lines.
   const failed = await studioResult("p1s-empty-layers.json");
@@ -906,6 +940,8 @@ test("slice_stl returns Bambu Studio's result.json, warnings and errors included
   result = await slice();
   assert.equal(result.isError, true);
   assert.deepEqual(result.structuredContent.slicer_result, failed);
+  assert.equal(result.structuredContent.slicer_report.failed, true);
+  assert.ok(result.structuredContent.slicer_report.message.startsWith(failed.error_string));
   assert.ok(text(result).startsWith(`${failed.error_string}\n${failed.sliced_plates[0].warning_message.trim()}\n`), text(result));
   assert.match(text(result), /exited with code 156 \(bambustudio: [^)]*\): Failed slicing the model\./);
   assert.equal(result.structuredContent.slicer.phase, "execution");

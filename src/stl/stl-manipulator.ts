@@ -21,6 +21,7 @@ import {
   type BambuSliceOptions,
 } from '../slicer/bambu-cli.js';
 import { runSlicerProcess } from '../slicer/run-slicer.js';
+import { keepSlice, restoreSlice, sliceCacheKey } from '../slicer/slice-cache.js';
 import { SlicerError, asPreparationError } from '../slicer/slicer-error.js';
 import { customGcodesWithPauses, layerTops, machinePauseGcode, pausedLayers, readPlateGcode, readProjectCustomGcodes } from '../slicer/layer-pauses.js';
 
@@ -1369,11 +1370,21 @@ export class STLManipulator extends EventEmitter {
       }
       if (fs.existsSync(outputFilePath)) fs.rmSync(outputFilePath, { force: true });
 
-      if (progressCallback) progressCallback(20, `Executing slicer: ${slicerPath} ${args.join(' ')}`);
-      console.error(`Executing: ${slicerPath} ${args.join(' ')}`);
+      // The slice, kept for reuse: the same model sliced the same way again is restored, and every check below
+      // still runs on it (slice-cache.ts). The CLI routes write into a folder of their own; the others one file.
+      const cacheRun = { command: slicerPath, args, outputs: [bambuOutputDir ?? orcaOutputDir ?? outputFilePath] };
+      const cacheKey = await sliceCacheKey(cacheRun);
+      const restored = !!cacheKey && await restoreSlice(cacheKey, cacheRun);
+      if (restored) {
+        if (progressCallback) progressCallback(90, 'Reusing the same slice of this model');
+        console.error(`Reusing slice ${cacheKey} for: ${slicerPath} ${args.join(' ')}`);
+      } else {
+        if (progressCallback) progressCallback(20, `Executing slicer: ${slicerPath} ${args.join(' ')}`);
+        console.error(`Executing: ${slicerPath} ${args.join(' ')}`);
+      }
 
       const cliOutputDir = bambuOutputDir;
-      try {
+      if (!restored) try {
         await runSlicerProcess({
           command: slicerPath,
           args,
@@ -1401,13 +1412,15 @@ export class STLManipulator extends EventEmitter {
       if (!this.activeOperations.get(operationId)) {
         throw new SlicerError('execution', 'Slicing operation cancelled after process finished', { slicerType, slicerPath });
       }
-
+      // Kept only once its output has passed the checks, and before it moves out of the slicer's folder.
+      const keep = async () => { if (cacheKey && !restored) await keepSlice(cacheKey, cacheRun); };
       try {
         if (bambuExport) {
           if (!fs.existsSync(bambuExport.producedPath)) {
             throw new Error(`Slicer exited successfully but did not write ${bambuExport.producedPath}.`);
           }
           await assertSlicedProjectOutput(bambuExport.producedPath);
+          await keep();
           fs.mkdirSync(path.dirname(bambuExport.finalPath), { recursive: true });
           fs.renameSync(bambuExport.producedPath, bambuExport.finalPath);
         } else if (slicerType === 'orcaslicer') {
@@ -1415,12 +1428,14 @@ export class STLManipulator extends EventEmitter {
             throw new Error("Internal error: OrcaSlicer output directory was not initialized.");
           }
           const orcaGcodePath = this.resolveOrcaGcodeOutput(orcaOutputDir);
+          await keep();
           fs.renameSync(orcaGcodePath, outputFilePath);
         }
 
         if (!fs.existsSync(outputFilePath)) {
           throw new Error(`Slicer finished but output file not found: ${outputFilePath}`);
         }
+        if (!bambuExport && slicerType !== 'orcaslicer') await keep();
       } catch (error) {
         if (error instanceof SlicerError) throw error;
         throw new SlicerError('output', error instanceof Error ? error.message : String(error), { slicerType, slicerPath }, slicerResult);

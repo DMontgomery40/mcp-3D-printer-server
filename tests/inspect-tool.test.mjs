@@ -209,3 +209,25 @@ test('only a material-switch M620 (with S) starts the flush the preview leaves o
   const flush = extrusionSegments('G90\nM83\n; FEATURE: Outer wall\nG1 X10 Y10\nG1 X20 Y10 E1\nM620 S1A\nT1\nG1 X-20 Y200 E30\nM621 S1A\nG1 X20 Y10\nG1 X20 Y20 E1\n').segments;
   assert.equal(flush.length, 2, 'the flush between M620 S1A and M621 S1A is left out');
 });
+
+// What a client shows about the sliced file comes from here (Counterpart PRD §8.0 item 9): the plate's estimate
+// and slice settings, and the file's plate count, so no client parses slice_info.config or G-code headers.
+test('inspect_print_file reports the plate estimate, slice settings and plate count of the exact file', async t => {
+  const s = await server(t);
+  const plate = header() + '; total layer number: 183\nM104 S220\nM140 S60\nG1 X20 Y20 E1\n';
+  const info = '<config><plate><metadata key="index" value="1"/><metadata key="prediction" value="3420"/><metadata key="weight" value="19.20"/></plate>'
+    + '<plate><metadata key="index" value="2"/><metadata key="prediction" value="60"/><metadata key="weight" value="1"/></plate></config>';
+  const f = await archive(s, {
+    'Metadata/plate_1.gcode': plate, 'Metadata/plate_2.gcode': plate, 'Metadata/slice_info.config': info,
+    'Metadata/project_settings.config': { layer_height: '0.12', sparse_infill_density: '25%', wall_loops: '4' },
+  });
+  const r = s.decode(await s.call({ file_path: f.path, bambu_model: 'p1s', plate_index: 0 }));
+  assert.deepEqual(r.sliced, { plate_count: 2, estimate: { seconds: 3420, grams: 19.2 },
+    settings: { layer_height_mm: 0.12, sparse_infill_percent: 25, wall_loops: 4, layer_count: 183 } });
+  assert.deepEqual(s.decode(await s.call({ file_path: f.path, bambu_model: 'p1s', plate_index: 1 })).sliced.estimate, { seconds: 60, grams: 1 });
+  // A G-code file: its own header and footer comments, one plate, no estimate it doesn't state.
+  const g = await raw(s, header() + '; layer_height = 0.2\n; sparse_infill_density = 15%\n; wall_loops = 2\nM104 S220\nM140 S60\nG1 X20 Y20 E1\n', 'plain.gcode');
+  assert.deepEqual(s.decode(await s.call({ file_path: g.path, bambu_model: 'p1s' })).sliced,
+    { plate_count: 1, settings: { layer_height_mm: 0.2, sparse_infill_percent: 15, wall_loops: 2 } });
+  await assert.rejects(access(s.networkLog), { code: 'ENOENT' });
+});

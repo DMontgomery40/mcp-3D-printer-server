@@ -69,3 +69,57 @@ test("annotations follow what each tool does", () => {
     is(name, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
   }
 });
+
+// Counterpart's remote endpoint (/v1/mcp) offers tools to paired devices by what this server declares in
+// _meta["counterpart/remote"]: the least scope for each tool, and which arguments its configuration chooses.
+test('every listed tool declares its remote scope, and the arguments its configuration chooses', async t => {
+  const { REMOTE_SCOPES, CONFIG_ARGUMENTS } = await import('../dist/counterpart/remote.js');
+  const tools = await listedTools(t);
+  const SCOPES = ['read', 'design', 'control', 'print', 'raw'];
+  const KINDS = ['config', 'config-top', 'path', 'output'];
+  const byName = {};
+  for (const tool of tools) {
+    const declared = tool._meta?.['counterpart/remote'];
+    assert.ok(declared, `${tool.name} has no remote declaration`);
+    assert.ok(SCOPES.includes(declared.scope), `${tool.name} scope ${declared.scope}`);
+    const properties = new Set();
+    const visit = schema => { for (const [key, child] of Object.entries(schema?.properties ?? {})) { properties.add(key); visit(child); } if (schema?.items) visit(schema.items); };
+    visit(tool.inputSchema);
+    for (const [key, kind] of Object.entries(declared.arguments ?? {})) {
+      assert.ok(KINDS.includes(kind), `${tool.name}.${key}: ${kind}`);
+      // Configuration names may be declared for an open object the tool forwards; anything else is one of its arguments.
+      assert.ok(properties.has(key) || (kind === 'config' && CONFIG_ARGUMENTS.has(key)), `${tool.name} declares ${key}, which it does not take`);
+    }
+    // Every configuration name the tool takes is declared, at any depth.
+    for (const key of properties) if (CONFIG_ARGUMENTS.has(key) && !(key === 'route' && tool.name === 'counterpart_print_route'))
+      assert.equal(declared.arguments?.[key], 'config', `${tool.name}.${key}`);
+    for (const [key, scope] of Object.entries(declared.raisedBy ?? {})) {
+      assert.ok(properties.has(key), `${tool.name} is raised by ${key}, which it does not take`);
+      assert.ok(SCOPES.indexOf(scope) > SCOPES.indexOf(declared.scope), `${tool.name}.${key} raises its scope`);
+    }
+    // Name floors: whatever the table says, these kinds of tool are never offered below them.
+    const at = scope => assert.ok(SCOPES.indexOf(declared.scope) >= SCOPES.indexOf(scope), `${tool.name} is ${declared.scope}, below ${scope}`);
+    if (/_call$|_rpc$|gcode|native_control|^blender_mcp_edit_model$/.test(tool.name)) at('raw');
+    else if (/^(?:upload_|start_|print_|delete_|process_and_print)/.test(tool.name)) at('print');
+    else if (/^(?:set_|clear_|pause_|resume_|cancel_|skip_|reread_)/.test(tool.name)) at('control');
+    // A tool that writes anything is never read.
+    if (!tool.annotations.readOnlyHint && declared.scope === 'read')
+      assert.ok(['camera_snapshot', 'blender_mcp_status', 'fusion_mcp_status'].includes(tool.name), `${tool.name} changes something but is read`);
+    byName[tool.name] = declared;
+  }
+  assert.deepEqual(Object.keys(REMOTE_SCOPES).sort(), tools.map(tool => tool.name).sort(), 'the scope table names exactly the listed tools');
+  for (const tool of tools) for (const key of ["host", "port", "api_key", "bambu_serial", "bambu_token"])
+    if (tool.inputSchema?.properties?.[key]) assert.equal(byName[tool.name].arguments?.[key], 'config', `${tool.name}.${key}`);
+  for (const name of ['print_3mf', 'start_print']) assert.equal(byName[name].scope, 'print', name);
+  for (const name of ['pause_print', 'resume_print', 'cancel_print']) assert.equal(byName[name].scope, 'control', name);
+  for (const name of ['blender_mcp_call', 'fusion_mcp_call', 'save_template']) assert.equal(byName[name].scope, 'raw', name);
+  // Another server's tool arguments may carry anything: configuration names inside them are declared too.
+  assert.equal(byName.blender_mcp_call.arguments.password, 'config');
+  assert.deepEqual(byName.fusion_mcp_status.raisedBy, { launch: 'design' });
+  assert.deepEqual(byName.blender_mcp_status.raisedBy, { connect: 'design' });
+  assert.equal(byName.slice_stl.arguments.stl_path, 'path');
+  assert.equal(byName.camera_snapshot.arguments.save_path, 'output');
+  assert.equal(byName.counterpart_print_route.arguments?.route, undefined, 'the route tool takes route from the caller');
+  // The printer type is chosen by the configuration as a top-level argument only.
+  assert.equal(byName.get_printer_status.arguments.type, 'config-top');
+});

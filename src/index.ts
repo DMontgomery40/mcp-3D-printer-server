@@ -43,6 +43,17 @@ import { isBambuProjectSlicer, usesBambuCli } from "./slicer/capabilities.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
 import { annotateTools } from "./tool-annotations.js";
+import { withRemote } from "./counterpart/remote.js";
+import { slicedFileFacts, slicerReport } from "./counterpart/sliced-file.js";
+
+/** The slicer's verdict beside its result.json (`slicer_report`). */
+function reportOf(result: unknown): { slicer_report?: ReturnType<typeof slicerReport> } {
+  const report = slicerReport(result);
+  return report ? { slicer_report: report } : {};
+}
+function withSlicerReport<T extends { slicer_result?: unknown }>(sliced: T): T & { slicer_report?: ReturnType<typeof slicerReport> } {
+  return { ...sliced, ...reportOf(sliced.slicer_result) };
+}
 import {
   CAMERA_SNAPSHOT_OUTPUT_SCHEMA,
   CONTROL_OUTPUT_SCHEMA,
@@ -2564,7 +2575,7 @@ class ThreeDPrinterMCPServer {
             },
             outputSchema: FUSION_EXPORT_OUTPUT_SCHEMA,
           }
-        ])
+        ]).map(withRemote)
       };
     });
 
@@ -2746,6 +2757,8 @@ class ThreeDPrinterMCPServer {
                 artifact: { sha256: inspection.sha256, byte_length: byteLength, file_format: path.extname(snapshot).toLowerCase() === ".3mf" ? "3mf" : "gcode" },
                 selection: { bambu_model: model, plate_index: plateIndex, ...(nozzles === undefined ? {} : { nozzle_diameters: nozzles }), ...(bedType === undefined ? {} : { bed_type: bedType }) },
                 inspection,
+                // The plate's estimate and slice settings, and the file's plate count, read here so clients don't parse slicer files.
+                sliced: await slicedFileFacts(snapshot, plateIndex),
                 ...(preview ? { preview } : {}),
               };
             });
@@ -2838,8 +2851,9 @@ class ThreeDPrinterMCPServer {
             
           case "slice_stl": {
             const sliced = await this.runSliceTool("slice_stl", args as Record<string, unknown> | undefined);
-            // The text stays the sliced file's path; slicer_result is the slicer's own result.json, verbatim.
-            return { content: [{ type: "text", text: sliced.path }], structuredContent: sliced };
+            // The text stays the sliced file's path; slicer_result is the slicer's own result.json, verbatim, and
+            // slicer_report its verdict and words, so clients don't read the slicer's format.
+            return { content: [{ type: "text", text: sliced.path }], structuredContent: withSlicerReport(sliced) };
           }
 
           case "slice_with_template":
@@ -3725,7 +3739,7 @@ class ThreeDPrinterMCPServer {
         message,
         tool,
         slicer: { phase: error.phase, ...error.details },
-        ...(error.slicerResult ? { slicer_result: error.slicerResult } : {}),
+        ...(error.slicerResult ? { slicer_result: error.slicerResult, ...reportOf(error.slicerResult) } : {}),
       };
     }
     if (SLICING_TOOLS.has(tool)) {
