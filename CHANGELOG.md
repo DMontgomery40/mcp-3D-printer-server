@@ -8,7 +8,7 @@
 
 ### Changed
 
-- `get_slice_settings` on a 3MF with no slicer settings returns `raw_key_count` 0 (and no `extracted_settings_path`) instead of an error, so a client can tell a file with no settings to keep from one that couldn't be read. A file that isn't a readable 3MF, or whose settings file is there but can't be parsed, is still an error. Counterpart refuses an edit of a designer's 3MF when it can't read the designer's settings, and needs this to allow edits of a 3MF that has none.
+- `get_slice_settings` on a 3MF with no slicer settings returns `raw_key_count` 0 (and no `extracted_settings_path`) instead of an error, so a client can tell a file with no settings to keep from one that couldn't be read. A file that isn't a readable 3MF, or whose settings file is there but can't be parsed, is still an error. A PrusaSlicer project's `Metadata/Slic3r_PE.config` is now read like bambu-printer-mcp reads it, so its settings are reported instead of refused. Counterpart refuses an edit of a designer's 3MF when it can't read the designer's settings, and needs this to allow edits of a 3MF that has none.
 
 ## [1.2.37] – 2026-11-05
 

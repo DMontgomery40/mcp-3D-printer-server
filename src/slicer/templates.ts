@@ -13,7 +13,7 @@ import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import JSZip from "jszip";
-import { parse3MF } from "../3mf_parser.js";
+import { parse3MF, SLICER_SETTINGS_FILES } from "../3mf_parser.js";
 
 export type TemplateSourceType = "3mf" | "json" | "config";
 
@@ -174,14 +174,6 @@ export async function withExtractedSettingsCleanup<T>(operation: () => Promise<T
     await Promise.all(dirs.map(dir => fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)));
   }
 }
-
-/** The files a 3MF's slicer settings are read from, first found wins (as parse3MF reads them). */
-const SLICER_SETTINGS_FILES = [
-  "Metadata/project_settings.config",
-  "Metadata/Slic3r_PE.config",
-  "Metadata/model_settings.config",
-  "Metadata/slice_info.config",
-];
 
 /** Whether a 3MF carries a slicer settings file at all (readable or not). */
 export async function hasSlicerSettingsFile(filePath: string): Promise<boolean> {
