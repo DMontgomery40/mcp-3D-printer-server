@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.35] – 2026-11-05
+
+### Added
+
+- `get_slice_settings` on a 3MF returns `own_process`: true when `slice_stl`, given the same `slicer_type` and `bambu_model` (both now accepted here) and no `slicer_profile` or template, slices that file with its own process (a designer's Bambu Studio or Orca project). It is the same test `slice_stl` uses, so a client can show that a designer's file prints with the designer's settings, and leave quality and strength at standard, without reading the 3MF itself. Counterpart's print sheet carried the last print's quality and strength over to a copy of a designer's 3MF, where they changed its layer height, walls or infill. Checked with a stand-in slicer.
+
+### Fixed
+
+- 1.2.34's notes omitted one change it shipped: the preview leaves out filament-change flushing only between a material-switch `M620 S…` and its `M621 S…`, so setup forms such as the H2C start template's `M620 O1` don't hide the part.
+
 ## [1.2.34] – 2026-11-05
 
 ### Added

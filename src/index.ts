@@ -209,6 +209,15 @@ function defaultBambuStudioPath(): string {
   );
 }
 
+/**
+ * A designer's 3MF slices with its own process: a Bambu-compatible CLI, a call that names no slicer_profile or
+ * template, and a 3MF that carries a process. slice_stl, print_3mf's auto-slice and get_slice_settings' own_process
+ * all ask this, so what get_slice_settings reports is what slicing does.
+ */
+async function slicesWithOwnProcess(modelPath: string, bambuCli: boolean, namesProfileOrTemplate: boolean): Promise<boolean> {
+  return bambuCli && !namesProfileOrTemplate && modelPath.toLowerCase().endsWith(".3mf") && await hasBambuProjectSettings(modelPath);
+}
+
 const DEFAULT_SLICER_TYPE = normalizeSlicerType(
   // Bambu Studio for Bambu printers, as in bambu-printer-mcp: FULU OrcaSlicer-bambulab v1.0.0's CLI
   // segfaults on every slice (FULU #56/#57 open), so it is chosen explicitly, not by default.
@@ -975,8 +984,7 @@ class ThreeDPrinterMCPServer {
     // A 3MF that carries its own process (a designer's project) slices with it: a configured default
     // profile or template must not replace the designer's layer height, walls and infill. The machine
     // still comes from bambu_model and nozzle_diameter.
-    const ownProcess = bambuCli && !explicitProfile && !requestedTemplate && String(args.stl_path).toLowerCase().endsWith(".3mf")
-      && await hasBambuProjectSettings(String(args.stl_path)) ? String(args.stl_path) : undefined;
+    const ownProcess = await slicesWithOwnProcess(String(args.stl_path), bambuCli, !!explicitProfile || !!requestedTemplate) ? String(args.stl_path) : undefined;
     const templatePath = ownProcess || requestedTemplate || (bambuCli && DEFAULT_TEMPLATE_3MF_PATH ? DEFAULT_TEMPLATE_3MF_PATH : undefined);
     if (!slicerProfile && templatePath) {
       if (!fs.existsSync(templatePath)) {
@@ -1789,11 +1797,13 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "get_slice_settings",
-            description: "Inspect slicer settings in a 3MF template or JSON/config profile without slicing (layer height, infill, walls, supports, brim, bed, printer, filaments).",
+            description: "Inspect slicer settings in a 3MF template or JSON/config profile without slicing (layer height, infill, walls, supports, brim, bed, printer, filaments). For a 3MF, own_process is true when slice_stl, given the same slicer_type and bambu_model and no slicer_profile or template, slices it with the process the file carries (a designer's Bambu Studio or Orca project).",
             inputSchema: {
               type: "object",
               properties: {
                 source_path: { type: "string", description: "Path to a 3MF, extracted project_settings.config, or slicer profile JSON." },
+                slicer_type: { type: "string", description: "The slicer_type slice_stl would be given, for own_process. Defaults to SLICER_TYPE." },
+                bambu_model: { type: "string", description: "The bambu_model slice_stl would be given, for own_process." },
                 template_name: { type: "string", description: "Named template from the local registry; used when source_path is omitted." },
                 template_dir: { type: "string", description: "Template directory override when resolving template_name." }
               }
@@ -2737,6 +2747,12 @@ class ThreeDPrinterMCPServer {
                   ["3mf", "json", "config"]
                 )!;
             result = await inspectSliceSettings(settingsSource, TEMP_DIR);
+            if (result.source_type === "3mf") {
+              // What slice_stl does with this slicer_type and bambu_model and no slicer_profile or template.
+              const slicerType = normalizeSlicerType(String(args?.slicer_type || DEFAULT_SLICER_TYPE));
+              const bambuModel = typeof args?.bambu_model === "string" && args.bambu_model.trim() !== "";
+              result = { ...result, own_process: await slicesWithOwnProcess(settingsSource, usesBambuCli(slicerType, bambuModel), false) };
+            }
             break;
           }
 
@@ -3134,7 +3150,7 @@ class ThreeDPrinterMCPServer {
                 console.error(`3MF has no gcode — auto-slicing with ${slicerType} for ${printModel}`);
                 // A designer's project slices with its own process unless the call names a profile.
                 const explicitPrintProfile = typeof args?.slicer_profile === "string" && args.slicer_profile.trim().length > 0;
-                const printProfile = !explicitPrintProfile && usesBambuCli(slicerType, true) && await hasBambuProjectSettings(threeMFPath)
+                const printProfile = await slicesWithOwnProcess(threeMFPath, usesBambuCli(slicerType, true), explicitPrintProfile)
                   ? await resolveTemplateSlicerProfilePath(threeMFPath, path.join(TEMP_DIR, "templates"))
                   : slicerProfile || undefined;
                 threeMFPath = await this.stlManipulator.sliceSTL(
