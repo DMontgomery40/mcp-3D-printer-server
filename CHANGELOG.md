@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.41] – 2026-11-05
+
+### Changed
+
+- `get_slice_settings`' `own_process` answers for the slice a client would make. With `source_path`, the call also takes that slice's `slicer_profile`, `template_name` (its template), `template_3mf_path`, `layer_height`, `wall_loops`, `sparse_infill_density`, `enable_support`, `support_type`, `quality` and `strength`, as `slice_stl` takes them, with `slicer_type` and `bambu_model` as before. `own_process` is true only when that slice prints the process the 3MF carries, unchanged: a named profile or template replaces it, and an explicit value or a quality or strength other than standard changes it. Clients then pass their own configuration through instead of deciding which settings replace a designer's process. Checked with a stand-in slicer.
+
 ## [1.2.40] – 2026-11-05
 
 ### Fixed
