@@ -158,3 +158,19 @@ test("include_preview draws the exact file's G-code, never its thumbnails (the N
   const bare = await archive(s, { 'Metadata/plate_1.gcode': job(true) });
   assert.ok((await inspect(bare.path, { include_preview: true })).preview, 'a sliced file with no thumbnails still previews');
 });
+
+test('the preview reads PrusaSlicer/Cura ;TYPE: features, full and radius arcs, and skips Bambu filament-change flushing', async () => {
+  const { extrusionSegments } = await import('../dist/safety/print-preview.js');
+  const prusa = extrusionSegments('G90\nM83\n;TYPE:Custom\nG1 X0 Y0 E5\n;TYPE:External perimeter\nG1 X10 Y10\nG1 X20 Y10 E1\n');
+  assert.equal(prusa.segments.length, 1, 'PrusaSlicer features are read; its start-up purge is not drawn');
+  const bare = extrusionSegments('G90\nM83\nG1 X10 Y10\nG1 X20 Y10 E1\n');
+  assert.equal(bare.segments.length, 1, 'G-code naming no features is drawn whole');
+  const circle = extrusionSegments('G90\nM83\n; FEATURE: Outer wall\nG1 X20 Y10\nG2 X20 Y10 I-10 J0 E3\n').segments;
+  const xs = circle.map(s => s.x1);
+  assert.ok(circle.length > 10 && Math.min(...xs) < 1 && Math.max(...xs) > 19, 'a full-circle arc is drawn round');
+  const radius = extrusionSegments('G90\nM83\n; FEATURE: Outer wall\nG1 X0 Y0\nG3 X10 Y0 R5 E1\n').segments;
+  assert.ok(radius.length > 2 && Math.min(...radius.map(s => s.y1)) < -4, 'a radius arc bulges, it is not a straight line');
+  const flush = extrusionSegments('G90\nM83\n; FEATURE: Outer wall\nG1 X10 Y10\nG1 X20 Y10 E1\nM620 S1A\nT1\nG1 X-20 Y200 E30\nM621 S1A\nG1 X20 Y10\nG1 X20 Y20 E1\n').segments;
+  assert.deepEqual(flush.map(s => s.tool), [0, 1], 'the flush inside M620..M621 is not part of the print; the next filament is');
+  assert.ok(flush.every(s => s.x0 >= 0 && s.x1 >= 0));
+});

@@ -2,7 +2,9 @@
  * A picture of what the printer will lay down, drawn from the exact sliced G-code (never from a
  * thumbnail: Bambu Studio's CLI copies a project's old plate PNGs into the sliced file unchanged).
  * Every extruding move on the selected plate is drawn in its filament's colour, except the slicer's
- * start-up purge and prime lines (feature "Custom"). Two views: the top as it sits on the bed, and
+ * start-up purge and prime lines (feature "Custom") and Bambu's filament-change flushing (between
+ * M620 and M621). Features are read from Bambu Studio/Orca "; FEATURE:" and PrusaSlicer/Cura ";TYPE:"
+ * comments; G-code with neither is drawn whole. Two views: the top as it sits on the bed, and
  * the bed side as you see it after turning the part over toward you (top to bottom), so text on
  * that face reads as it will.
  * Deterministic: the same bytes always give the same pictures.
@@ -66,17 +68,18 @@ export function encodePng(width: number, height: number, rgb: Uint8Array): Buffe
 
 interface Segment { x0: number; y0: number; x1: number; y1: number; z: number; tool: number; width: number }
 
-/** Extruding moves of one plate's G-code, start-up purge excluded. */
+/** Extruding moves of one plate's G-code, start-up purge and filament-change flushing excluded. */
 export function extrusionSegments(gcode: string): { segments: Segment[]; layers: number } {
-  const segments: Segment[] = [];
+  const marked: Segment[] = [], unmarked: Segment[] = [];
   let x = 0, y = 0, z = 0, e = 0, absoluteXY = true, relativeE = false, tool = 0, feature = "", layers = 0, width = 0.42;
+  let sawFeature = false, changingFilament = false;
   const lines = gcode.split(/\r\n|\n|\r/);
   for (const raw of lines) {
     const comment = raw.indexOf(";");
     if (comment >= 0) {
       const note = raw.slice(comment + 1).trim();
-      const featureMatch = /^FEATURE:\s*(.*)$/i.exec(note);
-      if (featureMatch) feature = featureMatch[1].trim().toLowerCase();
+      const featureMatch = /^(?:FEATURE|TYPE)\s*:\s*(.*)$/i.exec(note);
+      if (featureMatch) { feature = featureMatch[1].trim().toLowerCase(); sawFeature = true; }
       else if (/^(CHANGE_LAYER|LAYER_CHANGE)$/i.test(note)) layers++;
       else { const w = /^(?:LINE_WIDTH|WIDTH)\s*:\s*([\d.]+)/i.exec(note); if (w && Number(w[1]) > 0 && Number(w[1]) < 5) width = Number(w[1]); }
     }
@@ -85,6 +88,9 @@ export function extrusionSegments(gcode: string): { segments: Segment[]; layers:
     const word = line.split(/\s+/)[0];
     const toolMatch = /^T(\d+)$/.exec(word);
     if (toolMatch) { const t = Number(toolMatch[1]); if (t < 255) tool = t; continue; }
+    // Bambu's AMS filament change (cut, retract, flush into the chute) runs from M620 to M621: not the part.
+    if (word === "M620") { changingFilament = true; continue; }
+    if (word === "M621") { changingFilament = false; continue; }
     if (word === "G90") { absoluteXY = true; continue; }
     if (word === "G91") { absoluteXY = false; continue; }
     if (word === "M82") { relativeE = false; continue; }
@@ -102,10 +108,13 @@ export function extrusionSegments(gcode: string): { segments: Segment[]; layers:
       e = relativeE ? e + ne : ne;
       extruding = delta > 0 && word !== "G0";
     }
-    if (extruding && feature && feature !== "custom" && (tx !== x || ty !== y)) {
-      if ((word === "G2" || word === "G3") && (value("I") !== undefined || value("J") !== undefined)) {
-        // Arc: centre at the current point plus I/J, swept clockwise (G2) or counter-clockwise (G3).
-        const cx = x + (value("I") ?? 0), cy = y + (value("J") ?? 0);
+    const arc = word === "G2" || word === "G3";
+    const centre = arc ? arcCentre(x, y, tx, ty, word === "G2", value("I"), value("J"), value("R")) : undefined;
+    const segments = feature ? marked : unmarked;
+    if (extruding && !changingFilament && feature !== "custom" && (tx !== x || ty !== y || centre)) {
+      if (centre) {
+        // Arc about its centre, swept clockwise (G2) or counter-clockwise (G3); the same end point is a full circle.
+        const [cx, cy] = centre;
         const r = Math.hypot(x - cx, y - cy);
         let a0 = Math.atan2(y - cy, x - cx), a1 = Math.atan2(ty - cy, tx - cx);
         if (word === "G2") { while (a1 >= a0) a1 -= 2 * Math.PI; } else { while (a1 <= a0) a1 += 2 * Math.PI; }
@@ -121,7 +130,21 @@ export function extrusionSegments(gcode: string): { segments: Segment[]; layers:
     }
     x = tx; y = ty;
   }
-  return { segments, layers };
+  // G-code that names no features at all is drawn whole rather than not at all.
+  return { segments: sawFeature ? marked : unmarked, layers };
+}
+
+/** An arc's centre from I/J (offsets from the start) or R (radius; negative takes the longer way round). */
+function arcCentre(x: number, y: number, tx: number, ty: number, clockwise: boolean, i?: number, j?: number, r?: number): [number, number] | undefined {
+  if (i !== undefined || j !== undefined) return [x + (i ?? 0), y + (j ?? 0)];
+  if (r === undefined || r === 0 || (tx === x && ty === y)) return undefined;
+  const dx = tx - x, dy = ty - y, chord = Math.hypot(dx, dy);
+  if (chord > 2 * Math.abs(r) + 1e-9) return undefined;
+  const h = Math.sqrt(Math.max(0, r * r - (chord / 2) ** 2));
+  const mx = (x + tx) / 2, my = (y + ty) / 2;
+  // Which side of the chord the centre lies on: clockwise short arcs keep it to the right of the travel.
+  const side = (clockwise ? -1 : 1) * (r > 0 ? 1 : -1);
+  return [mx - side * h * dy / chord, my + side * h * dx / chord];
 }
 
 /** The top and bed-side pictures of one plate's G-code. `colours` are the project's filament colours by slot. */
