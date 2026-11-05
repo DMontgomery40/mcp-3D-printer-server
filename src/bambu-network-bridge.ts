@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -181,6 +181,108 @@ export function defaultBambuNetworkConfigDir(): string {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * FULU's Linux host run in a Docker image (BAMBU_NETWORK_BRIDGE_IMAGE), for a Mac or any machine without the
+ * x86-64 Linux runtime installed natively. The image holds FULU's host runtime in /fulu (pjarczak_bambu_linux_host
+ * and ca-certificates.crt) and the networking plug-in in /plugins (libbambu_networking.so, libBambuSource.so).
+ */
+export type BridgeContainer = {
+  image: string;
+  docker: string;
+  dockerHost?: string;
+  /** A Colima profile started (never stopped or restarted) when Docker doesn't answer. */
+  colima?: { executable: string; profile: string; home?: string };
+};
+
+export function bridgeContainer(env: NodeJS.ProcessEnv = process.env): BridgeContainer | undefined {
+  const image = trimEnv(env.BAMBU_NETWORK_BRIDGE_IMAGE);
+  if (!image) return undefined;
+  const dockerHost = trimEnv(env.BAMBU_NETWORK_BRIDGE_DOCKER_HOST);
+  const profile = trimEnv(env.BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE);
+  const home = trimEnv(env.BAMBU_NETWORK_BRIDGE_COLIMA_HOME);
+  return {
+    image,
+    docker: trimEnv(env.BAMBU_NETWORK_BRIDGE_DOCKER) || "docker",
+    ...(dockerHost ? { dockerHost } : {}),
+    ...(profile ? { colima: { executable: trimEnv(env.BAMBU_NETWORK_BRIDGE_COLIMA) || "colima", profile, ...(home ? { home } : {}) } } : {}),
+  };
+}
+
+/** The image's fixed layout: FULU's runtime and the networking plug-in, with the CA bundle cloud calls need. */
+const CONTAINER_ENV = [
+  "LD_LIBRARY_PATH=/plugins:/fulu",
+  "SSL_CERT_FILE=/fulu/ca-certificates.crt",
+  "CURL_CA_BUNDLE=/fulu/ca-certificates.crt",
+  "SSL_CERT_DIR=/etc/ssl/certs",
+  "PJARCZAK_BAMBU_PLUGIN_DIR=/plugins",
+  "PJARCZAK_BAMBU_NETWORK_SO=/plugins/libbambu_networking.so",
+  "PJARCZAK_BAMBU_SOURCE_SO=/plugins/libBambuSource.so",
+];
+/** Set by the server for the host (country, expected network version): passed into the container from its env. */
+const CONTAINER_PASSED_ENV = ["PJARCZAK_BAMBU_COUNTRY_CODE", "PJARCZAK_EXPECTED_BAMBU_NETWORK_VERSION"];
+
+/**
+ * The folders the host must see at the same absolute paths: the agent's config folder (the plug-in writes its
+ * logs and session there; a host given a log_dir it can't open aborts, FULU #54), the certificate folder, and
+ * this server's temporary folder, where every print's checked snapshot is written.
+ */
+export function bridgeContainerMounts(configDir: string, env: NodeJS.ProcessEnv = process.env, tmpDir = os.tmpdir()): string[] {
+  fs.mkdirSync(configDir, { recursive: true });
+  const real = (dir: string) => { try { return fs.realpathSync(dir); } catch { return path.resolve(dir); } };
+  const folders = [real(configDir), real(tmpDir)];
+  const certDir = trimEnv(env.BAMBU_NETWORK_CERT_DIR);
+  if (certDir) folders.push(real(certDir));
+  const unique = [...new Set(folders)].filter((dir, _i, all) => !all.some(other => other !== dir && dir.startsWith(other + path.sep)));
+  for (const dir of unique) {
+    if (dir.includes(":")) throw new Error(`The FULU container can't mount ${dir}: Docker volume paths can't contain ':'. Move that folder.`);
+  }
+  return unique;
+}
+
+/** docker run for the host: stdin/stdout are the bridge's framed protocol; the host is piped through cat (FULU #50). */
+export function bridgeContainerArgs(container: BridgeContainer, mounts: string[]): string[] {
+  return [
+    ...(container.dockerHost ? ["--host", container.dockerHost] : []),
+    "run", "--rm", "-i", "--platform", "linux/amd64", "--network", "host", "--log-driver=none", "--workdir", "/plugins",
+    ...mounts.flatMap(dir => ["-v", `${dir}:${dir}:rw`]),
+    ...CONTAINER_ENV.flatMap(value => ["-e", value]),
+    ...CONTAINER_PASSED_ENV.flatMap(name => ["-e", name]),
+    container.image,
+    "/bin/sh", "-c", "/fulu/pjarczak_bambu_linux_host | cat",
+  ];
+}
+
+const execFileText = (file: string, args: string[], options: { env?: NodeJS.ProcessEnv; timeout: number }) =>
+  new Promise<void>((resolve, reject) => {
+    execFile(file, args, { env: options.env ?? process.env, timeout: options.timeout, maxBuffer: 1024 * 1024 }, (error, _stdout, stderr) => {
+      if (error) reject(Object.assign(error, { stderr: String(stderr ?? "") }));
+      else resolve();
+    });
+  });
+
+/**
+ * Docker must answer before the host starts. When it doesn't and a Colima profile is configured, that profile is
+ * started without changing Docker's global context; a running profile is never stopped or restarted.
+ */
+export async function ensureBridgeContainerRuntime(container: BridgeContainer, timeouts = { infoMs: 20_000, startMs: 600_000 }): Promise<void> {
+  const info = () => execFileText(container.docker, [...(container.dockerHost ? ["--host", container.dockerHost] : []), "info"], { timeout: timeouts.infoMs });
+  try { await info(); return; } catch (error) {
+    if (!container.colima) {
+      throw new Error(`Docker didn't answer (${container.docker}${container.dockerHost ? ` --host ${container.dockerHost}` : ""} info), so the FULU container can't start. Start Docker, or set BAMBU_NETWORK_BRIDGE_COLIMA_PROFILE.`);
+    }
+  }
+  const { executable, profile, home } = container.colima!;
+  try {
+    await execFileText(executable, ["start", "--profile", profile, "--activate=false"], { env: { ...process.env, ...(home ? { COLIMA_HOME: home } : {}) }, timeout: timeouts.startMs });
+  } catch (error) {
+    const detail = String((error as { stderr?: string }).stderr ?? "").trim().split("\n").slice(-3).join(" ");
+    throw new Error(`Colima profile ${profile} didn't start for the FULU container${detail ? `: ${detail}` : "."}`);
+  }
+  try { await info(); } catch {
+    throw new Error(`Colima profile ${profile} started, but Docker still doesn't answer at ${container.dockerHost ?? "its default host"}.`);
+  }
 }
 
 function trimEnv(value: string | undefined): string | undefined {
@@ -366,14 +468,24 @@ export class BambuNetworkBridge {
    */
   private localSessionTail: Promise<void> = Promise.resolve();
 
-  resolveBridgeCommand(override?: string): string {
+  resolveBridgeCommand(override?: string, configDir?: string): string {
+    if (this.explicitBridgeCommand(override)) return this.explicitBridgeCommand(override);
+    // A configured Docker image comes before a discovered local FULU install.
+    const container = bridgeContainer();
+    if (container) {
+      const mounts = bridgeContainerMounts(this.resolveConfigDir(configDir));
+      return [container.docker, ...bridgeContainerArgs(container, mounts)].map(shellQuote).join(" ");
+    }
+    return discoveredFuluBridgeCommand() || "";
+  }
+
+  private explicitBridgeCommand(override?: string): string {
     return (
       trimEnv(override) ||
       trimEnv(process.env.BAMBU_NETWORK_BRIDGE_COMMAND) ||
       trimEnv(process.env.FULU_BAMBU_NETWORK_BRIDGE_COMMAND) ||
       trimEnv(process.env.PJARCZAK_BAMBU_BRIDGE_COMMAND) ||
       trimEnv(process.env.FULU_BAMBU_BRIDGE_COMMAND) ||
-      discoveredFuluBridgeCommand() ||
       ""
     );
   }
@@ -397,7 +509,7 @@ export class BambuNetworkBridge {
   }
 
   getStatus(options: BambuNetworkBridgeOptions = {}): BambuNetworkBridgeStatus {
-    const command = this.resolveBridgeCommand(options.bridgeCommand);
+    const command = this.resolveBridgeCommand(options.bridgeCommand, options.configDir);
     const configDir = this.resolveConfigDir(options.configDir);
     const countryCode = this.resolveCountryCode(options.countryCode);
 
@@ -428,7 +540,7 @@ export class BambuNetworkBridge {
       runtime,
       note: command
         ? undefined
-        : "Set BAMBU_NETWORK_BRIDGE_COMMAND to the FULU OrcaSlicer-bambulab Linux host or macOS/WSL wrapper command.",
+        : "Set BAMBU_NETWORK_BRIDGE_COMMAND to the FULU OrcaSlicer-bambulab Linux host or macOS/WSL wrapper command, or BAMBU_NETWORK_BRIDGE_IMAGE to a Docker image holding FULU's Linux host.",
     };
   }
 
@@ -437,7 +549,7 @@ export class BambuNetworkBridge {
       throw new Error("BambuNetwork bridge method is required.");
     }
 
-    await this.ensureStarted(options.bridgeCommand);
+    await this.ensureStarted(options.bridgeCommand, options.configDir);
     await options.beforeDispatch?.(method);
 
     const id = this.nextRequestId++;
@@ -482,7 +594,7 @@ export class BambuNetworkBridge {
     agent: number;
     handshake: unknown;
   }> {
-    const command = this.resolveBridgeCommand(options.bridgeCommand);
+    const command = this.resolveBridgeCommand(options.bridgeCommand, options.configDir);
     const configDir = this.resolveConfigDir(options.configDir);
     const countryCode = this.resolveCountryCode(options.countryCode);
     const userInfo = trimEnv(options.userInfo) || trimEnv(process.env.BAMBU_NETWORK_USER_INFO) || "";
@@ -969,12 +1081,12 @@ export class BambuNetworkBridge {
     }
   }
 
-  private async ensureStarted(commandOverride?: string): Promise<void> {
-    const command = this.resolveBridgeCommand(commandOverride);
+  private async ensureStarted(commandOverride?: string, configDir?: string): Promise<void> {
+    const command = this.resolveBridgeCommand(commandOverride, configDir);
     if (!command) {
       throw new Error(
-        "BAMBU_NETWORK_BRIDGE_COMMAND is required for FULU BambuNetwork support. " +
-        "Point it at pjarczak_bambu_linux_host or the OrcaSlicer-bambulab macOS/WSL wrapper."
+        "BAMBU_NETWORK_BRIDGE_COMMAND or BAMBU_NETWORK_BRIDGE_IMAGE is required for FULU BambuNetwork support. " +
+        "Point the command at pjarczak_bambu_linux_host or the OrcaSlicer-bambulab macOS/WSL wrapper, or name a Docker image holding FULU's Linux host."
       );
     }
 
@@ -985,6 +1097,9 @@ export class BambuNetworkBridge {
     if (this.child && this.commandLine !== command) {
       await this.stop();
     }
+
+    const container = this.explicitBridgeCommand(commandOverride) ? undefined : bridgeContainer();
+    if (container) await ensureBridgeContainerRuntime(container);
 
     const shell = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "/bin/sh";
     const shellArgs = process.platform === "win32"
