@@ -174,3 +174,15 @@ test('the preview reads PrusaSlicer/Cura ;TYPE: features, full and radius arcs, 
   assert.deepEqual(flush.map(s => s.tool), [0, 1], 'the flush inside M620..M621 is not part of the print; the next filament is');
   assert.ok(flush.every(s => s.x0 >= 0 && s.x1 >= 0));
 });
+
+test('the preview reads the G-code syntax file inspection accepts: compact, numbered, zero-padded and signed moves', async () => {
+  const { extrusionSegments } = await import('../dist/safety/print-preview.js');
+  const spaced = extrusionSegments('G90\nM83\n; FEATURE: Outer wall\nG1 X10 Y10\nG1 X20 Y20 E1\n').segments;
+  for (const [name, gcode] of [
+    ['compact', 'G90\nM83\n; FEATURE: Outer wall\nG1X10Y10\nG1X20Y20E1\n'],
+    ['numbered with checksum', 'N1 G90*12\nN2 M83\n; FEATURE: Outer wall\nN3 G1 X10 Y10*45\nN4 G1 X20 Y20 E1*77\n'],
+    ['zero-padded', 'G90\nM83\n; FEATURE: Outer wall\nG01 X10 Y10\nG01 X20 Y20 E1\n'],
+    ['signed', 'G90\nM83\n; FEATURE: Outer wall\nG1 X+10 Y+10\nG1 X+20 Y+20 E+1\n'],
+    ['tool word touching nothing', 'G90\nM83\n; FEATURE: Outer wall\nT0\nG1 X10 Y10\nG1 X20 Y20 E1\n'],
+  ]) assert.deepEqual(extrusionSegments(gcode).segments, spaced, name);
+});
