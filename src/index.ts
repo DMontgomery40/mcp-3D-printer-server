@@ -85,6 +85,8 @@ import {
 } from "./slicer/templates.js";
 import { parse3MF, ThreeMFData } from './3mf_parser.js';
 import { BambuImplementation } from "./printers/bambu.js";
+import type { OctoPrintImplementation } from "./printers/octoprint.js";
+import { OctoPrintAppKeys } from "./printers/octoprint-appkeys.js";
 import {
   inspectFuluOrcaSetup,
   invokeFuluBridgeRpc,
@@ -510,6 +512,29 @@ function withJobName(result: unknown, requested: string): unknown {
   return { ...record, jobName: path.posix.basename(remote.replace(/\\/g, "/")) };
 }
 
+/** connect_printer's result: OctoPrint's connection after the call, and what was done. */
+const OCTOPRINT_CONNECTION_OUTPUT_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    action: { type: "string", enum: ["none", "connected", "connecting", "failed"] },
+    message: { type: "string" }, state: { type: "string" }, connected: { type: "boolean" },
+    port: { type: "string" }, baudrate: { type: "number" }, profile: { type: "string" },
+    ports: { type: "array", items: { type: "string" } }, powerOn: { type: "boolean" }, poweredOn: { type: "boolean" },
+  },
+  required: ["action", "message", "state", "connected", "ports", "poweredOn"],
+};
+
+/** octoprint_request_api_key's result. */
+const OCTOPRINT_APP_KEY_OUTPUT_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    status: { type: "string", enum: ["pending", "approved", "denied", "expired", "unsupported", "unreachable", "rate-limited"] },
+    request_id: { type: "string" }, approve_url: { type: "string" }, message: { type: "string" },
+    api_key: { type: "string" }, env: { type: "object", additionalProperties: { type: "string" } },
+  },
+  required: ["status", "message"],
+};
+
 /** Connection overrides shared by the counterpart/1 tools. */
 const PRINTER_TARGET_PROPERTIES = {
   host: { type: "string", description: "Hostname or IP address of the printer (default: value from env)" },
@@ -526,7 +551,7 @@ const OUTPUT_SCHEMA_TOOLS = new Set([
   "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
   "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
-  "blender_mcp_setup", "fusion_mcp_setup",
+  "blender_mcp_setup", "fusion_mcp_setup", "connect_printer", "octoprint_request_api_key",
 ]);
 
 /** layer_height / wall_loops / sparse_infill_density / support settings (PRD §8.4), validated before slicing. */
@@ -867,6 +892,7 @@ class ThreeDPrinterMCPServer {
   private readonly blenderSetup = new BlenderAddonSetup(() => this.blenderAddonHandshake(), { ...defaultSetupSystem, tmp: TEMP_DIR });
   private readonly fusionSetup = new FusionAddinSetup(() => addinAddress().port, FUSION_MCP_DEFAULT_ARGS, { ...defaultSetupSystem, tmp: TEMP_DIR });
   private printerFactory: PrinterFactory;
+  private readonly octoPrintAppKeys = new OctoPrintAppKeys(axios.create({ timeout: 10000 }));
   private readonly counterpart: CounterpartService;
   private stlManipulator: STLManipulator;
   /** FULU's BambuNetwork bridge host, started on first use by the bambu_network route. */
@@ -1765,6 +1791,32 @@ class ThreeDPrinterMCPServer {
             description: "Pause the current print (Bambu Lab, OctoPrint, Klipper/Moonraker, PrusaLink, Duet M25, Repetier, and Creality printers that run Moonraker). Bambu pauses over the same connection that prints. Pause is never gated.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES, ...CONNECTION_PROPERTIES } },
             outputSchema: CONTROL_OUTPUT_SCHEMA,
+          },
+          {
+            name: "connect_printer",
+            description: "OctoPrint only: connect OctoPrint to the printer when it is running but not connected (counterpart_print_progress reports octoprint.disconnected). Uses OctoPrint's own saved serial port, baud rate and printer profile (OctoPrint's AUTO detection when none is saved) unless given, and waits up to wait_ms (default 20000) for it to settle. With power_on, first switches the printer on through the PSU Control plugin when it reports the power off. Already connected: nothing is sent. Connecting runs only OctoPrint's own after-connection script.",
+            inputSchema: { type: "object", properties: {
+              ...PRINTER_TARGET_PROPERTIES,
+              serial_port: { type: "string", description: "Serial port to use, as OctoPrint lists it (e.g. /dev/ttyACM0). Default: OctoPrint's saved choice." },
+              baudrate: { type: "number", description: "Baud rate. Default: OctoPrint's saved choice." },
+              printer_profile: { type: "string", description: "OctoPrint printer profile id. Default: OctoPrint's saved choice." },
+              power_on: { type: "boolean", description: "Switch the printer on through PSU Control first when it is off (default false)." },
+              wait_ms: { type: "number", description: "How long to wait for the connection to settle, up to 60000 (default 20000)." },
+            } },
+            outputSchema: OCTOPRINT_CONNECTION_OUTPUT_SCHEMA,
+          },
+          {
+            name: "octoprint_request_api_key",
+            description: "OctoPrint's Application Keys approval: instead of copying an API key, the person clicks Allow in OctoPrint. Call without request_id to start (host and port of the OctoPrint; app names this app in OctoPrint's prompt); the result has request_id and approve_url (OctoPrint's own approval page). Call again with request_id and wait_ms (up to 120000) to wait for the answer: status approved returns api_key and env {API_KEY}, the setting this server reads. This server keeps the request open between calls (OctoPrint drops one that isn't polled every 5 s) for up to 10 minutes. status unsupported means this OctoPrint has no Application Keys plugin: copy the key from OctoPrint's settings instead. OctoPrint allows 3 requests a minute.",
+            inputSchema: { type: "object", properties: {
+              host: PRINTER_TARGET_PROPERTIES.host,
+              port: PRINTER_TARGET_PROPERTIES.port,
+              app: { type: "string", description: "The app name OctoPrint shows in its prompt (default \"mcp-3d-printer-server\")." },
+              user: { type: "string", description: "The OctoPrint user to ask (optional; any signed-in user with the right permissions can answer otherwise)." },
+              request_id: { type: "string", description: "A request this server started; omit to start one." },
+              wait_ms: { type: "number", description: "Wait up to this long for the answer, up to 120000 (default 0: answer now)." },
+            } },
+            outputSchema: OCTOPRINT_APP_KEY_OUTPUT_SCHEMA,
           },
           {
             name: "resume_print",
@@ -2761,6 +2813,39 @@ class ThreeDPrinterMCPServer {
 
           case "resume_print":
             return structured(await this.counterpart.resume(target, bambuControlRoute));
+
+          case "connect_printer": {
+            if (type.toLowerCase() !== "octoprint") throw new Error(`connect_printer is for OctoPrint, which can be running without a connection to its printer; ${type} needs no connect step.`);
+            const octoprint = this.printerFactory.getImplementation("octoprint") as unknown as OctoPrintImplementation;
+            const optionalText = (value: unknown, field: string) => {
+              if (value === undefined) return undefined;
+              if (typeof value !== "string" || !value.trim()) throw new Error(`Invalid ${field}: expected a non-empty string.`);
+              return value.trim();
+            };
+            if (args?.baudrate !== undefined && (typeof args.baudrate !== "number" || !Number.isInteger(args.baudrate) || args.baudrate <= 0)) throw new Error("Invalid baudrate: expected a positive integer.");
+            if (args?.wait_ms !== undefined && (typeof args.wait_ms !== "number" || !Number.isFinite(args.wait_ms))) throw new Error("Invalid wait_ms: expected a number.");
+            return structured(await octoprint.connectPrinter(host, port, apiKey, {
+              serialPort: optionalText(args?.serial_port, "serial_port"),
+              baudrate: args?.baudrate as number | undefined,
+              profile: optionalText(args?.printer_profile, "printer_profile"),
+              powerOn: args?.power_on === true,
+              waitMs: args?.wait_ms as number | undefined,
+            }));
+          }
+
+          case "octoprint_request_api_key": {
+            for (const field of ["app", "user", "request_id"] as const) {
+              if (args?.[field] !== undefined && (typeof args[field] !== "string" || !String(args[field]).trim())) throw new Error(`Invalid ${field}: expected a non-empty string.`);
+            }
+            if (args?.wait_ms !== undefined && (typeof args.wait_ms !== "number" || !Number.isFinite(args.wait_ms))) throw new Error("Invalid wait_ms: expected a number.");
+            return structured(await this.octoPrintAppKeys.request({
+              host, port,
+              app: String(args?.app ?? SERVER_NAME).trim().slice(0, 64),
+              ...(typeof args?.user === "string" ? { user: args.user.trim() } : {}),
+              ...(typeof args?.request_id === "string" ? { requestId: args.request_id.trim() } : {}),
+              waitMs: args?.wait_ms as number | undefined,
+            }));
+          }
 
           case "counterpart_print_route": {
             let savedTo: string | null = null;
@@ -4039,6 +4124,7 @@ class ThreeDPrinterMCPServer {
 
   private async closeOnce(): Promise<void> {
     this.counterpart.close();
+    this.octoPrintAppKeys.close();
     await this.printerFactory.disconnectAll();
     await this.bambuNetwork.stop();
     await this.fusion.close();

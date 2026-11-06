@@ -16,7 +16,8 @@
         "inspect": "npm run build && npx @modelcontextprotocol/inspector dist/index.js",
         "prepack": "npm run build",
         "test:package": "node scripts/test-package.mjs",
-        "test:blender-live": "npm run build && node scripts/blender-live-check.mjs"
+        "test:blender-live": "npm run build && node scripts/blender-live-check.mjs",
+        "test:octoprint-live": "npm run build && node scripts/octoprint-live-check.mjs"
     },
     "bin": {
         "mcp-3d-printer-server": "./dist/index.js",
