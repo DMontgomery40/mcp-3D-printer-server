@@ -147,7 +147,9 @@ const SERVER_VERSION: string = JSON.parse(fs.readFileSync(new URL("../package.js
 const DEFAULT_HOST = process.env.PRINTER_HOST || "localhost";
 const DEFAULT_PORT = process.env.PRINTER_PORT || "80";
 const DEFAULT_API_KEY = process.env.API_KEY || "";
-const DEFAULT_TYPE = process.env.PRINTER_TYPE || "octoprint"; // Default to OctoPrint
+/** The PRINTER_TYPE this server runs when none is set; counterpart_setup_fields declares it as the default kind. */
+const FALLBACK_PRINTER_TYPE = "octoprint";
+const DEFAULT_TYPE = process.env.PRINTER_TYPE || FALLBACK_PRINTER_TYPE;
 // Resolve an explicit TEMP_DIR (e.g. ./temp) against the server's working directory, as
 // dotenv's own .env lookup is: slicer CLIs receive paths under it, and Bambu Studio fails
 // every 3MF export to a relative --outputdir (bambu-printer-mcp 1.1.44 fixed the same).
@@ -2716,7 +2718,7 @@ class ThreeDPrinterMCPServer {
           }
 
           case "counterpart_setup_fields":
-            return structured(genericSetupFields({ server: { name: SERVER_NAME, version: SERVER_VERSION }, models: VALID_BAMBU_MODELS, slicer: slicerSetupNow(),
+            return structured(genericSetupFields({ server: { name: SERVER_NAME, version: SERVER_VERSION }, models: VALID_BAMBU_MODELS, defaultKind: FALLBACK_PRINTER_TYPE, slicer: slicerSetupNow(),
               ...(typeof args?.serial === "string" ? { serial: args.serial } : {}) }));
 
           case "counterpart_propose_filaments": {

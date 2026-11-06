@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.50] – 2026-11-06
+
+### Added
+
+- `counterpart_setup_fields` marks the kind this server runs when a `.env` sets no `PRINTER_TYPE` with `default: true` (OctoPrint, the same fallback the server uses), so a client recognises such a `.env` without a printer table of its own. Checked with the setup-fields tests; no printer contacted.
+
 ## [1.2.49] – 2026-11-06
 
 ### Added

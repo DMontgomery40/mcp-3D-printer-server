@@ -137,6 +137,8 @@ test("setup fields: every PRINTER_TYPE with the .env names this server reads, an
   assert.equal(result.model, "p1s");
   assert.deepEqual(result.kinds.map(kind => kind.kind), ["bambu", "octoprint", "klipper", "prusa", "creality", "duet", "repetier"]);
   for (const kind of result.kinds) assert.equal(kind.env.PRINTER_TYPE, kind.kind, `${kind.kind} sets PRINTER_TYPE`);
+  assert.deepEqual(genericSetupFields({ server: { name: "m", version: "9" }, models, defaultKind: "octoprint" }).kinds.filter(kind => kind.default).map(kind => kind.kind), ["octoprint"],
+    "the kind this server runs with no PRINTER_TYPE is declared, so a client can recognise such a .env");
   const bambu = result.kinds[0];
   assert.deepEqual(bambu.fields.map(field => [field.name, field.env, field.required]),
     [["host", "PRINTER_HOST", true], ["serial", "BAMBU_SERIAL", true], ["model", "BAMBU_MODEL", true], ["secret", "BAMBU_TOKEN", true]]);
@@ -182,6 +184,7 @@ test("with no printer configured, the server lists the three tools and answers s
   assert.equal(setup.isError, undefined);
   assert.equal(setup.structuredContent.model, "p1s");
   assert.equal(setup.structuredContent.server.name, "mcp-3d-printer-server");
+  assert.deepEqual(setup.structuredContent.kinds.filter(kind => kind.default).map(kind => kind.kind), ["octoprint"], "the server's own fallback, declared");
   // No Bambu Studio where this server would run it (the Linux desktop case, Nov 5): the client asks for it.
   validate(SETUP_FIELDS_OUTPUT_SCHEMA, setup.structuredContent);
   const slicer = setup.structuredContent.slicer;

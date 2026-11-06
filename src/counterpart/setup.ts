@@ -24,6 +24,8 @@ export type SetupKind = {
   kind: typeof PRINTER_KINDS[number]; label: string;
   /** Values this server needs for the kind whatever the person enters (MCP_TRANSPORT, PRINTER_TYPE). */
   env: Record<string, string>;
+  /** The kind this server runs when a .env sets none of these values (no PRINTER_TYPE). */
+  default?: boolean;
   fields: SetupField[];
 };
 /** The slicer this server runs, as it resolves it now, and the settings that choose it (for every printer). */
@@ -85,11 +87,11 @@ const port = (hint: string): SetupField => ({ name: "port", env: "PRINTER_PORT",
 const secret = (label: string, hint: string, required: boolean): SetupField => ({ name: "secret", env: "API_KEY", label, hint, required });
 
 /** Every PRINTER_TYPE this server drives (its PrinterFactory), with the settings it reads for each. */
-export function genericSetupFields(options: { server: { name: string; version: string }; models: readonly string[]; serial?: string; slicer?: SlicerSetup }): SetupFields {
+export function genericSetupFields(options: { server: { name: string; version: string }; models: readonly string[]; serial?: string; slicer?: SlicerSetup; defaultKind?: string }): SetupFields {
   const fromSerial = { prefixLength: 3, models: serialModelValues(options.models) };
   const model = options.serial ? fromSerial.models[options.serial.trim().slice(0, 3).toUpperCase()] : undefined;
   const kind = (kind: SetupKind["kind"], label: string, fields: SetupField[]): SetupKind =>
-    ({ kind, label, env: { MCP_TRANSPORT: "stdio", PRINTER_TYPE: kind }, fields });
+    ({ kind, label, env: { MCP_TRANSPORT: "stdio", PRINTER_TYPE: kind }, fields, ...(kind === options.defaultKind ? { default: true } : {}) });
   return {
     contract: COUNTERPART_CONTRACT,
     server: options.server,
@@ -124,6 +126,7 @@ export const SETUP_FIELDS_OUTPUT_SCHEMA = {
     server: { type: "object", properties: { name: { type: "string" }, version: { type: "string" } }, required: ["name", "version"] },
     kinds: { type: "array", items: { type: "object", properties: {
       kind: { type: "string", enum: [...PRINTER_KINDS] }, label: { type: "string" },
+      default: { type: "boolean", description: "The kind this server runs when a .env sets none of its fixed values (no PRINTER_TYPE)." },
       env: { type: "object", additionalProperties: { type: "string" } }, fields: { type: "array", items: field },
     }, required: ["kind", "label", "env", "fields"] } },
     model: { type: "string" },
