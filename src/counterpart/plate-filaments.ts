@@ -290,7 +290,8 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
         const paint = path ? painting.get(`${path}#${part.id}`) : undefined;
         // Its mesh is past the read limits: any declared filament may be painted on, so all of them are offered
         // (a spare row, never a missing one), and the plate is marked incomplete.
-        if (path && unread.has(path) && part.subtype === "normal_part") {
+        // A sliced plate needs no painting: Studio's plate_N.json names its filaments, whatever another plate shares.
+        if (path && unread.has(path) && part.subtype === "normal_part" && !plate.slicedFilamentIds) {
           incomplete.add(plate.number);
           for (let index = 1; index <= declared; index++) add(index, label);
         }

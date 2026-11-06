@@ -267,3 +267,16 @@ test("a sliced plate's list stays complete whatever the read limits: Studio's sl
   assert.deepEqual(filamentsOf(sliced), [[0, [1, 3]], [1, [2]]]);
   assert.ok(sliced.plates.every(plate => plate.filaments_complete));
 });
+
+// A sliced plate that shares an unread mesh with an unsliced one stays complete: Studio's slice names its filaments.
+test("a sliced plate sharing an unread mesh with an unsliced plate keeps its own complete list", async (t) => {
+  const entries = paintedProject({
+    objects: [{ id: 10, name: "Big", settings: { extruder: "1" }, parts: [{ id: 1, name: "big" }] }],
+    plates: [[10], [10]],
+    meshes: { "10/1": Array.from({ length: 40 }, () => '<triangle v1="0" v2="1" v3="2" paint_color="8"/>') },
+    extra: { "Metadata/plate_2.json": JSON.stringify({ filament_ids: [1] }), "Metadata/plate_2.gcode": "; sliced" },
+  });
+  const listed = await listModelPlates(await write3mf(t, entries), { paintLimits: { meshBytes: 1024, totalBytes: 1024 * 1024 } });
+  assert.deepEqual(filamentsOf(listed), [[0, [1, 2, 3, 4, 5]], [1, [2]]]);
+  assert.deepEqual(listed.plates.map(plate => plate.filaments_complete), [false, true]);
+});
