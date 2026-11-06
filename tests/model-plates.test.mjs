@@ -170,3 +170,36 @@ test("a mixed filament counts as the filaments it mixes, as Bambu Studio expands
   }));
   assert.deepEqual((await listModelPlates(file)).plates[0].filaments.map(f => [f.index, f.name]), [[1, "gradient"], [4, "gradient"]]);
 });
+
+// Codex on #121: feature filaments the project sets print on a part that names no extruder, and the slice applies a
+// part's or object's feature filament whatever separate_filaments_for_features says (PrintObject.cpp:3105-3150).
+test("feature filaments count as the slice applies them: the project's when no extruder is named, the object's always", async (t) => {
+  const file = await write3mf(t, paintedProject({
+    objects: [
+      { id: 10, name: "Plain", parts: [{ id: 1, name: "plain" }] },
+      { id: 11, name: "Infill", settings: { extruder: "1", sparse_infill_filament: "4", separate_filaments_for_features: "0" }, parts: [{ id: 1, name: "core" }] },
+      { id: 12, name: "Named", settings: { extruder: "5" }, parts: [{ id: 1, name: "named" }] },
+    ],
+    plates: [[10], [11], [12]],
+    project: { wall_filament: "2", sparse_infill_filament: "3", solid_infill_filament: "2" },
+  }));
+  assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [2, 3]], [1, [1, 4]], [2, [5]]]);
+});
+
+// Codex on #121: support and raft resolve one key at a time, each the object's own else the project's
+// (PrintObject::object_config_from_model_object, PrintObject.cpp:3052-3063); support filament 0 follows the object.
+test("support and raft overrides resolve independently, as the slice resolves them", async (t) => {
+  const object = (id, settings) => ({ id, name: `O${id}`, settings: { extruder: "1", ...settings }, parts: [{ id: 1, name: `o${id}` }] });
+  const file = await write3mf(t, paintedProject({
+    objects: [
+      object(10, { raft_layers: "0" }),                       // project support on: support still prints
+      object(11, { enable_support: "0" }),                    // support off, no raft
+      object(12, { enable_support: "0", raft_layers: "2" }),  // a raft prints with the support filament
+      object(13, { support_filament: "0" }),                  // project support on, its own default filament
+      object(14, { support_interface_filament: "4" }),        // interface on filament 4, support on the project's 5
+    ],
+    plates: [[10], [11], [12], [13], [14]],
+    project: { enable_support: "1", raft_layers: "0", support_filament: "5", support_interface_filament: "0" },
+  }));
+  assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [1, 5]], [1, [1]], [2, [1, 5]], [3, [1]], [4, [1, 4, 5]]]);
+});
