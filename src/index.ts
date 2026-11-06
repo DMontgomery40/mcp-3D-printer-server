@@ -1098,8 +1098,8 @@ class ThreeDPrinterMCPServer {
       const printerName = printerPreset.replace(/^Bambu Lab /, "").replace(/ [\d.]+ nozzle$/, "");
       const model = normalizeModel(printerName);
       const bed = await machineBed(profilesRoot, printerPreset, model ? MACHINE_LIMITS[model]?.volume : undefined);
-      // Named by the model's bytes: two models called model.stl never share a plates file.
-      const modelHash = createHash("sha256").update(await fs.promises.readFile(slicePath)).digest("hex").slice(0, 12);
+      // Named by the model's bytes and the bed: different models, or one model on different beds, never share a file.
+      const modelHash = createHash("sha256").update(await fs.promises.readFile(slicePath)).update(JSON.stringify(bed)).digest("hex").slice(0, 12);
       bedSplit = await splitToPlates({ modelPath: slicePath, bed, printer: printerName,
         outPath: path.join(TEMP_DIR, `${path.basename(slicePath, path.extname(slicePath))}_plates_${modelHash}.3mf`) });
       // A part bigger than the bed: said plainly by the caller, nothing sliced.
