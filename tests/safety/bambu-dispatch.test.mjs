@@ -135,6 +135,16 @@ test("printer becoming busy during upload stops the final print command", async 
   assert.equal(events.filter(({ action }) => action === "publish").length, 0);
 });
 
+test("a failed upload refuses with a stable code and sends no print command", async (t) => {
+  const file = await fixture(t);
+  const { printer, events } = isolatedPrinter();
+  printer.ftpUpload = async () => { events.push({ action: "upload-attempt" }); throw new Error("Timeout (data socket)"); };
+  await assert.rejects(print3mf(printer, file),
+    error => error.code === "printer-upload-failed" && /did not reach the printer.*Timeout \(data socket\).*No print was started/s.test(error.message));
+  assert.equal(events.filter(({ action }) => action === "upload-attempt").length, 1);
+  assert.deepEqual(events.filter(({ action }) => action === "connect" || action === "publish"), [], "no print command after a failed upload");
+});
+
 test("a print starts without a server prompt, including after a finished job (no bed check)", async (t) => {
   const file = await fixture(t);
   for (const state of ["IDLE", "FINISH"]) {
