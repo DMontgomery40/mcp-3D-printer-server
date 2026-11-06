@@ -80,7 +80,7 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 # BAMBU_SERIAL=01P00A123456789    # Printer serial number
 # BAMBU_TOKEN=your_access_code    # LAN access code from the printer screen
 # BAMBU_MODEL=p1s                 # Required for Bambu print operations
-# BED_TYPE=textured_plate         # textured_plate, cool_plate, engineering_plate, hot_plate
+# BED_TYPE=textured_plate         # textured_plate, cool_plate, engineering_plate, hot_plate, supertack_plate
 # BAMBU_NOZZLE_TYPE=hardened_steel # Only if you replaced the stock nozzle (P1S/P1P/A1 ship stainless_steel)
 # NOZZLE_DIAMETER=0.4             # 0.2, 0.4, 0.6, or 0.8 for printing and heating
 
@@ -131,7 +131,7 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `BAMBU_SERIAL` | | Bambu | Printer serial number |
 | `BAMBU_TOKEN` | | Bambu | LAN access code shown on the printer |
 | `BAMBU_MODEL` | | **Bambu printing and Bambu slicing** | Printer model: `p1s`, `p1p`, `x1c`, `x1e`, `a1`, `a1mini`, `h2d`. **Required** for `print_3mf`, `start_print`, upload with `print: true`, positive Bambu heating, and Bambu-compatible slicing. Slicing also accepts `p2s`, `h2s`, and `h2c` when the installed slicer has that preset. If omitted and the MCP client supports elicitation, the server asks. It selects the slicer machine preset and is checked against the live printer before printing. |
-| `BED_TYPE` | `textured_plate` | No | Bambu bed plate: `textured_plate`, `cool_plate`, `engineering_plate`, `hot_plate`. `print_3mf` requires it to match the sliced plate's bed metadata |
+| `BED_TYPE` | `textured_plate` | No | Bambu bed plate: `textured_plate`, `cool_plate`, `engineering_plate`, `hot_plate`, `supertack_plate`. `print_3mf` requires it to match the sliced plate's bed metadata |
 | `NOZZLE_DIAMETER` | `0.4` | No | Nozzle diameter in mm. Selects the Bambu machine preset; printing and heating accept 0.2, 0.4, 0.6, or 0.8 and check it against the live printer |
 | `BAMBU_NOZZLE_TYPE` | model preset's stock nozzle | No | Installed nozzle for slicing: `stainless_steel`, `hardened_steel`, `tungsten_carbide`, or `brass`. Set it if you upgraded the nozzle; printing requires the job's nozzle type to match the printer's report |
 | `BAMBU_DISPATCH_CHECK_MS` | `15000` | No | How long to watch the printer's reports after a print command to confirm it started or was refused (0 to 60000; 0 skips the check) |

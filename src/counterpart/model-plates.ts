@@ -14,6 +14,12 @@ export interface ModelPlate {
   index: number;
   name: string;
   objects: string[];
+  /**
+   * Each object copy on the plate with its identify_id, from model_settings.config's <model_instance> entries
+   * (Bambu Studio 02.08.02.61 bbs_3mf.cpp:8448-8482). These are the ids slice_stl's skip_objects takes: the
+   * CLI matches them against each instance's loaded id (BambuStudio.cpp:1785-1789, 6530-6545).
+   */
+  instances: { identify_id: number; name: string }[];
   /** The file already holds this plate's G-code. */
   sliced: boolean;
   /** The plate's own preview from the file (Metadata/plate_N.png), when asked for and present. */
@@ -71,7 +77,13 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
     const number = Number(id[1]);
     if (!valid(number)) continue;
     const name = /<metadata\s+key="plater_name"\s+value="([^"]*)"/.exec(match[1]);
-    plates.set(number, { index: number - 1, name: words(name?.[1] ?? "") || `Plate ${number}`, sliced: false,
+    const instances = [...match[1].matchAll(/<model_instance>([\s\S]*?)<\/model_instance>/g)].flatMap(instance => {
+      const object = /<metadata\s+key="object_id"\s+value="(\d+)"/.exec(instance[1])?.[1];
+      const identify = Number(/<metadata\s+key="identify_id"\s+value="(\d+)"/.exec(instance[1])?.[1]);
+      return object !== undefined && Number.isSafeInteger(identify) && identify > 0
+        ? [{ identify_id: identify, name: objects.get(object) ?? "" }] : [];
+    }).slice(0, 1000);
+    plates.set(number, { index: number - 1, name: words(name?.[1] ?? "") || `Plate ${number}`, sliced: false, instances,
       objects: [...match[1].matchAll(/<metadata\s+key="object_id"\s+value="(\d+)"/g)].flatMap(item => objects.get(item[1]) ? [objects.get(item[1])!] : []) });
   }
   for (const name of Object.keys(zip.files)) {
@@ -79,7 +91,7 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
     if (!match) continue;
     const number = Number(match[1]);
     if (!valid(number)) continue;
-    const plate = plates.get(number) ?? { index: number - 1, name: `Plate ${number}`, objects: [], sliced: false };
+    const plate = plates.get(number) ?? { index: number - 1, name: `Plate ${number}`, objects: [], instances: [], sliced: false };
     if (match[2] === "gcode") plate.sliced = true;
     else {
       try {
@@ -92,7 +104,7 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
   }
   result.plates = [...plates.values()].sort((a, b) => a.index - b.index);
   // A standard single-build 3MF has no Bambu plate metadata: it is one plate.
-  if (!result.plates.length) result.plates.push({ index: 0, name: "Plate 1", objects: [], sliced: false });
+  if (!result.plates.length) result.plates.push({ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false });
   const geometry = has("item") && (has("mesh") || has("component"));
   if (!geometry) {
     // A sliced-only file (previews and G-code, no model): only its sliced plates can print.

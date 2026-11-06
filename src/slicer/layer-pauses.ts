@@ -7,11 +7,13 @@ import JSZip from "jszip";
  * (M400 U1 on Bambu printers) before the chosen layer, so the printer pauses
  * by itself there and waits for Resume; no remote command is involved.
  *
- * The CLI takes these as --load-custom-gcodes <json> (CustomGCode::Info). It
- * does not apply the pauses a project 3MF already carries in
- * Metadata/custom_gcode_per_print_z.xml, so those are read here and passed the
- * same way. A pause's print_z must be the exact top of its layer: a height
- * between layers lands on the layer below.
+ * The CLI takes these as --load-custom-gcodes <json> (CustomGCode::Info). A
+ * project 3MF keeps its own pauses and colour changes in
+ * Metadata/custom_gcode_per_layer.xml (Bambu Studio 02.08.02.61 bbs_3mf.cpp:184,
+ * written at :8943-8990), which the CLI loads with the project. The JSON
+ * replaces that whole map (BambuStudio.cpp:4005-4008), so the plate's own
+ * entries are read here and merged in. A pause's print_z must be the exact top
+ * of its layer: a height between layers lands on the layer below.
  */
 
 /** CustomGCode::Type, in the order bbs_3mf.cpp writes it as an integer. */
@@ -61,7 +63,7 @@ export async function readProjectCustomGcodes(threeMfPath: string, plate = 1): P
   } catch {
     return undefined;
   }
-  const file = zip.file(/^Metadata\/custom_gcode_per_print_z\.xml$/i)[0];
+  const file = zip.file(/^Metadata\/custom_gcode_per_layer\.xml$/i)[0];
   if (!file) return undefined;
   const xml = await file.async("string");
   for (const block of xml.match(/<plate>[\s\S]*?<\/plate>/g) ?? []) {
