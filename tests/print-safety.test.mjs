@@ -252,7 +252,7 @@ test("print_3mf auto-slice failures keep slicer advice instead of printer-connec
   const client = await server(t, bambuEnv, { preload, elicitation: accept });
   const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file } });
   assert.equal(result.isError, true);
-  assert.match(errorText(result), /Auto-slicing failed; nothing was uploaded or started: BambuStudio exited with code 206/);
+  assert.match(errorText(result), /Auto-slicing failed; nothing was uploaded or started: The slicer couldn't slice this model\. Its own message is kept for the log\.\nThe slicer said: BambuStudio exited with code 206/);
   assert.equal(result.structuredContent?.slicer?.phase, "execution");
   assert.equal(result.structuredContent?.retryable, false);
   assert.match(result.structuredContent?.suggestion ?? "", /slicer process failed/i);
