@@ -166,6 +166,8 @@ export interface PlateLayout {
   number: number;
   /** model_settings.config object ids with an instance on this plate, in plate order. */
   objectIds: string[];
+  /** Each copy on the plate: its object and that object's instance_id (model_settings.config <model_instance>). */
+  instances?: { objectId: string; instanceId: number }[];
   /** Metadata/plate_N.json filament_ids (0-based) when the file holds this plate's slice. */
   slicedFilamentIds?: number[];
 }
@@ -206,13 +208,20 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
   // Model object order (1-based in layer_config_ranges.xml): the build items' order, as Studio creates the objects.
   const buildItems = [...model.matchAll(/<(?:\w+:)?item\b([^>]*)\/?>/g)].map(item => item[1]);
   const order = [...new Set(buildItems.flatMap(item => /\bobjectid="(\d+)"/.exec(item)?.[1] ?? []))];
-  // An object none of whose build items is printable prints nothing (PartPlate.cpp:1321 skips each such instance).
-  const printableItems = new Map<string, boolean>();
+  // Each build item adds its object's next instance, with its own printable flag (bbs_3mf.cpp:4183-4185, 4375-4380);
+  // a plate names its copies by object_id and instance_id (bbs_3mf.cpp:4717-4719), and the CLI skips each copy that
+  // isn't printable (PartPlate.cpp:1311-1322).
+  const printableItems = new Map<string, boolean[]>();
   for (const item of buildItems) {
     const id = /\bobjectid="(\d+)"/.exec(item)?.[1];
-    if (id) printableItems.set(id, (printableItems.get(id) ?? false) || !/\bprintable="(?:0|false)"/.test(item));
+    if (id) printableItems.set(id, [...(printableItems.get(id) ?? []), !/\bprintable="(?:0|false)"/.test(item)]);
   }
-  const unprintable = new Set([...printableItems].flatMap(([id, printable]) => printable ? [] : [id]));
+  const printableCopy = (objectId: string, instanceId?: number) => {
+    const flags = printableItems.get(objectId);
+    if (!flags) return true;
+    return instanceId === undefined ? flags.some(Boolean) : flags[instanceId] !== false;
+  };
+
 
   const rangeExtruders = new Map<string, number[]>();
   const ranges = await text("Metadata/layer_config_ranges.xml");
@@ -248,9 +257,13 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
       if (!valid(index)) return;
       if (!used.has(index) || (!used.get(index) && name)) used.set(index, name || undefined);
     };
-    for (const objectId of plate.objectIds) {
+    // An object counts once on a plate when any of its copies there prints.
+    const printing = plate.instances?.length
+      ? [...new Set(plate.instances.filter(copy => printableCopy(copy.objectId, copy.instanceId)).map(copy => copy.objectId))]
+      : plate.objectIds.filter(objectId => printableCopy(objectId));
+    for (const objectId of printing) {
       const object = objects.get(objectId);
-      if (!object || unprintable.has(objectId)) continue;
+      if (!object) continue;
       const objectInt = (key: string) => intOf(object.settings.get(key));
       const parts = object.parts.length ? object.parts : [{ id: "", subtype: "normal_part", name: "", settings: new Map() as Settings }];
       for (const part of parts) {

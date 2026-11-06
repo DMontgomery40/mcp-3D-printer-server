@@ -97,7 +97,12 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
       return object !== undefined && Number.isSafeInteger(identify) && identify > 0
         ? [{ identify_id: identify, name: objects.get(object) ?? "" }] : [];
     }).slice(0, MAX_INSTANCES_PER_PLATE);
-    layouts.set(number, { number, objectIds: [...match[1].matchAll(/<metadata\s+key="object_id"\s+value="(\d+)"/g)].map(item => item[1]) });
+    layouts.set(number, { number, objectIds: [...match[1].matchAll(/<metadata\s+key="object_id"\s+value="(\d+)"/g)].map(item => item[1]),
+      instances: [...match[1].matchAll(/<model_instance>([\s\S]*?)<\/model_instance>/g)].flatMap(instance => {
+        const objectId = /<metadata\s+key="object_id"\s+value="(\d+)"/.exec(instance[1])?.[1];
+        const instanceId = Number(/<metadata\s+key="instance_id"\s+value="(\d+)"/.exec(instance[1])?.[1] ?? 0);
+        return objectId ? [{ objectId, instanceId }] : [];
+      }) });
     plates.set(number, { index: number - 1, name: words(name?.[1] ?? "") || `Plate ${number}`, sliced: false, instances, filaments: [],
       objects: [...match[1].matchAll(/<metadata\s+key="object_id"\s+value="(\d+)"/g)].flatMap(item => objects.get(item[1]) ? [objects.get(item[1])!] : []) });
   }

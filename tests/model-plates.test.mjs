@@ -203,3 +203,18 @@ test("support and raft overrides resolve independently, as the slice resolves th
   }));
   assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [1, 5]], [1, [1]], [2, [1, 5]], [3, [1]], [4, [1, 4, 5]]]);
 });
+
+// Codex on #121: printable is per copy. Each build item is its object's next instance with its own printable flag
+// (bbs_3mf.cpp:4183-4185, 4375-4380); a plate names copies by instance_id and the CLI skips unprintable ones
+// (PartPlate.cpp:1311-1322).
+test("an object printable on one plate and not on another counts only where its copy prints", async (t) => {
+  const settings = `<config><object id="10"><metadata key="name" value="Peg"/><metadata key="extruder" value="2"/><part id="1" subtype="normal_part"><metadata key="name" value="peg"/></part></object>`
+    + `<object id="11"><metadata key="name" value="Base"/><metadata key="extruder" value="1"/><part id="1" subtype="normal_part"><metadata key="name" value="base"/></part></object>`
+    + `<plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="10"/><metadata key="instance_id" value="0"/></model_instance><model_instance><metadata key="object_id" value="11"/><metadata key="instance_id" value="0"/></model_instance></plate>`
+    + `<plate><metadata key="plater_id" value="2"/><model_instance><metadata key="object_id" value="10"/><metadata key="instance_id" value="1"/></model_instance><model_instance><metadata key="object_id" value="11"/><metadata key="instance_id" value="1"/></model_instance></plate></config>`;
+  const model = `<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="10" type="model"><mesh><vertices/><triangles/></mesh></object><object id="11" type="model"><mesh><vertices/><triangles/></mesh></object></resources>`
+    + `<build><item objectid="10" printable="1"/><item objectid="11" printable="1"/><item objectid="10" printable="0"/><item objectid="11" printable="1"/></build></model>`;
+  const file = await write3mf(t, { "3D/3dmodel.model": model, "Metadata/model_settings.config": settings,
+    "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222"], filament_type: ["PLA", "PLA"] }) });
+  assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [1, 2]], [1, [1]]], "the Peg's second copy isn't printable: plate 2 prints only the Base");
+});
