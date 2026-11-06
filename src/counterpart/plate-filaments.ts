@@ -123,8 +123,11 @@ async function readPainting(zip: JSZip, paths: Set<string>): Promise<Map<string,
   for (const path of paths) {
     const file = zip.file(path);
     if (!file) continue;
+    // A mesh past the read budget is taken as unpainted (its part's own filament), never a failed listing.
+    const size = (file as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
+    if (size !== undefined && (size > MAX_MESH_BYTES || total + size > MAX_MESH_TOTAL)) continue;
     const bytes = await file.async("nodebuffer");
-    if (bytes.length > MAX_MESH_BYTES || (total += bytes.length) > MAX_MESH_TOTAL) throw new Error("The model's meshes are too large to read its painted colours.");
+    if (bytes.length > MAX_MESH_BYTES || (total += bytes.length) > MAX_MESH_TOTAL) continue;
     if (!bytes.includes("paint_color=\"")) continue;
     const text = bytes.toString("utf8");
     for (const object of text.matchAll(/<object\b[^>]*\bid="(\d+)"[^>]*>([\s\S]*?)<\/object>/g)) {
@@ -289,6 +292,18 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
     for (const extruder of toolChanges.get(plate.number) ?? []) add(extruder);
     // Objects the settings don't describe (a plain 3MF) print with filament 1, ModelVolume::extruder_id's default.
     if (!used.size && (plate.objectIds.some(id => !objects.has(id)) || (!objects.size && buildItems.length))) add(1);
+    // A mixed filament slot prints as its component filaments (PartPlate.cpp:1437-1449, expand_mixed_filaments in
+    // FilamentMixer.cpp:460-478; components are 1-based, comma-separated, FilamentMixer.cpp:165-180).
+    const mixed = Array.isArray(config.filament_is_mixed) ? (config.filament_is_mixed as unknown[]).map(value => boolOf(value) === true) : [];
+    const mixedComponents = Array.isArray(config.filament_mixed_components) ? (config.filament_mixed_components as unknown[]).map(String) : [];
+    if (mixed.some(Boolean)) for (const [index, name] of [...used]) {
+      if (!mixed[index - 1] || index - 1 >= mixedComponents.length) continue;
+      used.delete(index);
+      for (const part of mixedComponents[index - 1].split(",")) {
+        const component = /^\s*\d+\s*$/.test(part) ? Number(part) : 0;
+        if (component >= 1) add(component, name);
+      }
+    }
     if (plate.slicedFilamentIds) {
       // The slice is Studio's own answer: it replaces the derivation, keeping names the derivation found.
       const names = new Map(used);

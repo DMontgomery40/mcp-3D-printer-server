@@ -161,3 +161,12 @@ test("a fully painted part drops its own filament; the project's support filamen
   }));
   assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [2, 3]]]);
 });
+
+test("a mixed filament counts as the filaments it mixes, as Bambu Studio expands it", async (t) => {
+  const file = await write3mf(t, paintedProject({
+    objects: [{ id: 10, name: "Blend", settings: { extruder: "3" }, parts: [{ id: 1, name: "gradient" }] }],
+    plates: [[10]],
+    project: { filament_is_mixed: ["0", "0", "1", "0", "0"], filament_mixed_components: ["", "", "1,4", "", ""] },
+  }));
+  assert.deepEqual((await listModelPlates(file)).plates[0].filaments.map(f => [f.index, f.name]), [[1, "gradient"], [4, "gradient"]]);
+});

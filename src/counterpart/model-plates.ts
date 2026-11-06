@@ -135,7 +135,10 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
     if (!result.plates.length) throw new Error("This 3MF has previews and settings but no model or printable plate.");
   }
   // A slice's G-code without its plate_N.json gives no filament list: the derivation stands.
-  const filaments = await plateFilaments(zip, settings, modelBytes && modelBytes.length <= 64 * 1024 * 1024 ? modelBytes.toString("utf8") : head,
+  // A model file too large to read whole: its resources come first and its build items last (a plain 3MF).
+  const modelText = !modelBytes ? "" : modelBytes.length <= 64 * 1024 * 1024 ? modelBytes.toString("utf8")
+    : `${head}${modelBytes.subarray(-1024 * 1024).toString("utf8")}`;
+  const filaments = await plateFilaments(zip, settings, modelText,
     result.plates.map(plate => layouts.get(plate.index + 1) ?? { number: plate.index + 1, objectIds: [] }));
   for (const plate of result.plates) plate.filaments = filaments.plates.get(plate.index + 1) ?? [];
   result.project_filaments = filaments.project;
