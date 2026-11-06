@@ -50,7 +50,7 @@ test("annotations follow what each tool does", () => {
   for (const name of ["get_printer_status", "counterpart_print_progress", "get_printer_filaments", "check_fulu_orca_setup", "blender_mcp_status"]) {
     is(name, { readOnlyHint: true, openWorldHint: true });
   }
-  for (const name of ["inspect_print_file", "confirm_temperatures", "get_stl_info", "list_templates"]) {
+  for (const name of ["inspect_print_file", "list_3mf_plates", "confirm_temperatures", "get_stl_info", "list_templates"]) {
     is(name, { readOnlyHint: true, openWorldHint: false });
   }
   // Ending a job, replacing a file or setting, and arbitrary remote calls are destructive.

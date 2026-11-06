@@ -96,7 +96,7 @@ test("OctoPrint over MCP: info, progress, filaments and a Classic Webcam snapsho
   assert.equal(info.server.name, "mcp-3d-printer-server");
   assert.deepEqual(info.printer, { kind: "octoprint", host: "127.0.0.1", model: "Prusa i3", name: "Default" });
   assert.deepEqual(info.capabilities, { progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true,
-    slicing: { supports: false, copies: false, orient: false, plates: false } }, "PrusaSlicer (the default for OctoPrint) takes none of them here");
+    slicing: { supports: false, copies: false, orient: false } }, "PrusaSlicer (the default for OctoPrint) takes none of them here");
   const progress = (await call(client, "counterpart_print_progress")).structuredContent;
   assert.equal(progress.state, "printing");
   assert.equal(progress.job.name, "kan216-long.gcode");
@@ -274,16 +274,16 @@ test("Bambu: counterpart_printer_info reports AMS filaments", async () => {
   const service = new CounterpartService(() => bambu, axios.create(), { name: "test", version: "0" });
   const info = await service.printerInfo({ type: "bambu", host: "192.0.2.1", port: "8883", apiKey: "S:T" });
   assert.equal(info.capabilities.filaments, "ams");
-  assert.deepEqual(info.capabilities.slicing, { supports: true, copies: true, orient: true, plates: true }, "the Bambu-compatible CLI route takes them all");
+  assert.deepEqual(info.capabilities.slicing, { supports: true, copies: true, orient: true }, "the Bambu-compatible CLI route takes all three");
   const orca = new CounterpartService(() => bambu, axios.create(), { name: "test", version: "0" }, undefined, () => ({ slicerType: "orcaslicer" }));
   assert.deepEqual((await orca.printerInfo({ type: "bambu", host: "192.0.2.1", port: "8883", apiKey: "S:T" })).capabilities.slicing,
-    { supports: true, copies: true, orient: true, plates: true }, "OrcaSlicer for a Bambu printer slices on the Bambu route");
+    { supports: true, copies: true, orient: true }, "OrcaSlicer for a Bambu printer slices on the Bambu route");
 });
 
 test("slice capabilities follow the slicer route", async () => {
   const { sliceCapabilities } = await import("../dist/slicer/capabilities.js");
-  assert.deepEqual(sliceCapabilities("orcaslicer", false), { supports: true, copies: false, orient: false, plates: false });
-  assert.deepEqual(sliceCapabilities("prusaslicer", false), { supports: false, copies: false, orient: false, plates: false });
-  assert.deepEqual(sliceCapabilities("cura", false), { supports: false, copies: false, orient: false, plates: false });
-  assert.deepEqual(sliceCapabilities("bambustudio", false), { supports: true, copies: true, orient: true, plates: true });
+  assert.deepEqual(sliceCapabilities("orcaslicer", false), { supports: true, copies: false, orient: false });
+  assert.deepEqual(sliceCapabilities("prusaslicer", false), { supports: false, copies: false, orient: false });
+  assert.deepEqual(sliceCapabilities("cura", false), { supports: false, copies: false, orient: false });
+  assert.deepEqual(sliceCapabilities("bambustudio", false), { supports: true, copies: true, orient: true });
 });

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.49] – 2026-11-06
+
+### Added
+
+- `list_3mf_plates` lists a designer's 3MF plates as Bambu Studio shows them before slicing: plate_count, and for each plate its index, name, objects, whether it is already sliced and, optionally, its own preview from the file. A plain 3MF with no plate metadata, even one with a large mesh, is one plate. Clients show a kit's plates from here instead of reading `Metadata/model_settings.config` themselves (Counterpart PRD §8.0 item 9). This ports bambu-printer-mcp 1.1.69. Checked with unit tests, and on real Bambu Studio projects with 6, 12 and 2 plates.
+
+### Removed
+
+- `slice_stl`'s `split_to_plates` and `capabilities.slicing.plates` (1.2.47). A designer's 3MF already carries its plates, and nothing used the split.
+
+### Fixed
+
+- A slice whose result.json says success but writes no printable file reports `slicer_report.failed: true`.
+
 ## [1.2.48] – 2026-11-06
 
 ### Fixed

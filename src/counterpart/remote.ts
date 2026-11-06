@@ -38,6 +38,7 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   confirm_temperatures: "read",
   get_stl_info: "read",
   inspect_print_file: "read",
+  list_3mf_plates: "read",
   check_fulu_orca_setup: "read",
   blender_mcp_status: "read",
   fusion_mcp_status: "read",
