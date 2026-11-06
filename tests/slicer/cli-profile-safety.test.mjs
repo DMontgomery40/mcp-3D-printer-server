@@ -44,7 +44,7 @@ async function fixture(t, slicerType = 'bambustudio') {
   const customCapture = path.join(root, 'custom-gcodes.json');
   await fs.writeFile(pausedFixture, await pausedZip.generateAsync({ type: 'nodebuffer' }));
   await fs.mkdir(path.dirname(executable), { recursive: true });
-  await fs.writeFile(executable, `#!${process.execPath}\nconst fs = require('fs'); const path = require('path'); const args = process.argv.slice(2); fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args)); const custom = args.includes('--load-custom-gcodes') ? args[args.indexOf('--load-custom-gcodes') + 1] : undefined; if (custom) fs.copyFileSync(custom, ${JSON.stringify(customCapture)}); fs.copyFileSync(custom ? ${JSON.stringify(pausedFixture)} : ${JSON.stringify(slicedFixture)}, path.join(args[args.indexOf('--outputdir') + 1], args[args.indexOf('--export-3mf') + 1]));\n`, { mode: 0o755 });
+  await fs.writeFile(executable, `#!${process.execPath}\nconst fs = require('fs'); const path = require('path'); const args = process.argv.slice(2); fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args)); const settings = args.includes('--load-settings') ? args[args.indexOf('--load-settings') + 1].split(';') : []; if (settings[1]) fs.copyFileSync(settings[1], ${JSON.stringify(capture)} + '.process.json'); const custom = args.includes('--load-custom-gcodes') ? args[args.indexOf('--load-custom-gcodes') + 1] : undefined; if (custom) fs.copyFileSync(custom, ${JSON.stringify(customCapture)}); fs.copyFileSync(custom ? ${JSON.stringify(pausedFixture)} : ${JSON.stringify(slicedFixture)}, path.join(args[args.indexOf('--outputdir') + 1], args[args.indexOf('--export-3mf') + 1]));\n`, { mode: 0o755 });
   const saved = Object.fromEntries(['BAMBU_PROFILES_ROOT', 'BAMBU_SLICER_PROFILE_DIRS', 'BAMBU_CLI_FLATTEN'].map(k => [k, process.env[k]]));
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   process.env.BAMBU_PROFILES_ROOT = profiles;
@@ -719,4 +719,14 @@ test('pauses on a multi-plate project need one plate, or the other plates would 
   // Plate 2 has no entries of its own in the project; only the requested pause is passed.
   await f.slice({ pauseAtLayers: [8], slicePlate: 2 }, undefined, input);
   assert.deepEqual(JSON.parse(await fs.readFile(f.customCapture, 'utf8')).gcodes.map(g => [g.type, Number(g.print_z.toFixed(4))]), [['PausePrint', 1.6]]);
+});
+
+test('supertack_plate reaches the CLI as Bambu Studio\'s own "Supertack Plate" bed type', async t => {
+  // curr_bed_type's enum key (Bambu Studio 02.08.02.61 PrintConfig.cpp:437-445). A real slice with it on Nov 6
+  // wrote plate_1.json bed_type supertack_plate and heated the bed to the SuperTack temperature.
+  for (const [bed, key] of [['supertack_plate', 'Supertack Plate'], ['engineering_plate', 'Engineering Plate']]) {
+    const f = await fixture(t);
+    await f.slice({ bedType: bed });
+    assert.equal(JSON.parse(await fs.readFile(f.capture + '.process.json', 'utf8')).curr_bed_type, key);
+  }
 });
