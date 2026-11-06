@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.54] – 2026-11-06
+
+### Fixed
+
+- `list_3mf_plates` no longer leaves out a painted filament when a part's mesh is too large to read. A mesh over 64 MiB, or past 256 MiB read in total, used to be taken as unpainted, so a filament painted on it could go unlisted. Such a plate now lists every filament the project declares and says `filaments_complete: false`, so a client offers a spare row rather than miss one that prints. Every other plate says `filaments_complete: true`. A sliced plate is unaffected, because Studio's own `plate_N.json` names its filaments. Checked with unit tests for the one-file and the total limit.
+
 ## [1.2.53] – 2026-11-06
 
 ### Fixed
