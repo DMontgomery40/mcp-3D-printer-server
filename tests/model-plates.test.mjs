@@ -171,7 +171,7 @@ test("a mixed filament counts as the filaments it mixes, as Bambu Studio expands
   assert.deepEqual((await listModelPlates(file)).plates[0].filaments.map(f => [f.index, f.name]), [[1, "gradient"], [4, "gradient"]]);
 });
 
-// Codex on #121: feature filaments the project sets print on a part that names no extruder, and the slice applies a
+// feature filaments the project sets print on a part that names no extruder, and the slice applies a
 // part's or object's feature filament whatever separate_filaments_for_features says (PrintObject.cpp:3105-3150).
 test("feature filaments count as the slice applies them: the project's when no extruder is named, the object's always", async (t) => {
   const file = await write3mf(t, paintedProject({
@@ -186,7 +186,7 @@ test("feature filaments count as the slice applies them: the project's when no e
   assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [2, 3]], [1, [1, 4]], [2, [5]]]);
 });
 
-// Codex on #121: support and raft resolve one key at a time, each the object's own else the project's
+// support and raft resolve one key at a time, each the object's own else the project's
 // (PrintObject::object_config_from_model_object, PrintObject.cpp:3052-3063); support filament 0 follows the object.
 test("support and raft overrides resolve independently, as the slice resolves them", async (t) => {
   const object = (id, settings) => ({ id, name: `O${id}`, settings: { extruder: "1", ...settings }, parts: [{ id: 1, name: `o${id}` }] });
@@ -204,7 +204,7 @@ test("support and raft overrides resolve independently, as the slice resolves th
   assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [1, 5]], [1, [1]], [2, [1, 5]], [3, [1]], [4, [1, 4, 5]]]);
 });
 
-// Codex on #121: printable is per copy. Each build item is its object's next instance with its own printable flag
+// printable is per copy. Each build item is its object's next instance with its own printable flag
 // (bbs_3mf.cpp:4183-4185, 4375-4380); a plate names copies by instance_id and the CLI skips unprintable ones
 // (PartPlate.cpp:1311-1322).
 test("an object printable on one plate and not on another counts only where its copy prints", async (t) => {
