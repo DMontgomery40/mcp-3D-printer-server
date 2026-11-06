@@ -218,3 +218,16 @@ test("an object printable on one plate and not on another counts only where its 
     "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222"], filament_type: ["PLA", "PLA"] }) });
   assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [1, 2]], [1, [1]]], "the Peg's second copy isn't printable: plate 2 prints only the Base");
 });
+
+// A component without p:path names a mesh object in the root model itself (bbs_3mf.cpp:4131-4148, 3891): its
+// painting is read there.
+test("painting on a component mesh kept in the root model counts", async (t) => {
+  const model = `<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>`
+    + `<object id="1" type="model"><mesh><vertices/><triangles><triangle v1="0" v2="1" v3="2" paint_color="8"/><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>`
+    + `<object id="10" type="model"><components><component objectid="1"/></components></object></resources><build><item objectid="10"/></build></model>`;
+  const settings = `<config><object id="10"><metadata key="name" value="Badge"/><metadata key="extruder" value="1"/><part id="1" subtype="normal_part"><metadata key="name" value="badge"/></part></object>`
+    + `<plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="10"/><metadata key="instance_id" value="0"/></model_instance></plate></config>`;
+  const file = await write3mf(t, { "3D/3dmodel.model": model, "Metadata/model_settings.config": settings,
+    "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222"], filament_type: ["PLA", "PLA"] }) });
+  assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [1, 2]]], "filament 2 is painted on; the unpainted facet keeps filament 1");
+});

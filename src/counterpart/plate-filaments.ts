@@ -201,7 +201,9 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
     for (const component of object[2].matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)) {
       const path = /\b(?:\w+:)?path="\/?([^"]+)"/.exec(component[1])?.[1];
       const id = /\bobjectid="(\d+)"/.exec(component[1])?.[1];
-      if (path && id) parts.set(id, path);
+      // Studio keys a component by (path, objectid); one without p:path names a mesh object in the root model
+      // itself, keyed by the root's empty path (bbs_3mf.cpp:4131-4148, 3891).
+      if (id) parts.set(id, path || "3D/3dmodel.model");
     }
     if (parts.size) components.set(object[1], parts);
   }
