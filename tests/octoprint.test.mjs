@@ -238,7 +238,12 @@ test("counterpart_setup_fields offers the OctoPrint key through Application Keys
   const secret = octoprint.fields.find(field => field.name === "secret");
   assert.deepEqual(secret.obtain?.tool, "octoprint_request_api_key");
   assert.equal(secret.env, "API_KEY");
-  assert.match(octoprint.fields.find(field => field.name === "host").hint, /https:\/\//);
+  const hostField = octoprint.fields.find(field => field.name === "host");
+  assert.match(hostField.hint, /https:\/\//);
+  assert.equal(hostField.input, "url", "a client accepts a URL for OctoPrint's address");
+  for (const other of fields.kinds.filter(kind => kind.kind !== "octoprint")) {
+    assert.equal(other.fields.find(field => field.name === "host").input, undefined, `${other.kind} takes a host name or address only`);
+  }
 });
 
 test("PrusaSlicer: a config with binary G-code on gets --no-binary-gcode; bgcode output is recognised", () => {
