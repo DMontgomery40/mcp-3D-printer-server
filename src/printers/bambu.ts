@@ -10,7 +10,7 @@ import { BambuClient, PushAllCommand } from "bambu-node";
 import { MAX_PRINT_FILE_BYTES, readSafe3mfArchive } from "../safety/archive.js";
 import { inspectPrintFile, type PrintFileInspection } from "../safety/print-file.js";
 import { isDualNozzleModel, normalizeModel, validateTemperature } from "../safety/limits.js";
-import { describeAmsTrayRange, externalTrayForNozzle } from "../ams-mapping.js";
+import { describeAmsTrayRange, externalTrayForNozzle, studioAmsMapping } from "../ams-mapping.js";
 import {
   manualHeatingRequirements,
   publishBambuCommand,
@@ -693,7 +693,9 @@ export class BambuImplementation extends PrinterImplementation {
     let baseMapping: number[];
     if (options.amsMapping && options.amsMapping.length > 0) {
       for (const value of options.amsMapping) validate(value, "ams_mapping");
-      baseMapping = options.amsMapping.slice();
+      // Bambu Studio sends a tray only for the filaments the plate prints and -1 for every other project filament
+      // (SelectMachineDialog::get_ams_mapping_result, SelectMachine.cpp:1463-1500): so does this route.
+      baseMapping = studioAmsMapping(options.amsMapping, inspection.usedFilamentPositions);
     } else if (options.amsSlots && options.amsSlots.length > 0) {
       for (const value of options.amsSlots) validate(value, "ams_slots");
       const positions = projectMetadata.usedFilamentPositions;

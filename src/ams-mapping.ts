@@ -132,3 +132,13 @@ export function studioAmsMappingInfo(filaments: ProjectFilament[], mapping: numb
     };
   });
 }
+
+/**
+ * A project-level ams_mapping as Bambu Studio sends it: the caller's tray for each filament the selected plate prints,
+ * -1 for every project filament it doesn't (SelectMachineDialog::get_ams_mapping_result, SelectMachine.cpp:1463-1500,
+ * maps only the plate's own filaments). A tray for an unused filament is never sent to the printer.
+ */
+export function studioAmsMapping(mapping: number[], usedPositions: number[]): number[] {
+  const used = new Set(usedPositions);
+  return mapping.map((tray, position) => used.has(position) ? tray : -1);
+}

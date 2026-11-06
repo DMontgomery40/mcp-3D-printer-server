@@ -91,7 +91,7 @@ import {
   inspectFuluOrcaSetup,
   invokeFuluBridgeRpc,
 } from "./fulu-orca.js";
-import {
+import { studioAmsMapping,
   bridgeAmsMapping2Entry,
   bridgeAmsMappingValue,
   externalTrayForNozzle,
@@ -1237,7 +1237,8 @@ class ThreeDPrinterMCPServer {
       // The options Bambu Studio's Send dialog would send; explicit ones win.
       const studio = resolveStudioPrintOptions(model, callerPrintOptions(args), { usedNozzles: usedNozzleCount(inspection) });
       const { useAMS, amsSlots } = options.ams;
-      let mapping = options.ams.amsMapping?.slice();
+      // Bambu Studio maps only the plate's own filaments; every other project filament is -1 (SelectMachine.cpp:1463-1500).
+      let mapping = options.ams.amsMapping ? studioAmsMapping(options.ams.amsMapping, inspection.usedFilamentPositions) : undefined;
       if (amsSlots) {
         if (amsSlots.length !== inspection.usedFilamentPositions.length) throw new Error("ams_slots must supply exactly one physical tray per used filament.");
         mapping = Array<number>(inspection.materials.length).fill(-1);
@@ -2273,7 +2274,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "list_3mf_plates",
-            description: "List a Bambu Studio or OrcaSlicer 3MF's plates as its designer laid them out, before slicing: plate_count, and for each plate its index (from 0; slice_stl's slice_plate is index + 1, inspect_print_file's plate_index is index), name, the objects on it, each object copy's identify_id (instances: the ids slice_stl's skip_objects takes) and whether the file already holds its G-code (sliced). A plain 3MF without plate metadata is one plate. include_thumbnails adds each plate's own preview from the file (thumbnail_png_base64). Read-only.",
+            description: "List a Bambu Studio or OrcaSlicer 3MF's plates as its designer laid them out, before slicing: plate_count, and for each plate its index (from 0; slice_stl's slice_plate is index + 1, inspect_print_file's plate_index is index), name, the objects on it, each object copy's identify_id (instances: the ids slice_stl's skip_objects takes) whether the file already holds its G-code (sliced), and filaments: the project filaments that plate prints with and only those (index from 1 = slice_stl's load_filaments/filament_colours position and print_3mf's ams_mapping position + 1; colour, material, filament_id, and the first part using it), from the slice when there is one, otherwise worked out as Bambu Studio does from the plate's parts, painting, support, layer ranges and tool changes. project_filaments lists every filament the project declares, used or not (slice_stl takes one load_filaments profile per declared filament). A plain 3MF without plate metadata is one plate. include_thumbnails adds each plate's own preview from the file (thumbnail_png_base64). Read-only.",
             inputSchema: {
               type: "object",
               properties: {
