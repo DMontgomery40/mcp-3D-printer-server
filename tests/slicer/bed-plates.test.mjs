@@ -92,7 +92,10 @@ test("separate boxes laid out wider than the bed are arranged across plates, eac
 
 test("the same model and bed give the same 3MF bytes", async (t) => {
   const stl = boxesStl([box(0, 0, 200, 200, 10), box(300, 0, 200, 200, 10)]);
-  const first = await split(t, stl), second = await split(t, stl);
+  const first = await split(t, stl);
+  // A later second: anything stamped with the time would change.
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  const second = await split(t, stl);
   assert.deepEqual(fs.readFileSync(first.outPath), fs.readFileSync(second.outPath));
 });
 
@@ -135,14 +138,17 @@ test("parts nested in a group too big for one plate stay together, as they were"
   const stl = boxesStl([...ring, box(25, 25, 10, 10, 10), box(70, 0, 200, 200, 10), box(280, 0, 120, 120, 10)]);
   const { result, outPath } = await split(t, stl);
   assert.equal(result.fits, false);
-  // Back row first: the 200 mm box, the 120 mm box, the ring, the peg.
-  const plateOf = name => result.plates.findIndex(plate => plate.objects.includes(name));
-  assert.equal(plateOf("Part 3"), plateOf("Part 4"), JSON.stringify(result.plates));
+  // Back row first: the 200 mm box, the 120 mm box, the ring, then the peg, which is written in the ring's object.
+  const objects = result.plates.flatMap(plate => plate.objects);
+  assert.deepEqual(objects.sort(), ["Part 1", "Part 2", "Part 3"]);
   const { plates } = await readPlates(outPath);
-  const objects = plates[plateOf("Part 3")];
-  const ringBox = objects.find(object => Math.abs(object.maxX - object.minX - 60) < 1e-3), peg = objects.find(object => object.maxX - object.minX < 11);
-  // The peg is where it was: centred in the ring.
-  assert.ok(Math.abs((peg.minX + peg.maxX) / 2 - (ringBox.minX + ringBox.maxX) / 2) < 1e-3 && Math.abs((peg.minY + peg.maxY) / 2 - (ringBox.minY + ringBox.maxY) / 2) < 1e-3);
+  const ringPlate = plates[result.plates.findIndex(plate => plate.objects.includes("Part 3"))];
+  const ringObject = ringPlate.find(object => Math.abs(object.maxX - object.minX - 60) < 1e-3);
+  assert.ok(ringObject, "the ring and its peg are one 60 mm object");
+  const zip = await JSZip.loadAsync(fs.readFileSync(outPath));
+  const model = await zip.file("3D/3dmodel.model").async("string");
+  const mesh = model.match(new RegExp(`<object id="${ringObject.id - 1}" type="model">\\s*<mesh>([\\s\\S]*?)</mesh>`))[1];
+  assert.equal((mesh.match(/<triangle /g) ?? []).length, 4 * 12 + 12, "the ring's walls and the peg, in one mesh");
 });
 
 test("two parts over each other that only fit apart are arranged apart, never called too large", async (t) => {
@@ -156,6 +162,31 @@ test("two parts over each other that only fit apart are arranged apart, never ca
 test("a model taller than the bed as one piece is split, not left to fail in the slicer", async (t) => {
   const { result } = await split(t, boxesStl([box(0, 0, 50, 50, 300), box(60, 0, 50, 50, 10)]));
   assert.deepEqual(result.too_large, [{ name: "Part 1", size_mm: [50, 50, 300] }]);
+});
+
+// A hollow part is an outer shell and an inner, inward-facing cavity shell. Written as two objects,
+// the cavity would print as a solid inside a solid; it must stay in its part's mesh.
+test("a hollow part's cavity shell stays in its part's mesh, so the part stays hollow", async (t) => {
+  const outer = boxesStl([box(0, 0, 60, 60, 60)]);
+  // The cavity: a box whose triangles face inward (each triangle's corners reversed).
+  const cavity = boxesStl([box(10, 10, 40, 40, 40)]);
+  for (let i = 0; i < cavity.readUInt32LE(80); i++) {
+    const o = 84 + i * 50 + 12;
+    const second = cavity.subarray(o + 12, o + 24), third = Buffer.from(cavity.subarray(o + 24, o + 36));
+    cavity.copy(cavity, o + 24, o + 12, o + 24); third.copy(cavity, o + 12);
+    void second;
+  }
+  const other = boxesStl([box(300, 0, 200, 200, 10)]);
+  const stl = Buffer.concat([outer.subarray(0, 80), Buffer.alloc(4), outer.subarray(84), cavity.subarray(84), other.subarray(84)]);
+  stl.writeUInt32LE((stl.length - 84) / 50, 80);
+  const { result, outPath } = await split(t, stl);
+  assert.equal(result.fits, false);
+  // Three bodies, two objects: the hollow part (Part 2, its cavity Part 3 inside it) and the slab (Part 1).
+  assert.deepEqual(result.plates.flatMap(plate => plate.objects).sort(), ["Part 1", "Part 2"]);
+  const zip = await JSZip.loadAsync(fs.readFileSync(outPath));
+  const model = await zip.file("3D/3dmodel.model").async("string");
+  const meshes = [...model.matchAll(/<mesh>([\s\S]*?)<\/mesh>/g)].map(([, body]) => (body.match(/<triangle /g) ?? []).length);
+  assert.deepEqual(meshes.sort((a, b) => a - b), [12, 24], "the cavity's 12 triangles are in the hollow part's mesh");
 });
 
 test("an OBJ model is split the same way", async (t) => {

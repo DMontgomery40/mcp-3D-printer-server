@@ -316,7 +316,8 @@ function xmlText(value: string): string {
 }
 const coordinate = (value: number) => String(Number(value.toPrecision(9)));
 
-interface Placed { name: string; plate: number; body: Body; transform: (x: number, y: number, z: number) => [number, number, number] }
+/** One object of the 3MF: a body, with any shells inside or around it (a hollow part's cavity) in the same mesh. */
+interface Placed { name: string; plate: number; bodies: Body[]; transform: (x: number, y: number, z: number) => [number, number, number] }
 
 function modelXml(positions: Float32Array, objects: Placed[]): { xml: Buffer; centres: [number, number][] } {
   const chunks: Buffer[] = [];
@@ -334,7 +335,7 @@ function modelXml(positions: Float32Array, objects: Placed[]): { xml: Buffer; ce
     const lookup = new Map<string, number>();
     const triangles: number[] = [];
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const t of object.body.triangles) for (let k = 0; k < 3; k++) {
+    for (const body of object.bodies) for (const t of body.triangles) for (let k = 0; k < 3; k++) {
       const o = t * 9 + k * 3;
       const key = `${positions[o]},${positions[o + 1]},${positions[o + 2]}`;
       let id = lookup.get(key);
@@ -461,14 +462,18 @@ export async function splitToPlates(options: { modelPath: string; outPath: strin
         const [px, py] = item.rotated ? [depth - ly, lx] : [lx, ly];
         return [offsetX + item.x + px, offsetY + item.y + py, z - min[2]];
       };
-      for (const body of [...item.unit.bodies].sort((a, b) => whole.indexOf(a) - whole.indexOf(b)))
-        placed.push({ name: names.get(body)!, plate: plateIndex, body, transform });
+      // Shells nested in each other stay one mesh, as in the model: a cavity shell keeps making its part hollow.
+      for (const shells of groupsOf(item.unit.bodies, nested)) {
+        const sorted = [...shells].sort((a, b) => whole.indexOf(a) - whole.indexOf(b));
+        placed.push({ name: names.get(sorted[0])!, plate: plateIndex, bodies: sorted, transform });
+      }
     }
   });
-  placed.sort((a, b) => a.plate - b.plate || whole.indexOf(a.body) - whole.indexOf(b.body));
+  placed.sort((a, b) => a.plate - b.plate || whole.indexOf(a.bodies[0]) - whole.indexOf(b.bodies[0]));
   const { xml } = modelXml(positions, placed);
   const zip = new JSZip();
-  const entry = { date: ZIP_DATE };
+  // No folder entries: JSZip would stamp them with the current time, and the bytes would differ.
+  const entry = { date: ZIP_DATE, createFolders: false };
   zip.file("[Content_Types].xml", CONTENT_TYPES, entry);
   zip.file("_rels/.rels", RELATIONSHIPS, entry);
   zip.file("3D/3dmodel.model", xml, entry);

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.49] – 2026-11-06
+
+### Fixed
+
+- `split_to_plates` writes shells nested in each other as one mesh object, as they were in the model, so a hollow part's inward-facing cavity shell still makes it hollow. 1.2.47 wrote each shell as its own object, which would print the cavity as a solid inside a solid. This ports the fix from bambu-printer-mcp 1.1.68. Checked with a hollow-part regression test.
+- The plates 3MF has no folder entries, which JSZip had stamped with the current time. 1.2.47's same model and bed could give different bytes a second later, so a client kept a second copy and the slice cache missed. Checked with a test that splits twice, two seconds apart.
+
 ## [1.2.48] – 2026-11-06
 
 ### Fixed
