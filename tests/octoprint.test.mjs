@@ -40,6 +40,8 @@ test("octoPrintBaseUrl: host and port, or a URL for HTTPS and reverse-proxy sub-
   assert.equal(octoPrintBaseUrl("http://pi.lan/octoprint/", "80"), "http://pi.lan/octoprint");
   assert.equal(octoPrintBaseUrl("http://pi.lan:8080/octoprint", "5000"), "http://pi.lan:8080/octoprint", "a URL keeps its own port");
   assert.equal(octoPrintBaseUrl("http://pi.lan/octoprint", "5000"), "http://pi.lan:5000/octoprint", "a URL without a port takes PRINTER_PORT");
+  assert.equal(octoPrintBaseUrl("fd00::5", "5000"), "http://[fd00::5]:5000");
+  assert.equal(octoPrintBaseUrl("octopi.local", ""), "http://octopi.local");
   assert.throws(() => octoPrintBaseUrl("https://user:secret@octopi.local", "80"), /API_KEY/);
 });
 
@@ -115,6 +117,44 @@ test("a disconnected OctoPrint says so, and connect_printer connects it with Oct
   assert.ok(!fake.requests.slice(before).some(r => r.method === "POST"), "nothing is sent when already connected");
 });
 
+test("connect_printer reports a connection still settling, and one that failed, in OctoPrint's words", async (t) => {
+  const steps = { value: [] };
+  const fake = await fakeOctoPrint((request) => {
+    if (request.url === "/api/connection" && request.method === "POST") return [204];
+    if (request.url === "/api/connection") {
+      const state = steps.value.length > 1 ? steps.value.shift() : steps.value[0];
+      return [200, { current: { state, port: null, baudrate: null }, options: { ports: ["/dev/ttyUSB0"] } }];
+    }
+    return undefined;
+  });
+  t.after(fake.close);
+  const octoprint = new OctoPrintImplementation(axios.create());
+  steps.value = ["Closed", "Detecting serial connection", "Connecting", "Offline after error"];
+  const failed = await octoprint.connectPrinter("127.0.0.1", fake.port, "k", { waitMs: 10_000 });
+  assert.equal(failed.action, "failed");
+  assert.match(failed.message, /Offline after error/);
+  assert.match(failed.message, /\/dev\/ttyUSB0/);
+  steps.value = ["Closed", "Detecting serial connection"];
+  const settling = await octoprint.connectPrinter("127.0.0.1", fake.port, "k", { waitMs: 1_500 });
+  assert.equal(settling.action, "connecting");
+});
+
+test("camera URLs: OctoPi's webcam on port 80 for a plain host, the URL's own server for a URL host", async () => {
+  const octoprint = new OctoPrintImplementation({ get: async () => ({ data: { webcam: { webcamEnabled: true } } }) });
+  const plain = await octoprint.cameraCandidates("octopi.local", "5000", "k");
+  assert.equal(plain.at(-1).url, "http://octopi.local/webcam/?action=snapshot", "not OctoPrint's own port 5000");
+  const proxied = await octoprint.cameraCandidates("https://pi.example.com/octoprint/", "80", "k");
+  assert.equal(proxied.at(-1).url, "https://pi.example.com/webcam/?action=snapshot");
+  const v6 = await octoprint.cameraCandidates("fd00::5", "80", "k");
+  assert.equal(v6.at(-1).url, "http://[fd00::5]/webcam/?action=snapshot");
+
+  const { CounterpartService } = await import("../dist/counterpart/service.js");
+  const service = new CounterpartService(() => octoprint, axios.create(), { name: "t", version: "0" });
+  const target = { type: "octoprint", host: "https://pi.example.com/octoprint", port: "80", apiKey: "k" };
+  assert.deepEqual(service.resolve("/webcam/?action=stream", target), ["https://pi.example.com/webcam/?action=stream"]);
+  assert.deepEqual(service.resolve("http://127.0.0.1:8080/?action=snapshot", target), ["http://pi.example.com:8080/?action=snapshot"]);
+});
+
 test("a printer switched off through PSU Control is switched on only with power_on", async (t) => {
   const state = { value: "Closed" };
   const psu = { on: false };
@@ -134,14 +174,23 @@ test("a printer switched off through PSU Control is switched on only with power_
 });
 
 test("Application Keys: the server keeps polling, so an answer after OctoPrint's 5 s poll timeout still arrives", async (t) => {
-  let polls = 0, decided = false;
+  // Like OctoPrint's PendingDecision: dropped when not polled for 5 s (POLL_TIMEOUT), and the key is handed out once.
+  let polls = 0, decided = false, lastPoll = 0, dropped = false, handedOut = false;
   const fake = await fakeOctoPrint((request) => {
     if (request.url === "/plugin/appkeys/probe") return [204];
     if (request.url === "/plugin/appkeys/request" && request.method === "POST") {
       assert.deepEqual(request.body, { app: "Counterpart" });
+      lastPoll = Date.now();
       return [201, { app_token: "tok/1", auth_dialog: "http://octopi.local/plugin/appkeys/auth/tok" }];
     }
-    if (request.url === "/plugin/appkeys/request/tok%2F1") { polls++; return decided ? [200, { api_key: "NEWKEY" }] : [202, { message: "Awaiting decision" }]; }
+    if (request.url === "/plugin/appkeys/request/tok%2F1") {
+      if (Date.now() - lastPoll > 5_000) dropped = true;
+      lastPoll = Date.now();
+      polls++;
+      if (dropped || handedOut) return undefined;
+      if (decided) { handedOut = true; return [200, { api_key: "NEWKEY" }]; }
+      return [202, { message: "Awaiting decision" }];
+    }
     return undefined;
   });
   t.after(fake.close);
@@ -150,8 +199,9 @@ test("Application Keys: the server keeps polling, so an answer after OctoPrint's
   const started = await keys.request({ host: "127.0.0.1", port: fake.port, app: "Counterpart" });
   assert.equal(started.status, "pending");
   assert.equal(started.approve_url, "http://octopi.local/plugin/appkeys/auth/tok");
-  await new Promise(resolve => setTimeout(resolve, 4_500));
-  assert.ok(polls >= 2, "polled in the background between calls");
+  await new Promise(resolve => setTimeout(resolve, 7_000)); // longer than OctoPrint's poll timeout, between two calls
+  assert.ok(polls >= 3, "polled in the background between calls");
+  assert.equal(dropped, false, "never left unpolled for 5 s");
   decided = true;
   const approved = await keys.request({ host: "127.0.0.1", port: fake.port, app: "Counterpart", requestId: started.request_id, waitMs: 5_000 });
   assert.equal(approved.status, "approved");

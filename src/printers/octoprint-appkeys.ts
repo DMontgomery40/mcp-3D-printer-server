@@ -4,7 +4,7 @@
  * https://docs.octoprint.org/en/master/bundledplugins/appkeys.html):
  *
  *   GET  /plugin/appkeys/probe                → 204 when the plugin is enabled
- *   POST /plugin/appkeys/request {app, user?} → 201 {app_token, auth_dialog}; limited to 3 a minute (429 beyond)
+ *   POST /plugin/appkeys/request {app, user?} → 201 {app_token, auth_dialog}; 429 beyond 3 a minute, 5 in 10 minutes, 10 an hour
  *   GET  /plugin/appkeys/request/<app_token>  → 202 while pending, 200 {api_key} once allowed, 404 when denied or expired
  *
  * OctoPrint drops a pending request when it isn't polled for 5 seconds (POLL_TIMEOUT), so this server keeps polling
@@ -43,10 +43,17 @@ interface Pending {
   waiters: Array<() => void>;
 }
 
+/** Node's codes for a TLS certificate it won't trust (self-signed, unknown issuer, wrong name). */
+function untrustedCertificate(error: unknown): boolean {
+  const code = String((error as { code?: unknown })?.code ?? "");
+  return /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|ERR_TLS/.test(code);
+}
+
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 export class OctoPrintAppKeys {
   private readonly pending = new Map<string, Pending>();
+  private closed = false;
 
   constructor(private readonly http: AxiosInstance) {}
 
@@ -68,7 +75,9 @@ export class OctoPrintAppKeys {
       if (isAxiosError(error) && error.response) {
         return { status: "unsupported", message: "This OctoPrint can't approve apps (its Application Keys plugin is off or it's older than 1.5). Copy the API key from OctoPrint: Settings → Application Keys (or Settings → API) instead." };
       }
-      return { status: "unreachable", message: `OctoPrint didn't answer at ${base}. Check the address and port.` };
+      return { status: "unreachable", message: untrustedCertificate(error)
+        ? `${base} has a certificate this computer doesn't trust (OctoPi's own is self-signed). Use its http:// address on your local network instead.`
+        : `OctoPrint didn't answer at ${base}. Check the address and port.` };
     }
     let data: any;
     try {
@@ -77,7 +86,7 @@ export class OctoPrintAppKeys {
       })).data;
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 429) {
-        return { status: "rate-limited", message: "OctoPrint allows 3 approval requests a minute. Wait a minute and try again." };
+        return { status: "rate-limited", message: "OctoPrint limits approval requests (3 a minute, 5 in 10 minutes, 10 an hour). Wait a few minutes and try again." };
       }
       throw new Error(`OctoPrint refused the approval request: ${(error as Error).message}`);
     }
@@ -93,6 +102,7 @@ export class OctoPrintAppKeys {
 
   /** Stop polling every open request (server shutdown). */
   close(): void {
+    this.closed = true;
     for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();
   }
@@ -132,6 +142,7 @@ export class OctoPrintAppKeys {
       entry.timer.unref?.();
     };
     const tick = async () => {
+      if (this.closed || this.pending.get(id) !== entry) return;
       if (Date.now() > entry.expires) return settle("expired");
       try {
         const response = await this.http.get(`${entry.base}/plugin/appkeys/request/${encodeURIComponent(entry.token)}`, {
@@ -142,6 +153,7 @@ export class OctoPrintAppKeys {
       } catch {
         // A dropped poll is retried; OctoPrint keeps the request for 5 s between polls.
       }
+      if (this.closed || this.pending.get(id) !== entry) return;
       entry.timer = setTimeout(tick, POLL_MS);
       entry.timer.unref?.();
     };

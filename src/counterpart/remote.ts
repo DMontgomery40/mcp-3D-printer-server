@@ -99,7 +99,7 @@ export const CONFIG_ARGUMENTS: ReadonlySet<string> = new Set([
   "country_code", "connection_type", "connection_mode", "route", "bambu_model", "nozzle_diameter", "nozzle_diameters",
   "bridge_command", "slicer_path", "slicer_type", "ffmpeg_path", "plugin_dir", "runtime_dir", "template_dir",
   "config_filename", "bambu_network_method", "use_ssl_for_mqtt", "use_ssl_for_ftp", "extra_options",
-  "allow_mutating_method",
+  "allow_mutating_method", "serial_port", "baudrate", "printer_profile",
 ]);
 /** Top-level only: the printer type (`type`); a nested `type` is a plain value. */
 const TOP_LEVEL_CONFIG: ReadonlySet<string> = new Set(["type"]);

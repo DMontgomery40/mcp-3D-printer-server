@@ -23,6 +23,7 @@ export type SetupField = {
    * A secret this server can fetch instead of the person typing it: call `tool` with the form's host and port. While its
    * result's `status` is "pending", show its `message` (and `approve_url` as a link) and call again with its `request_id`
    * and `wait_ms`; on "approved", write each of its `env` values. Any other status: show `message`, keep the field.
+   * The tool is called on the computer that runs this server (remotely it is raw scope, and host and port are config).
    */
   obtain?: { tool: string; label: string; hint?: string };
 };
@@ -104,7 +105,7 @@ export function genericSetupFields(options: { server: { name: string; version: s
     kinds: [
       kind("bambu", "Bambu Lab", BAMBU_FIELDS(options.models, fromSerial)),
       kind("octoprint", "OctoPrint", [
-        { ...host, hint: "OctoPrint's address (octopi.local or an IP address), or its full URL for HTTPS or a sub-path (https://octopi.local/octoprint)" },
+        { ...host, hint: "OctoPrint's address (octopi.local or an IP address), or its full URL for HTTPS or a sub-path (https://octoprint.example.com, http://pi.lan/octoprint)" },
         port("Only if OctoPrint isn't on port 80 (OctoPi uses 80; a plain install uses 5000)"),
         { ...secret("API key", "Approve this app in OctoPrint, or copy a key from OctoPrint: Settings → Application Keys", true),
           obtain: { tool: "octoprint_request_api_key", label: "Approve in OctoPrint", hint: "OctoPrint asks you to allow this app in its web page" } },

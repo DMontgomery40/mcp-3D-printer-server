@@ -1807,7 +1807,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "octoprint_request_api_key",
-            description: "OctoPrint's Application Keys approval: instead of copying an API key, the person clicks Allow in OctoPrint. Call without request_id to start (host and port of the OctoPrint; app names this app in OctoPrint's prompt); the result has request_id and approve_url (OctoPrint's own approval page). Call again with request_id and wait_ms (up to 120000) to wait for the answer: status approved returns api_key and env {API_KEY}, the setting this server reads. This server keeps the request open between calls (OctoPrint drops one that isn't polled every 5 s) for up to 10 minutes. status unsupported means this OctoPrint has no Application Keys plugin: copy the key from OctoPrint's settings instead. OctoPrint allows 3 requests a minute.",
+            description: "OctoPrint's Application Keys approval: instead of copying an API key, the person clicks Allow in OctoPrint. Call without request_id to start (host and port of the OctoPrint; app names this app in OctoPrint's prompt); the result has request_id and approve_url (OctoPrint's own approval page). Call again with request_id and wait_ms (up to 120000) to wait for the answer: status approved returns api_key and env {API_KEY}, the setting this server reads. This server keeps the request open between calls (OctoPrint drops one that isn't polled every 5 s) for up to 10 minutes. status unsupported means this OctoPrint has no Application Keys plugin: copy the key from OctoPrint's settings instead. OctoPrint allows 3 requests a minute, 5 in 10 minutes and 10 an hour. host and port name the OctoPrint being added; without port, a host given here uses port 80 (or its URL's own port), not this server's PRINTER_PORT.",
             inputSchema: { type: "object", properties: {
               host: PRINTER_TARGET_PROPERTIES.host,
               port: PRINTER_TARGET_PROPERTIES.port,
@@ -2838,8 +2838,10 @@ class ThreeDPrinterMCPServer {
               if (args?.[field] !== undefined && (typeof args[field] !== "string" || !String(args[field]).trim())) throw new Error(`Invalid ${field}: expected a non-empty string.`);
             }
             if (args?.wait_ms !== undefined && (typeof args.wait_ms !== "number" || !Number.isFinite(args.wait_ms))) throw new Error("Invalid wait_ms: expected a number.");
+            // The OctoPrint being added, not necessarily this server's printer: its own port, never PRINTER_PORT's.
+            const keyPort = args?.port !== undefined && String(args.port).trim() ? String(args.port).trim() : args?.host ? "" : port;
             return structured(await this.octoPrintAppKeys.request({
-              host, port,
+              host, port: keyPort,
               app: String(args?.app ?? SERVER_NAME).trim().slice(0, 64),
               ...(typeof args?.user === "string" ? { user: args.user.trim() } : {}),
               ...(typeof args?.request_id === "string" ? { requestId: args.request_id.trim() } : {}),

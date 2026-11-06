@@ -56,7 +56,15 @@ export function octoPrintBaseUrl(host: string, port: string): string {
     return url.toString().replace(/\/+$/, "");
   }
   const portText = String(port ?? "").trim();
-  return portText ? `http://${raw}:${portText}` : `http://${raw}`;
+  const hostText = raw.includes(":") && !raw.startsWith("[") ? `[${raw}]` : raw;
+  return portText ? `http://${hostText}:${portText}` : `http://${hostText}`;
+}
+
+/** OctoPi's mjpg-streamer behind haproxy: the web server's root, on port 80 for a plain host (not OctoPrint's own port). */
+function webcamFallbackUrl(host: string, port: string): string {
+  const raw = String(host ?? "").trim();
+  if (/^https?:\/\//i.test(raw)) return `${new URL(octoPrintBaseUrl(raw, port)).origin}/webcam/?action=snapshot`;
+  return `${octoPrintBaseUrl(raw, "")}/webcam/?action=snapshot`;
 }
 
 /** OctoPrint's connection to the printer (GET /api/connection, docs.octoprint.org/en/master/api/connection.html). */
@@ -224,7 +232,7 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
       }
     }
     // OctoPi's mjpg-streamer sits at the web server's root, also when OctoPrint is proxied at a sub-path.
-    candidates.push({ url: `${new URL(octoPrintBaseUrl(host, port)).origin}/webcam/?action=snapshot`, source: "octoprint-fallback", configured: false, transport: "http-snapshot" });
+    candidates.push({ url: webcamFallbackUrl(host, port), source: "octoprint-fallback", configured: false, transport: "http-snapshot" });
     return candidates;
   }
 
