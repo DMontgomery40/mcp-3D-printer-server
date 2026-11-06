@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.48] – 2026-11-06
+
+### Fixed
+
+- `fdm_slicing` no longer says a print's own request carries the support settings. `print_3mf`'s own slicing of a file that isn't sliced yet takes no support settings and uses the process profile's. The prompt now says a print gets the supports it was sliced with: print the sliced file itself, or slice the print with `slice_stl` and the same `enable_support` and `support_type`. Checked with the prompt tests.
+
 ## [1.2.47] – 2026-11-06
 
 ### Added

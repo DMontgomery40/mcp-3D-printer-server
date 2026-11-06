@@ -68,6 +68,9 @@ test("fdm_slicing says how the configured slicer orients, makes supports and che
   assert.match(text, /Bambu Studio's own auto-orient .* keeps overhang area low; it does not check cantilevers/);
   assert.match(text, /set enable_support on every slice_stl call/);
   assert.match(text, /left out, the process preset's own setting applies/);
+  // print_3mf's auto-slice takes no support settings: the supports a checkpoint checked reach a print only by slicing it the same way.
+  assert.match(text, /print the sliced file itself, or slice the print with slice_stl and the same enable_support and support_type/);
+  assert.doesNotMatch(text, /only the print's own request/);
   assert.match(text, /slicer_result/);
 
   const prusa = await server(t, { PRINTER_TYPE: "octoprint", SLICER_TYPE: "prusaslicer" });
