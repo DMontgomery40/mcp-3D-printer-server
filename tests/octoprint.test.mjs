@@ -152,6 +152,7 @@ test("camera URLs: OctoPi's webcam on port 80 for a plain host, the URL's own se
   const service = new CounterpartService(() => octoprint, axios.create(), { name: "t", version: "0" });
   const target = { type: "octoprint", host: "https://pi.example.com/octoprint", port: "80", apiKey: "k" };
   assert.deepEqual(service.resolve("/webcam/?action=stream", target), ["https://pi.example.com/webcam/?action=stream"]);
+  assert.deepEqual(service.resolve("webcam/?action=snapshot", target), ["https://pi.example.com/octoprint/webcam/?action=snapshot"], "a path without a leading slash stays under OctoPrint's sub-path");
   assert.deepEqual(service.resolve("http://127.0.0.1:8080/?action=snapshot", target), ["http://pi.example.com:8080/?action=snapshot"]);
 });
 

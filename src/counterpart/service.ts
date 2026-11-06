@@ -366,9 +366,10 @@ export class CounterpartService {
     try {
       parsed = new URL(raw);
     } catch {
+      // A printer reached by URL (HTTPS, a reverse proxy): resolved as OctoPrint's page resolves it in a browser,
+      // "/webcam/…" against the web server's root and "webcam/…" against OctoPrint's own sub-path.
+      if (hostIsUrl) return [new URL(raw, `${targetBase(target)}/`).toString()];
       const pathPart = raw.startsWith("/") ? raw : `/${raw}`;
-      // A printer reached by URL (HTTPS, a reverse proxy): relative to that web server, as a browser reads it.
-      if (hostIsUrl) return [new URL(pathPart, new URL(targetBase(target)).origin).toString()];
       // Relative to the printer host: the web front end on port 80, then the API port.
       return [...new Set([`http://${host}${pathPart}`, `http://${host}:${target.port}${pathPart}`])];
     }

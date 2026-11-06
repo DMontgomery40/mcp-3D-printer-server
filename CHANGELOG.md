@@ -6,7 +6,7 @@
 
 - OctoPrint: `octoprint_request_api_key` gets an API key through OctoPrint's Application Keys approval (the person clicks Allow in OctoPrint), keeping the request open between calls because OctoPrint drops one that isn't polled every 5 seconds. `counterpart_setup_fields` offers it on OctoPrint's key as `obtain`, so a client can show an "Approve in OctoPrint" button instead of asking for a pasted key.
 - OctoPrint: `connect_printer` connects OctoPrint to its printer with OctoPrint's saved port and baud rate, and with `power_on` first switches the printer on through PSU Control. `counterpart_print_progress` reports `octoprint.disconnected` (and a switched-off printer) instead of a bare offline, and a refused print says the same.
-- OctoPrint: `PRINTER_HOST` may be a URL, for an OctoPrint behind HTTPS or a reverse proxy at a sub-path. The camera's relative and loopback URLs resolve against it.
+- OctoPrint: `PRINTER_HOST` may be a URL, for an OctoPrint behind HTTPS or a reverse proxy at a sub-path. The camera's relative and loopback URLs resolve against it as OctoPrint's page does in a browser (`/webcam/…` from the web server's root, `webcam/…` under OctoPrint's sub-path).
 - `npm run test:octoprint-live`: an opt-in check against a real OctoPrint whose only printer is the Virtual Printer (it refuses any other).
 
 ### Fixed
