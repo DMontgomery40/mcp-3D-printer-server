@@ -114,6 +114,11 @@ function normalizeToolFailure(result: CallToolResult): CallToolResult {
   return failed ? { ...result, isError: true } : result;
 }
 
+/** The add-in's error kind from faust's "**tool** ERROR (KIND)" heading (fusion360_mcp/server.py), when it failed with one. */
+function errorKind(result: CallToolResult, name: string): string | undefined {
+  return new RegExp(`^\\*\\*${name}\\*\\* ERROR \\(([A-Z_]+)\\)`).exec(resultText(result).trimStart())?.[1];
+}
+
 function resultText(result: CallToolResult): string {
   return result.content.filter((entry) => entry.type === "text").map((entry) => (entry as { text: string }).text).join("\n");
 }
@@ -314,6 +319,17 @@ export class FusionMcpBridge {
       if (addinReachable && session.tools.some((tool) => tool.name === "ping")) {
         result.connected = !(await this.invoke("ping", {}, Math.min(timeout, 15_000), signal)).isError;
       }
+      // Whether a design is open, from the add-in itself. get_design_type reads the active document's Design product
+      // (the add-in's _design(), as every design command does) and changes nothing; with no design it fails with the
+      // add-in's own error kind NO_ACTIVE_DESIGN (its hints.py). Any other answer leaves activeDesign out: unknown.
+      if (result.connected === true && session.tools.some((tool) => tool.name === "get_design_type")) {
+        let read: CallToolResult;
+        // A read that didn't finish (timeout, cancel, lost connection): Fusion isn't usable now, and status says why.
+        try { read = await this.invoke("get_design_type", {}, Math.min(timeout, 15_000), signal); }
+        catch (error) { result.connected = false; throw error; }
+        if (!read.isError) result.activeDesign = true;
+        else if (errorKind(read, "get_design_type") === "NO_ACTIVE_DESIGN") result.activeDesign = false;
+      }
     } catch (error) {
       result.error = error instanceof Error ? error.message : String(error);
     }
@@ -476,6 +492,7 @@ export const FUSION_STATUS_OUTPUT_SCHEMA = {
     connected: { type: "boolean", description: "The Fusion MCP server started and the add-in answered its ping." },
     addinReachable: { type: "boolean", description: "The Fusion360MCP add-in answered a ping on FUSION_MCP_HOST:FUSION_MCP_PORT (default localhost:9877) within 2 s. Another program on that port, such as Blender's MCP addon, does not count." },
     fusionRunning: { type: "boolean" },
+    activeDesign: { type: "boolean", description: "When connected: whether Fusion has a design open, from the add-in's read-only get_design_type (false is its NO_ACTIVE_DESIGN). The pinned add-in refuses every design command, fusion_mcp_new_design included, without one (faust issue #12). Absent when unknown." },
     tools: { type: "array", items: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
     launched: { type: "boolean", description: "This call started Fusion." },
     transport: { type: "string" },
