@@ -47,7 +47,7 @@ test("a sliced plate says so, and a plain 3MF is one plate", async (t) => {
     "Metadata/model_settings.config": `<config><plate><metadata key="plater_id" value="1"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>` });
   assert.deepEqual((await listModelPlates(sliced)).plates.map(p => [p.index, p.objects, p.sliced]), [[0, [], false], [1, ["Gear"], true]]);
   const plain = await write3mf(t, { "3D/3dmodel.model": MODEL });
-  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }] }], title: "3D scan platform", designer: "Kass 3D", project_filaments: [] });
+  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }], filaments_complete: true }], title: "3D scan platform", designer: "Kass 3D", project_filaments: [] });
 });
 
 test("a file that isn't a 3MF is refused; a plate number out of range is skipped", async (t) => {
@@ -63,7 +63,7 @@ test("a plain 3MF with a large mesh is one plate", async (t) => {
   const big = `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${vertices}</vertices><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>`;
   assert.ok(big.length > 8 * 1024 * 1024);
   const file = await write3mf(t, { "3D/3dmodel.model": big });
-  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }] }]);
+  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }], filaments_complete: true }]);
 });
 
 // Bambu Studio 02.08.02.61 CLI slice of three cube copies (Nov 6 2026): model_settings.config gives each copy's
@@ -230,4 +230,53 @@ test("painting on a component mesh kept in the root model counts", async (t) => 
   const file = await write3mf(t, { "3D/3dmodel.model": model, "Metadata/model_settings.config": settings,
     "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222"], filament_type: ["PLA", "PLA"] }) });
   assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [1, 2]]], "filament 2 is painted on; the unpainted facet keeps filament 1");
+});
+
+// R24-004: a mesh too large to read must not be taken as unpainted. Painting on it may print any declared filament,
+// so the plate lists them all and says its list is incomplete: a spare row, never a missing one.
+test("a mesh past the per-file or total read limit lists every declared filament and marks the plate incomplete", async (t) => {
+  const triangles = paint => Array.from({ length: 40 }, () => `<triangle v1="0" v2="1" v3="2" paint_color="${paint}"/>`);
+  const entries = paintedProject({
+    objects: [
+      { id: 10, name: "Big", settings: { extruder: "1" }, parts: [{ id: 1, name: "big" }] },     // ~2.6 KB mesh, painted 2
+      { id: 11, name: "Small", settings: { extruder: "3" }, parts: [{ id: 1, name: "small" }] }, // ~60 B mesh, unpainted
+    ],
+    plates: [[10], [11]],
+    meshes: { "10/1": triangles("8") },
+  });
+  const file = await write3mf(t, entries);
+  const painted = await listModelPlates(file);
+  assert.deepEqual(filamentsOf(painted), [[0, [2]], [1, [3]]], "under the limits: the painting is read (filament 2 covers every facet)");
+  assert.deepEqual(painted.plates.map(plate => plate.filaments_complete), [true, true]);
+
+  // Per file: the big mesh is over the one-file limit, the small one is read.
+  const perFile = await listModelPlates(file, { paintLimits: { meshBytes: 1024, totalBytes: 1024 * 1024 } });
+  assert.deepEqual(filamentsOf(perFile), [[0, [1, 2, 3, 4, 5]], [1, [3]]], "plate 1 offers every declared filament");
+  assert.deepEqual(perFile.plates.map(plate => plate.filaments_complete), [false, true]);
+
+  // Total: each file is under the one-file limit, but together they pass the total; the one read last is unknown.
+  const total = await listModelPlates(file, { paintLimits: { meshBytes: 1024 * 1024, totalBytes: 2048 } });
+  assert.deepEqual(total.plates.map(plate => plate.filaments_complete).filter(complete => !complete).length, 1, "one mesh fits, the other doesn't");
+  const unread = total.plates.find(plate => !plate.filaments_complete);
+  assert.deepEqual(unread.filaments.map(f => f.index), [1, 2, 3, 4, 5], "the unread plate offers every declared filament");
+  assert.ok(total.plates.filter(plate => plate.filaments_complete).every(plate => plate.filaments.length < 5), "the read plate keeps its own list");
+});
+
+test("a sliced plate's list stays complete whatever the read limits: Studio's slice already names its filaments", async () => {
+  const sliced = await listModelPlates(STUDIO("two-plates-three-filaments-sliced.3mf"), { paintLimits: { meshBytes: 1, totalBytes: 1 } });
+  assert.deepEqual(filamentsOf(sliced), [[0, [1, 3]], [1, [2]]]);
+  assert.ok(sliced.plates.every(plate => plate.filaments_complete));
+});
+
+// A sliced plate that shares an unread mesh with an unsliced one stays complete: Studio's slice names its filaments.
+test("a sliced plate sharing an unread mesh with an unsliced plate keeps its own complete list", async (t) => {
+  const entries = paintedProject({
+    objects: [{ id: 10, name: "Big", settings: { extruder: "1" }, parts: [{ id: 1, name: "big" }] }],
+    plates: [[10], [10]],
+    meshes: { "10/1": Array.from({ length: 40 }, () => '<triangle v1="0" v2="1" v3="2" paint_color="8"/>') },
+    extra: { "Metadata/plate_2.json": JSON.stringify({ filament_ids: [1] }), "Metadata/plate_2.gcode": "; sliced" },
+  });
+  const listed = await listModelPlates(await write3mf(t, entries), { paintLimits: { meshBytes: 1024, totalBytes: 1024 * 1024 } });
+  assert.deepEqual(filamentsOf(listed), [[0, [1, 2, 3, 4, 5]], [1, [2]]]);
+  assert.deepEqual(listed.plates.map(plate => plate.filaments_complete), [false, true]);
 });
