@@ -12,8 +12,12 @@ export type SetupField = {
   /** The client's form field this is: an address, a port, a serial number, a model choice or a secret. */
   name: typeof SETUP_FIELD_NAMES[number];
   env: string; aliases?: string[]; label: string; hint?: string; required: boolean;
-  /** A path on this computer (a slicer app, a profiles folder): a client may offer a file chooser. */
-  input?: "path";
+  /**
+   * "path": a path on this computer (a slicer app, a profiles folder); a client may offer a file chooser.
+   * "url": an address that may also be an http or https URL with a path (OctoPrint behind HTTPS or a reverse proxy at a
+   * sub-path); a client accepts either and writes it as typed. A host field without it takes a host name or address only.
+   */
+  input?: "path" | "url";
   /** Written as typed, or upper-cased (Bambu serial numbers). */
   transform?: "uppercase";
   choices?: Array<{ value: string; label: string }>;
@@ -105,7 +109,7 @@ export function genericSetupFields(options: { server: { name: string; version: s
     kinds: [
       kind("bambu", "Bambu Lab", BAMBU_FIELDS(options.models, fromSerial)),
       kind("octoprint", "OctoPrint", [
-        { ...host, hint: "OctoPrint's address (octopi.local or an IP address), or its full URL for HTTPS or a sub-path (https://octoprint.example.com, http://pi.lan/octoprint)" },
+        { ...host, input: "url", hint: "OctoPrint's address (octopi.local or an IP address), or its full URL for HTTPS or a sub-path (https://octoprint.example.com, http://pi.lan/octoprint)" },
         port("Only if OctoPrint isn't on port 80 (OctoPi uses 80; a plain install uses 5000)"),
         { ...secret("API key", "Approve this app in OctoPrint, or copy a key from OctoPrint: Settings → Application Keys", true),
           obtain: { tool: "octoprint_request_api_key", label: "Approve in OctoPrint", hint: "OctoPrint asks you to allow this app in its web page" } },
@@ -125,7 +129,7 @@ const field = {
   type: "object",
   properties: {
     name: { type: "string", enum: [...SETUP_FIELD_NAMES] }, env: { type: "string" }, aliases: { type: "array", items: { type: "string" } },
-    label: { type: "string" }, hint: { type: "string" }, required: { type: "boolean" }, input: { type: "string", enum: ["path"] }, transform: { type: "string", enum: ["uppercase"] },
+    label: { type: "string" }, hint: { type: "string" }, required: { type: "boolean" }, input: { type: "string", enum: ["path", "url"] }, transform: { type: "string", enum: ["uppercase"] },
     choices: { type: "array", items: { type: "object", properties: { value: { type: "string" }, label: { type: "string" } }, required: ["value", "label"] } },
     fromSerial: { type: "object", properties: { prefixLength: { type: "integer" }, models: { type: "object", additionalProperties: { type: "string" } } }, required: ["prefixLength", "models"] },
     obtain: { type: "object", properties: { tool: { type: "string" }, label: { type: "string" }, hint: { type: "string" } }, required: ["tool", "label"] },

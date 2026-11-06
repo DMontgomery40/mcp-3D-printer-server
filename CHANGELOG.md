@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.55] – 2026-11-06
+
+### Added
+
+- `counterpart_setup_fields` marks OctoPrint's address field `input: "url"`: it takes a host name or address, or an http or https URL with a path (OctoPrint behind HTTPS or a reverse proxy at a sub-path, which `PRINTER_HOST` accepts since 1.2.51). A client accepts a URL there and writes it as typed; other kinds' host fields take a host name or address only. Checked with the setup-fields tests; no printer contacted.
+
 ## [1.2.54] – 2026-11-06
 
 ### Fixed
