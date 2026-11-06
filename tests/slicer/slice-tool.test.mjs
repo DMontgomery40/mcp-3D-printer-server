@@ -986,44 +986,6 @@ test("slice_stl returns Bambu Studio's result.json, warnings and errors included
   assert.equal(result.structuredContent.slicer_report.message, empty);
 });
 
-// Counterpart's case, Nov 6: one STL holding a kit's plate groups, wider than a P1S. split_to_plates puts it on plates.
-test("slice_stl split_to_plates arranges a model wider than the bed on plates, and names a part bigger than the bed", async (t) => {
-  const install = await createFakeInstall(t);
-  await install.write("machine", { name: P1S, inherits: "fdm_bbl_3dp_001_common", from: "system",
-    setting_id: "GM014", instantiation: "true", printer_model: "Bambu Lab P1S", printer_variant: "0.4",
-    nozzle_diameter: ["0.4"], default_print_profile: "0.20mm Standard @BBL X1C",
-    default_filament_profile: ["Bambu PLA Basic @BBL X1C"], machine_start_gcode: ";===== machine: P1S =====",
-    printable_area: ["0x0", "256x0", "256x256", "0x256"], bed_exclude_area: ["0x0", "18x0", "18x28", "0x28"], printable_height: "250" });
-  const { call } = await startServer(t, install, { BAMBU_PROFILES_ROOT: path.dirname(install.bbl) });
-  const boxes = (list) => Buffer.concat(list.map(([x, y, w, d, h]) => boxStlAt(x, y, w, d, h)));
-  const kit = path.join(install.root, "kit.stl");
-  await fs.writeFile(kit, binaryStl(boxes([[0, 0, 200, 200, 10], [300, 0, 200, 200, 10], [600, 0, 200, 200, 10]])));
-  let result = await call("slice_stl", { stl_path: kit, bambu_model: "p1s", split_to_plates: true });
-  assert.equal(result.isError, undefined, text(result));
-  const split = result.structuredContent.bed_split;
-  assert.equal(split.plates.length, 3);
-  assert.deepEqual(split.plates[0], { index: 0, name: "Plate 1", objects: ["Part 1"] });
-  assert.match(split.message, /bigger than the P1S bed \(256 × 256 mm, 250 mm tall\), so its 3 parts are arranged on 3 plates/);
-  const args = await install.args();
-  assert.equal(args[args.indexOf("--slice") + 1], "1");
-  assert.equal(args.at(-1), split.three_mf_path);
-  assert.ok(!args.includes("--arrange") || args[args.indexOf("--arrange") + 1] === "0", JSON.stringify(args));
-
-  await install.resetCapture();
-  await fs.writeFile(kit, binaryStl(boxes([[0, 0, 100, 150, 10], [400, 0, 300, 120, 40]])));
-  result = await call("slice_stl", { stl_path: kit, bambu_model: "p1s", split_to_plates: true });
-  assert.equal(result.isError, true);
-  const sentence = "Part 2 is 300 × 120 mm and 40 mm tall, larger than the P1S bed (256 × 256 mm, 250 mm tall), so it can't be printed on it as it is. Scale it down or cut it into pieces that fit.";
-  assert.equal(text(result), sentence);
-  assert.deepEqual(result.structuredContent.slicer_report, { failed: true, message: sentence });
-  assert.equal(existsSync(install.capture), false, "the slicer never ran");
-
-  // Where the slicer can't split, it says so before slicing.
-  result = await call("slice_stl", { stl_path: kit, slicer_type: "prusaslicer", split_to_plates: true });
-  assert.equal(result.isError, true);
-  assert.match(text(result), /split_to_plates needs the Bambu Studio or OrcaSlicer CLI/);
-});
-
 test("unsupported slicers refuse pause_at_layers before running rather than ignoring them", async t => {
   const install = await createFakeInstall(t);
   const { call } = await startServer(t, install);

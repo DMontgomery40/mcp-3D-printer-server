@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import JSZip from "jszip";
+import { listModelPlates } from "../dist/counterpart/model-plates.js";
+
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mNgYGAAAAAEAAHI6uv5AAAAAElFTkSuQmCC", "base64");
+const MODEL = `<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Title">3D scan platform</metadata><metadata name="Designer">Kass 3D</metadata><resources><object id="1" type="model"><mesh><vertices/><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>`;
+
+async function write3mf(t, entries) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "model-plates-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", "<Types/>");
+  for (const [name, value] of Object.entries(entries)) zip.file(name, value);
+  const file = path.join(directory, "model.3mf");
+  fs.writeFileSync(file, await zip.generateAsync({ type: "nodebuffer" }));
+  return file;
+}
+
+// A designer's kit as Bambu Studio saves it (the Kass 3D scan rig: six plates), unsliced. Bambu Studio shows its six
+// plates before slicing; so does this tool.
+test("a designer's project lists its plates, names and objects before slicing", async (t) => {
+  const objects = Array.from({ length: 8 }, (_, i) => `<object id="${i + 10}"><metadata key="name" value="Part &amp; ${i + 1}"/></object>`).join("");
+  const plate = (n, ids, name = "") => `<plate><metadata key="plater_id" value="${n}"/><metadata key="plater_name" value="${name}"/>${ids.map(id => `<model_instance><metadata key="object_id" value="${id}"/></model_instance>`).join("")}</plate>`;
+  const settings = `<config>${objects}${plate(1, [10, 11], "Base")}${plate(2, [12])}${plate(3, [13])}${plate(4, [14])}${plate(5, [15, 16])}${plate(6, [17])}</config>`;
+  const file = await write3mf(t, { "3D/3dmodel.model": MODEL, "Metadata/model_settings.config": settings, "Metadata/plate_1.png": PNG, "Metadata/plate_6.png": PNG });
+  const result = await listModelPlates(file);
+  assert.equal(result.plate_count, 6);
+  assert.deepEqual(result.plates.map(p => [p.index, p.name, p.objects, p.sliced]), [
+    [0, "Base", ["Part & 1", "Part & 2"], false], [1, "Plate 2", ["Part & 3"], false], [2, "Plate 3", ["Part & 4"], false],
+    [3, "Plate 4", ["Part & 5"], false], [4, "Plate 5", ["Part & 6", "Part & 7"], false], [5, "Plate 6", ["Part & 8"], false]]);
+  assert.equal(result.title, "3D scan platform");
+  assert.equal(result.designer, "Kass 3D");
+  assert.equal(result.plates[0].thumbnail_png_base64, undefined, "previews only when asked");
+  const withThumbnails = await listModelPlates(file, { thumbnails: true });
+  assert.equal(withThumbnails.plates[0].thumbnail_png_base64, PNG.toString("base64"));
+  assert.equal(withThumbnails.plates[1].thumbnail_png_base64, undefined);
+  assert.equal(withThumbnails.plates[5].thumbnail_png_base64, PNG.toString("base64"));
+});
+
+test("a sliced plate says so, and a plain 3MF is one plate", async (t) => {
+  const sliced = await write3mf(t, { "3D/3dmodel.model": MODEL, "Metadata/plate_2.gcode": "; g", "Metadata/plate_2.json": JSON.stringify({ bbox_objects: [{ name: "Gear" }, { name: "wipe_tower" }] }),
+    "Metadata/model_settings.config": `<config><plate><metadata key="plater_id" value="1"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>` });
+  assert.deepEqual((await listModelPlates(sliced)).plates.map(p => [p.index, p.objects, p.sliced]), [[0, [], false], [1, ["Gear"], true]]);
+  const plain = await write3mf(t, { "3D/3dmodel.model": MODEL });
+  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], sliced: false }], title: "3D scan platform", designer: "Kass 3D" });
+});
+
+test("a file that isn't a 3MF is refused; a plate number out of range is skipped", async (t) => {
+  const notModel = await write3mf(t, { "readme.txt": "hi" });
+  await assert.rejects(listModelPlates(notModel), /not a 3MF model/);
+  const bad = await write3mf(t, { "3D/3dmodel.model": MODEL, "Metadata/model_settings.config": `<config><plate><metadata key="plater_id" value="0"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>` });
+  assert.deepEqual((await listModelPlates(bad)).plates.map(p => p.index), [1]);
+});
+
+// A plain 3MF (PrusaSlicer, Cura, Printables) keeps its whole mesh in 3D/3dmodel.model, often tens of MB.
+test("a plain 3MF with a large mesh is one plate", async (t) => {
+  const vertices = Array.from({ length: 400_000 }, (_, i) => `<vertex x="${i}" y="0" z="0"/>`).join("");
+  const big = `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${vertices}</vertices><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>`;
+  assert.ok(big.length > 8 * 1024 * 1024);
+  const file = await write3mf(t, { "3D/3dmodel.model": big });
+  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], sliced: false }]);
+});

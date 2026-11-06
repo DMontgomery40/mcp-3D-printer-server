@@ -48,7 +48,7 @@ import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
 import { annotateTools } from "./tool-annotations.js";
 import { withRemote } from "./counterpart/remote.js";
 import { refusalReport, slicedFileFacts, slicerReport } from "./counterpart/sliced-file.js";
-import { machineBed, splitToPlates, type BedSplit } from "./slicer/bed-plates.js";
+import { listModelPlates } from "./counterpart/model-plates.js";
 
 /** The slicer's verdict beside its result.json (`slicer_report`). */
 function reportOf(result: unknown): { slicer_report?: ReturnType<typeof slicerReport> } {
@@ -58,7 +58,10 @@ function reportOf(result: unknown): { slicer_report?: ReturnType<typeof slicerRe
 /** A failed slice's report from its result.json, saying the plain sentence its text leads with. */
 function refusedReport(result: unknown, plain: string | undefined): { slicer_report?: ReturnType<typeof slicerReport> } {
   const report = slicerReport(result);
-  return report ? { slicer_report: report.failed && plain ? { ...report, message: plain } : report } : {};
+  if (!report) return {};
+  // A result.json that says success can still leave no output: the report says failed all the same.
+  if (!report.failed) return { slicer_report: { failed: true, message: plain ?? "The slicer finished but wrote no printable file.", ...(report.message ? { slicer_message: report.message } : {}) } };
+  return { slicer_report: plain ? { ...report, message: plain } : report };
 }
 function withSlicerReport<T extends { slicer_result?: unknown }>(sliced: T): T & { slicer_report?: ReturnType<typeof slicerReport> } {
   return { ...sliced, ...reportOf(sliced.slicer_result) };
@@ -96,7 +99,7 @@ import {
   studioAmsMappingInfo,
   trayColour,
 } from "./ams-mapping.js";
-import { isDualNozzleModel, MACHINE_LIMITS, normalizeModel } from "./safety/limits.js";
+import { isDualNozzleModel } from "./safety/limits.js";
 import { BambuNetworkBridge, bridgeSnapshotRoot, describeBambuNetworkPrintError, type BridgeJobUpdate } from "./bambu-network-bridge.js";
 import { PRINT_ROUTES, connectionForRoute, routeOf, routeOptions, writeEnvValues, type PrintRoute } from "./counterpart/route.js";
 import { resolveStudioPrintOptions, usedNozzleCount, type CallerPrintOptions } from "./studio-print-options.js";
@@ -471,7 +474,6 @@ const SLICE_TOOL_PROPERTIES = {
   min_save: { type: "boolean", description: "Bambu-compatible slicing: write a smaller output 3MF (--min-save)." },
   skip_modified_gcodes: { type: "boolean", description: "Bambu-compatible slicing: ignore custom G-code embedded in an input 3MF (--skip-modified-gcodes)." },
   slice_plate: { type: "number", description: "Bambu-compatible slicing: plate number to slice; 0 slices all plates (default)." },
-  split_to_plates: { type: "boolean", description: "Bambu-compatible slicing, slice_stl: for an STL or OBJ that doesn't fit the printer's bed (the machine preset's printable area, excluded areas and height), split it into its separate parts, each kept whole and parts laid out close together kept together, and arrange them on as many plates as needed. structuredContent.bed_split then says fits: true (nothing changed), or gives three_mf_path (the multi-plate project 3MF, sliced here: plate slice_plate, default 1, or 0 for all), plates (index from 0, name, objects) and a plain message; slice another plate by slicing three_mf_path with slice_plate and arrange false. A part larger than the bed is an error whose message names it and its size against the bed's (bed_split.too_large). Not with scale, rotate or copies." },
   ...PRINT_QUALITY_PROPERTIES,
   layer_height: {
     type: "number", exclusiveMinimum: 0, maximum: 2,
@@ -1007,7 +1009,7 @@ class ThreeDPrinterMCPServer {
   }
 
   /** Shared slice_stl / slice_with_template implementation. */
-  private async runSliceTool(toolName: string, args: Record<string, unknown> | undefined): Promise<SliceOutput & { bed_split?: BedSplit }> {
+  private async runSliceTool(toolName: string, args: Record<string, unknown> | undefined): Promise<SliceOutput> {
     if (!args?.stl_path) {
       throw new Error("Missing required parameter: stl_path");
     }
@@ -1081,38 +1083,8 @@ class ThreeDPrinterMCPServer {
     const slicerPath =
       this.resolveExecutableSelectorArg(args.slicer_path, toolName, "slicer_path") ?? defaultSlicerPathFor(slicerType);
 
-    // A model bigger than the bed: split into its parts and arranged on as many plates as it needs
-    // (src/slicer/bed-plates.ts), then that project is sliced, one plate (slice_plate, default 1) or all (0).
-    let slicePath = String(args.stl_path);
-    let bedSplit: BedSplit | undefined;
-    // slice_stl only: it is the tool that hands back the plates (slice_with_template returns just a path).
-    if (toolName === "slice_stl" && args.split_to_plates === true && /\.(stl|obj)$/i.test(slicePath)) {
-      if (!bambuCli || !options || !printerPreset) {
-        throw new Error(`split_to_plates needs the Bambu Studio or OrcaSlicer CLI with a Bambu model, not ${slicerType}; nothing was sliced.`);
-      }
-      const transformed = ["scale", "rotate", "rotate_x", "rotate_y", "repetitions", "clone_objects"].filter(key => args[key] !== undefined && !(key === "repetitions" && Number(args.repetitions) === 1));
-      if (transformed.length) throw new Error(`split_to_plates can't be combined with ${transformed.join(", ")}; nothing was sliced.`);
-      let profilesRoot: string | undefined;
-      try { profilesRoot = detectProfilesRoot(slicerPath, slicerType); }
-      catch (error) { console.error(`split_to_plates: no profile tree for ${slicerType} (${error instanceof Error ? error.message : String(error)}).`); }
-      const printerName = printerPreset.replace(/^Bambu Lab /, "").replace(/ [\d.]+ nozzle$/, "");
-      const model = normalizeModel(printerName);
-      const bed = await machineBed(profilesRoot, printerPreset, model ? MACHINE_LIMITS[model]?.volume : undefined);
-      // Named by the model's bytes and the bed: different models, or one model on different beds, never share a file.
-      const modelHash = createHash("sha256").update(await fs.promises.readFile(slicePath)).update(JSON.stringify(bed)).digest("hex").slice(0, 12);
-      bedSplit = await splitToPlates({ modelPath: slicePath, bed, printer: printerName,
-        outPath: path.join(TEMP_DIR, `${path.basename(slicePath, path.extname(slicePath))}_plates_${modelHash}.3mf`) });
-      // A part bigger than the bed: said plainly by the caller, nothing sliced.
-      if (!bedSplit.fits && !("three_mf_path" in bedSplit)) return { path: "", bed_split: bedSplit };
-      if (!bedSplit.fits) {
-        slicePath = bedSplit.three_mf_path;
-        // The project keeps the arrangement: exactly what a client slicing that 3MF's plate sends.
-        Object.assign(options, { arrange: false, orient: false, ensureOnBed: false, slicePlate: options.slicePlate ?? 1 });
-      }
-    }
-
-    const sliced = await this.stlManipulator.sliceSTLWithResult(
-      slicePath,
+    return this.stlManipulator.sliceSTLWithResult(
+      String(args.stl_path),
       slicerType,
       slicerPath,
       slicerProfile,
@@ -1122,7 +1094,6 @@ class ThreeDPrinterMCPServer {
       options,
       processOverrides
     );
-    return bedSplit ? { ...sliced, bed_split: bedSplit } : sliced;
   }
 
   setupErrorHandling() {
@@ -2247,6 +2218,18 @@ class ThreeDPrinterMCPServer {
             }
           },
           {
+            name: "list_3mf_plates",
+            description: "List a Bambu Studio or OrcaSlicer 3MF's plates as its designer laid them out, before slicing: plate_count, and for each plate its index (from 0; slice_stl's slice_plate is index + 1, inspect_print_file's plate_index is index), name, the objects on it and whether the file already holds its G-code (sliced). A plain 3MF without plate metadata is one plate. include_thumbnails adds each plate's own preview from the file (thumbnail_png_base64). Read-only.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                three_mf_path: { type: "string", description: "Path to the 3MF (a designer's project, sliced or not)" },
+                include_thumbnails: { type: "boolean", description: "Include each plate's own preview PNG from the file, base64 (default false)" }
+              },
+              required: ["three_mf_path"]
+            }
+          },
+          {
             name: "inspect_print_file",
             description: "Inspect an exact private snapshot of a prepared sliced 3MF or textual G-code file and selected plate without contacting a printer. Returns versioned file-only evidence; no printer readiness or permission to dispatch is established. Does not auto-slice.",
             inputSchema: {
@@ -2803,6 +2786,12 @@ class ThreeDPrinterMCPServer {
             break;
           }
 
+          case "list_3mf_plates": {
+            if (typeof args?.three_mf_path !== "string" || !args.three_mf_path) throw new Error("Missing required parameter: three_mf_path");
+            if (args.include_thumbnails !== undefined && typeof args.include_thumbnails !== "boolean") throw new Error("include_thumbnails must be a boolean.");
+            const plates = await listModelPlates(args.three_mf_path, { thumbnails: args.include_thumbnails === true });
+            return { content: [{ type: "text", text: JSON.stringify(plates) }], structuredContent: plates };
+          }
           case "inspect_print_file": {
             const allowed = new Set(["file_path", "bambu_model", "plate_index", "nozzle_diameters", "bed_type", "include_preview"]);
             if (!args || Object.keys(args).some(key => !allowed.has(key))) throw new Error("inspect_print_file accepts only file/model/plate/nozzle/bed/preview arguments.");
@@ -2925,11 +2914,6 @@ class ThreeDPrinterMCPServer {
             
           case "slice_stl": {
             const sliced = await this.runSliceTool("slice_stl", args as Record<string, unknown> | undefined);
-            const split = sliced.bed_split;
-            if (split && !split.fits && !("three_mf_path" in split)) {
-              return { content: [{ type: "text", text: split.message }], isError: true,
-                structuredContent: { slicer_report: { failed: true, message: split.message }, bed_split: split } };
-            }
             // The text stays the sliced file's path; slicer_result is the slicer's own result.json, verbatim, and
             // slicer_report its verdict and words, so clients don't read the slicer's format.
             return { content: [{ type: "text", text: sliced.path }], structuredContent: withSlicerReport(sliced) };

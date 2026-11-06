@@ -572,6 +572,14 @@ Set a target temperature for a printer component. Use `bed` or `extruder`; Bambu
 
 These tools work with `PRINTER_TYPE=bambu` (or `type: "bambu"`). Set up LAN Only Mode, the serial number, the access code, and the model as described in [Bambu Lab setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#bambu-lab).
 
+#### list_3mf_plates
+
+List a designer's 3MF plates as Bambu Studio shows them when the file is opened, before slicing. A downloaded kit's six plates are six plates here too. For each plate it gives `index` (from 0, so `slice_stl`'s `slice_plate` is `index + 1`), `name`, the `objects` on it, and `sliced` (whether the file already holds its G-code). It also gives `plate_count` and the file's `title`, `designer` and `licence` when they're set. A plain 3MF with no plate metadata is one plate. `include_thumbnails` adds each plate's own preview from the file. Read-only.
+
+```json
+{ "three_mf_path": "/Users/yourname/Downloads/kit.3mf", "include_thumbnails": true }
+```
+
 #### inspect_print_file
 
 Inspect a local prepared `.3mf` or textual `.gcode` file without connecting to a printer or slicing. Pass `file_path` and an explicit `bambu_model`; optional `plate_index` is zero-based (default 0), `nozzle_diameters` contains one or two supported sizes, and `bed_type` checks the file's declared plate type.
@@ -691,7 +699,6 @@ Options for the Bambu-compatible path:
 | `template_3mf_path`, `template_name`, `template_dir` | Reuse a 3MF's or profile's slicer settings as the process profile (defaults: `BAMBU_TEMPLATE_3MF_PATH`, `BAMBU_TEMPLATE_DIR`). An explicit `slicer_profile` takes precedence |
 | `uptodate`, `min_save`, `skip_modified_gcodes` | Refresh 3MF presets to the installed slicer, write a smaller 3MF, or ignore custom G-code embedded in an input 3MF |
 | `orient`, `arrange`, `ensure_on_bed`, `repetitions`, `clone_objects`, `skip_objects`, `slice_plate` | Placement: auto-orient, auto-arrange (STL input is arranged by default; set `false` to keep a 3MF layout), drop floating models onto the bed, copies (OrcaSlicer copies an STL with `--clone-objects`), a total clone count for the loaded model, objects to skip, and which plate to slice (0 = all) |
-| `split_to_plates` | For an STL or OBJ bigger than the printer's bed, on the Bambu-compatible route: split it into its separate parts, each kept whole. Parts laid out close together, and parts inside one another, stay together where they fit. They are arranged on as many plates as needed, inside the machine preset's `printable_area`, clear of its `bed_exclude_area` and under its `printable_height`. `structuredContent.bed_split` is `{ fits: true }`, or gives the multi-plate project 3MF (`three_mf_path`), its `plates` (`index` from 0, `name`, `objects`) and a plain `message`; that project's plate `slice_plate` (default 1) is sliced. A part larger than the bed is an error that names it and its size against the bed's. Not with `scale`, rotations or copies. `counterpart_printer_info` reports `capabilities.slicing.plates`. |
 | `scale`, `rotate`, `rotate_x`, `rotate_y` | Transform before slicing (uniform scale; rotations in degrees). For OrcaSlicer STL input the server applies them to a mesh copy in Orca's order to avoid a CLI crash; see [OrcaSlicer CLI limits](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing) |
 | `enable_timelapse`, `allow_mix_temp` | Insert timelapse parking moves; allow filaments with different temperature needs on one plate |
 

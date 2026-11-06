@@ -65,6 +65,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   get_slice_settings: write(true, true, false), // extracts a 3MF's settings to a TEMP_DIR path named after the file; a same-named 3MF replaces it
   confirm_temperatures: read(false),
   inspect_print_file: read(false),
+  list_3mf_plates: read(false),
 
   // FULU BambuNetwork.
   check_fulu_orca_setup: read(true), // run_bridge_probe starts FULU's bridge host
