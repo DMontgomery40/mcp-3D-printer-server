@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.47] – 2026-11-06
+
+### Added
+
+- `slice_stl` `split_to_plates`: a model bigger than the bed is split across plates. On the Bambu-compatible route, an STL or OBJ that doesn't fit the printer's bed is split into its separate parts, each kept whole. Parts laid out within 20 mm of each other stay together as the designer grouped them, and a part inside another stays with it, where they fit. They are arranged on as many plates as needed, inside the machine preset's printable area, clear of its excluded areas and under its printable height. The result is a deterministic multi-plate project 3MF, `bed_split.plates` (`index`, `name`, `objects`) and a plain message, and plate 1 (or `slice_plate`) of that project is sliced. A part larger than the bed is an error that names the part and its size against the bed's. `counterpart_printer_info` reports `capabilities.slicing.plates`. This ports bambu-printer-mcp 1.1.67. Checked with unit tests and the stand-in slicer; the same module split a real 850 × 521 mm kit STL into 4 plates, each of which Bambu Studio 02.09 on macOS sliced (through bambu-printer-mcp).
+
+### Changed
+
+- A slicer's refusal reaches a person as a plain sentence. `slicer_report.message` and the start of a failed slice's text say what is wrong, for example Bambu Studio's and OrcaSlicer's empty-plate, off-plate and too-tall refusals, PrusaSlicer's "outside of the print volume" and CuraEngine's "no non-empty layers", matched on their own strings. The slicer's words stay in the new `slicer_report.slicer_message` for logs. A refusal without a result.json, including from PrusaSlicer and Cura, carries a `slicer_report` too. A successful slice's warnings are unchanged in `message`.
+
 ## [1.2.46] – 2026-11-05
 
 ### Added
