@@ -12,6 +12,8 @@ export interface SliceCapabilities {
   supports: boolean;
   copies: boolean;
   orient: boolean;
+  /** slice_stl's split_to_plates: a model bigger than the bed is split across plates (src/slicer/bed-plates.ts). */
+  plates: boolean;
 }
 
 export function isBambuProjectSlicer(slicerType: string): boolean {
@@ -25,5 +27,5 @@ export function usesBambuCli(slicerType: string, bambuModel: boolean): boolean {
 
 export function sliceCapabilities(slicerType: string, bambuModel: boolean): SliceCapabilities {
   const bambuCli = usesBambuCli(slicerType, bambuModel);
-  return { supports: bambuCli || slicerType === "orcaslicer", copies: bambuCli, orient: bambuCli };
+  return { supports: bambuCli || slicerType === "orcaslicer", copies: bambuCli, orient: bambuCli, plates: bambuCli };
 }

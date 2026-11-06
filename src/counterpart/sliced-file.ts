@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { loadSafe3mfArchive, readBoundedPrintFile } from "../safety/archive.js";
+import { plainSlicerError, UNKNOWN_SLICER_ERROR } from "../slicer/slicer-messages.js";
 
 /**
  * What a client shows about a sliced file, read here so it never parses slicer formats itself (Counterpart PRD
@@ -92,12 +93,20 @@ async function readFacts(filePath: string, plateIndex: number): Promise<SlicedFi
 }
 
 /**
- * Bambu Studio's (or OrcaSlicer's) verdict on a slice, from its result.json: whether it failed, its own words
- * (the error and every plate's warning, verbatim), and how many plates it sliced.
+ * Bambu Studio's (or OrcaSlicer's) verdict on a slice, from its result.json: whether it failed, what a person is
+ * told (`message`: a plain sentence for a refusal, src/slicer/slicer-messages.ts; the plates' warnings for a slice
+ * that worked), the slicer's own words for the log (`slicer_message`: the error and every plate's warning,
+ * verbatim), and how many plates it sliced.
  */
-export interface SlicerReport { failed: boolean; message?: string; plate_count?: number }
+export interface SlicerReport { failed: boolean; message?: string; slicer_message?: string; plate_count?: number }
 
 const clean = (text: string) => text.replace(/\r\n?/g, "\n").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, " ").trim();
+
+/** A refusal's report: the plain sentence, and the slicer's words kept beside it. */
+export function refusalReport(words: string): SlicerReport {
+  const raw = clean(words).slice(0, 2000);
+  return { failed: true, message: plainSlicerError(raw) ?? UNKNOWN_SLICER_ERROR, ...(raw ? { slicer_message: raw } : {}) };
+}
 
 export function slicerReport(result: unknown): SlicerReport | undefined {
   if (!result || typeof result !== "object" || Array.isArray(result)) return undefined;
@@ -110,6 +119,6 @@ export function slicerReport(result: unknown): SlicerReport | undefined {
   const failed = value.return_code !== 0;
   const error = typeof value.error_string === "string" ? clean(value.error_string) : "";
   const words = [...new Set([...(failed && error ? [error] : []), ...warnings])].join("\n").slice(0, 2000);
-  if (failed) return { failed, message: words || `The slicer could not slice this model (return code ${String(value.return_code)}).` };
-  return { failed, ...(words ? { message: words } : {}), ...(plateCount ? { plate_count: plateCount } : {}) };
+  if (failed) return refusalReport(words || `return code ${String(value.return_code)}`);
+  return { failed, ...(words ? { message: words, slicer_message: words } : {}), ...(plateCount ? { plate_count: plateCount } : {}) };
 }

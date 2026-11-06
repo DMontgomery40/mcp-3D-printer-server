@@ -1,3 +1,4 @@
+import { plainSlicerError, UNKNOWN_SLICER_ERROR } from "./slicer-messages.js";
 /**
  * Slicer failures carry their own phase and actionable suggestion so the MCP
  * error handler never falls back to printer-connectivity advice for a local
@@ -60,12 +61,19 @@ export class SlicerError extends Error {
   readonly phase: SlicerFailurePhase;
   readonly suggestion: string;
   readonly details: SlicerFailureDetails;
-  /** The slicer's own words from `slicerResult`; the message starts with them. */
+  /** The slicer's own words from `slicerResult`; the message gives them after its plain sentence. */
   readonly slicerText: string;
+
+  /** What a person is told: a plain sentence for an execution or output failure (src/slicer/slicer-messages.ts). */
+  readonly plain?: string;
 
   constructor(phase: SlicerFailurePhase, message: string, details: SlicerFailureDetails = {}, readonly slicerResult?: SlicerResult) {
     const slicerText = slicerResult ? slicerResultText(slicerResult) : "";
-    super(slicerText ? `${slicerText}\n${message}` : message);
+    const words = [slicerText, message, details.stderrTail, details.stdoutTail].filter(Boolean).join("\n");
+    // Preparation failures are this server's own words; a slicer's refusal is said plainly, its words follow.
+    const plain = phase === "preparation" ? undefined : plainSlicerError(words) ?? UNKNOWN_SLICER_ERROR;
+    super(plain ? `${plain}\nThe slicer said: ${slicerText ? `${slicerText}\n${message}` : message}` : slicerText ? `${slicerText}\n${message}` : message);
+    this.plain = plain;
     this.name = "SlicerError";
     this.phase = phase;
     this.details = details;

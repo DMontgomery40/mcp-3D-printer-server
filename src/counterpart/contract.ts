@@ -65,7 +65,7 @@ export interface CounterpartCapabilities {
   gcode: boolean;
   /** What slice_stl can apply with this server's slicer for this printer (src/slicer/capabilities.ts). For a Bambu printer on
    *  OrcaSlicer this assumes the call passes the printer's bambu_model, as Counterpart does; without one, OrcaSlicer slices generically. */
-  slicing?: { supports: boolean; copies: boolean; orient: boolean };
+  slicing?: { supports: boolean; copies: boolean; orient: boolean; plates?: boolean };
 }
 
 export interface PrinterIdentity {
@@ -164,7 +164,7 @@ export const PRINTER_INFO_OUTPUT_SCHEMA = {
         slicing: {
           type: "object",
           required: ["supports", "copies", "orient"],
-          properties: { supports: { type: "boolean" }, copies: { type: "boolean" }, orient: { type: "boolean" } },
+          properties: { supports: { type: "boolean" }, copies: { type: "boolean" }, orient: { type: "boolean" }, plates: { type: "boolean" } },
         },
       },
     },
