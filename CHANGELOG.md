@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `list_3mf_plates` gives each plate its `filaments`: the project filaments that plate prints with, and only those, with each one's colour, material, filament id and the first part using it (counterpart/1). Clients asked people to choose spools for every filament any plate used: on the Kass 3D scan rig's Screws plate, which prints only filament 3, Counterpart also asked for filaments 1 and 2 from other plates. A sliced plate uses Studio's own `plate_N.json` `filament_ids`. An unsliced plate is worked out as Bambu Studio's CLI does (`PartPlate::get_extruders_under_cli`, `PartPlate.cpp:1298-1420`; `ModelVolume::get_extruders`, `Model.cpp:3357-3412`): each part's filament, its painted facets (decoded as `TriangleSelector::deserialize` reads them, `TriangleSelector.cpp:2111-2139`), feature filaments, support and raft filaments, layer ranges and the plate's tool changes. Negative parts, support blockers and enforcers, unprintable objects and other plates don't count. Checked against two projects written by Bambu Studio 02.08.02.61's CLI on a Mac (two plates, three filaments; sliced and unsliced give the same answer as Studio's own slice) and the scan rig's metadata.
+- `print_3mf` sends a tray only for the filaments the plate prints and -1 for every other project filament, on the LAN and plug-in routes, as Bambu Studio does (`SelectMachineDialog::get_ams_mapping_result`, `SelectMachine.cpp:1463-1500`). A caller's project-level `ams_mapping` with trays for unused filaments was sent as it was. Checked with unit tests; no printer contacted.
+
 ## [1.2.52] – 2026-11-06
 
 These port bambu-printer-mcp 1.1.72's fixes from a read of Bambu Studio 02.08.02.61's source. The real Bambu Studio slices named below ran through bambu-printer-mcp's code, which is the same as this release's for these paths; this repo's tests use those Studio-written files.

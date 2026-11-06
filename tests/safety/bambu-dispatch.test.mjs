@@ -442,7 +442,9 @@ test("ams_slots wins over ams_mapping only when given; ams_mapping is taken as t
   const file = await twoFilamentFixture(t);
   const { printer, events } = isolatedPrinter(amsStatus());
   await print3mf(printer, file, { useAMS: true, amsMapping: [0, 3] });
-  assert.deepEqual(events.find(({ action }) => action === "publish").payload.print.ams_mapping, [0, 3, -1, -1, -1]);
+  // The plate prints only project filament 2: its tray is sent, and -1 for filament 1, as Bambu Studio sends it
+  // (SelectMachine.cpp:1463-1500), never the caller's tray 0 for a filament that doesn't print.
+  assert.deepEqual(events.find(({ action }) => action === "publish").payload.print.ams_mapping, [-1, 3, -1, -1, -1]);
 });
 
 for (const [name, options, error] of [

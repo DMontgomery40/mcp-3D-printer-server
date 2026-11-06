@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import JSZip from "jszip";
 import { listModelPlates } from "../dist/counterpart/model-plates.js";
+import { paintedStates } from "../dist/counterpart/plate-filaments.js";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mNgYGAAAAAEAAHI6uv5AAAAAElFTkSuQmCC", "base64");
 const MODEL = `<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Title">3D scan platform</metadata><metadata name="Designer">Kass 3D</metadata><resources><object id="1" type="model"><mesh><vertices/><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>`;
@@ -46,7 +47,7 @@ test("a sliced plate says so, and a plain 3MF is one plate", async (t) => {
     "Metadata/model_settings.config": `<config><plate><metadata key="plater_id" value="1"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>` });
   assert.deepEqual((await listModelPlates(sliced)).plates.map(p => [p.index, p.objects, p.sliced]), [[0, [], false], [1, ["Gear"], true]]);
   const plain = await write3mf(t, { "3D/3dmodel.model": MODEL });
-  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false }], title: "3D scan platform", designer: "Kass 3D" });
+  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }] }], title: "3D scan platform", designer: "Kass 3D", project_filaments: [] });
 });
 
 test("a file that isn't a 3MF is refused; a plate number out of range is skipped", async (t) => {
@@ -62,7 +63,7 @@ test("a plain 3MF with a large mesh is one plate", async (t) => {
   const big = `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${vertices}</vertices><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>`;
   assert.ok(big.length > 8 * 1024 * 1024);
   const file = await write3mf(t, { "3D/3dmodel.model": big });
-  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false }]);
+  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }] }]);
 });
 
 // Bambu Studio 02.08.02.61 CLI slice of three cube copies (Nov 6 2026): model_settings.config gives each copy's
@@ -72,4 +73,91 @@ test("each plate lists its object copies with their identify_id", async () => {
   const result = await listModelPlates(file);
   assert.deepEqual(result.plates.map(p => p.instances), [[
     { identify_id: 15, name: "cube.stl_1" }, { identify_id: 26, name: "cube.stl_2" }, { identify_id: 37, name: "cube.stl_3" }]]);
+});
+
+// --- Each plate's filaments, as Bambu Studio works them out (counterpart/1) ---------------------------------------
+
+const STUDIO = name => new URL(`./fixtures/studio-02.08.02.61/${name}`, import.meta.url).pathname;
+const filamentsOf = result => result.plates.map(plate => [plate.index, plate.filaments.map(filament => filament.index)]);
+
+// Written by Bambu Studio 02.08.02.61's CLI from a two-plate project: plate 1 holds Body (filament 1) and Trim
+// (filament 3), plate 2 holds Lid (filament 2). The sliced copy's plate_N.json is Studio's own record.
+test("a Studio-written two-plate project lists only each plate's own filaments, sliced or not", async () => {
+  const unsliced = await listModelPlates(STUDIO("two-plates-three-filaments-unsliced.3mf"));
+  const sliced = await listModelPlates(STUDIO("two-plates-three-filaments-sliced.3mf"));
+  assert.deepEqual(filamentsOf(unsliced), [[0, [1, 3]], [1, [2]]]);
+  assert.deepEqual(filamentsOf(sliced), filamentsOf(unsliced), "the derivation agrees with Studio's slice");
+  assert.deepEqual(unsliced.plates[0].filaments, [
+    { index: 1, colour: "#000000", material: "PLA", filament_id: "GFA00", name: "Body" },
+    { index: 3, colour: "#5B6579", material: "PLA", filament_id: "GFA00", name: "Trim" }]);
+  assert.deepEqual(sliced.plates[1].filaments, [{ index: 2, colour: "#FEC600", material: "PLA", filament_id: "GFA00", name: "Lid" }]);
+  assert.deepEqual(unsliced.project_filaments.map(f => [f.index, f.colour]), [[1, "#000000"], [2, "#FEC600"], [3, "#5B6579"]], "every declared filament, for slice_stl's one profile per filament");
+});
+
+// Nov 6 repro: the Kass 3D scan rig (six plates, Studio-saved metadata). The Screws plate prints only filament 3;
+// filaments 1 and 2 belong to parts on other plates and must not be offered for it.
+test("the scan rig's Screws plate prints only its own filament, not the other plates'", async (t) => {
+  const file = await write3mf(t, {
+    "3D/3dmodel.model": MODEL,
+    "Metadata/model_settings.config": fs.readFileSync(new URL("./fixtures/kass-scan-rig-model_settings.config", import.meta.url)),
+    "Metadata/project_settings.config": fs.readFileSync(new URL("./fixtures/kass-scan-rig-project_settings.config", import.meta.url)),
+  });
+  const result = await listModelPlates(file);
+  assert.deepEqual(filamentsOf(result), [[0, [3]], [1, [1]], [2, [1]], [3, [2]], [4, [1]], [5, [1]]]);
+  assert.deepEqual(result.plates[0].filaments[0], { index: 3, colour: "#FF0000", material: "PLA", filament_id: "GFA00", name: "_____(1)" });
+});
+
+test("painted facets decode as Bambu Studio stores them", () => {
+  assert.deepEqual(paintedStates("4"), [1]);
+  assert.deepEqual(paintedStates("8"), [2]);
+  assert.deepEqual(paintedStates("2C"), [5], "3 + the next nibble");
+  assert.deepEqual(paintedStates("0FC"), [18], "each 0b1111 nibble adds 15");
+  assert.deepEqual(paintedStates("841"), [1, 2], "a split facet's children");
+  assert.deepEqual(paintedStates("0841"), [1, 2], "trailing nibbles past the tree are not read");
+  assert.deepEqual(paintedStates("zz"), []);
+});
+
+const paintedProject = ({ objects, plates, project = {}, meshes = {}, extra = {} }) => ({
+  "3D/3dmodel.model": `<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources>${objects.map(o => `<object id="${o.id}" type="model"><components>${o.parts.map(part => `<component p:path="/3D/Objects/object_${o.id}.model" objectid="${part.id}"/>`).join("")}</components></object>`).join("")}</resources><build>${objects.map(o => `<item objectid="${o.id}"${o.printable === false ? ' printable="0"' : ""}/>`).join("")}</build></model>`,
+  "Metadata/model_settings.config": `<config>${objects.map(o => `<object id="${o.id}"><metadata key="name" value="${o.name}"/>${Object.entries(o.settings ?? {}).map(([k, v]) => `<metadata key="${k}" value="${v}"/>`).join("")}${o.parts.map(part => `<part id="${part.id}" subtype="${part.subtype ?? "normal_part"}"><metadata key="name" value="${part.name ?? ""}"/>${Object.entries(part.settings ?? {}).map(([k, v]) => `<metadata key="${k}" value="${v}"/>`).join("")}</part>`).join("")}</object>`).join("")}${plates.map((ids, i) => `<plate><metadata key="plater_id" value="${i + 1}"/>${ids.map(id => `<model_instance><metadata key="object_id" value="${id}"/></model_instance>`).join("")}</plate>`).join("")}</config>`,
+  "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222", "#333333", "#444444", "#555555"], filament_type: ["PLA", "PLA", "PETG", "PLA", "PLA-S"], ...project }),
+  ...Object.fromEntries(objects.map(o => [`3D/Objects/object_${o.id}.model`, `<model><resources>${o.parts.map(part => `<object id="${part.id}" type="model"><mesh><vertices/><triangles>${(meshes[`${o.id}/${part.id}`] ?? ['<triangle v1="0" v2="1" v3="2"/>']).join("")}</triangles></mesh></object>`).join("")}</resources></model>`])),
+  ...extra,
+});
+
+test("a plate's painted, support, layer-range and tool-change filaments count; other plates' never do", async (t) => {
+  const file = await write3mf(t, paintedProject({
+    objects: [
+      // Fully painted with filaments 2 and 4: the part's own filament 1 never prints.
+      { id: 10, name: "Painted", settings: { extruder: "1" }, parts: [{ id: 1, name: "shell" }] },
+      // Support on for this object, with filament 5 for support.
+      { id: 11, name: "Supported", settings: { extruder: "1", enable_support: "1", support_filament: "5" }, parts: [{ id: 1, name: "arm" }] },
+      // A negative part and a support blocker print nothing; a modifier prints with its filament.
+      { id: 12, name: "Holes", settings: { extruder: "1" }, parts: [{ id: 1, name: "body" }, { id: 2, subtype: "negative_part", settings: { extruder: "4" } }, { id: 3, subtype: "support_blocker", settings: { extruder: "4" } }, { id: 4, subtype: "modifier_part", name: "insert", settings: { extruder: "3" } }] },
+      // On plate 2: a layer range in filament 2.
+      { id: 13, name: "Ranged", settings: { extruder: "3" }, parts: [{ id: 1 }] },
+      // Not printable anywhere.
+      { id: 14, name: "Hidden", settings: { extruder: "5" }, parts: [{ id: 1 }], printable: false },
+    ],
+    plates: [[10, 11, 12], [13, 14]],
+    meshes: { "10/1": ['<triangle v1="0" v2="1" v3="2" paint_color="8"/>', '<triangle v1="0" v2="1" v3="2" paint_color="881"/>', '<triangle v1="0" v2="1" v3="2" paint_color="1C"/>'] },
+    extra: {
+      "Metadata/layer_config_ranges.xml": `<objects><object id="4"><range min_z="0" max_z="2"><option opt_key="extruder">2</option></range></object></objects>`,
+      "Metadata/custom_gcode_per_layer.xml": `<custom_gcodes_per_layer><plate><plate_info id="2"/><layer top_z="1" type="2" extruder="5"/><layer top_z="2" type="0" extruder="4"/></plate></custom_gcodes_per_layer>`,
+    },
+  }));
+  const result = await listModelPlates(file);
+  assert.deepEqual(filamentsOf(result), [[0, [1, 2, 3, 4, 5]], [1, [2, 3, 5]]]);
+  // Filament 1 is on plate 1 only through the unpainted parts; 4 only through painting (the negative part's 4 doesn't print).
+  assert.deepEqual(result.plates[0].filaments.map(f => [f.index, f.name]), [[1, "arm"], [2, "shell"], [3, "insert"], [4, "shell"], [5, undefined]]);
+});
+
+test("a fully painted part drops its own filament; the project's support filament counts when support is on", async (t) => {
+  const file = await write3mf(t, paintedProject({
+    objects: [{ id: 10, name: "Painted", settings: { extruder: "1" }, parts: [{ id: 1, name: "shell" }] }],
+    plates: [[10]],
+    project: { enable_support: "1", support_filament: "0", support_interface_filament: "3" },
+    meshes: { "10/1": ['<triangle v1="0" v2="1" v3="2" paint_color="8"/>'] },
+  }));
+  assert.deepEqual(filamentsOf(await listModelPlates(file)), [[0, [2, 3]]]);
 });

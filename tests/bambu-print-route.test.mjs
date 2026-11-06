@@ -111,7 +111,9 @@ async function twoFilamentProject(directory, plates = 1) {
   return file;
 }
 
-for (const plateIndex of [0, 1]) test(`print_3mf on FULU's LAN route sends the checked job for plate ${plateIndex + 1} with Bambu Studio's AMS fields, never plain MQTT`, { timeout: 120_000 }, async (t) => {
+// ams_slots names the used filament's tray; a project-level ams_mapping with a tray for the unused filament 1 is sent
+// as Bambu Studio sends it, -1 there (SelectMachine.cpp:1463-1500).
+for (const plateIndex of [0, 1]) for (const ams of [{ ams_slots: [3] }, { ams_mapping: [1, 3] }]) test(`print_3mf on FULU's LAN route sends the checked job for plate ${plateIndex + 1} with Bambu Studio's AMS fields (${Object.keys(ams)[0]}), never plain MQTT`, { timeout: 120_000 }, async (t) => {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-print-"));
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   const log = path.join(work, "host.jsonl");
@@ -128,7 +130,7 @@ for (const plateIndex of [0, 1]) test(`print_3mf on FULU's LAN route sends the c
   }, { preload });
   // Codex review on #52: the FULU route used to inspect and dispatch plate 1 whatever plate_index said.
   const file = await twoFilamentProject(work, plateIndex + 1);
-  const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file, ams_slots: [3], use_ams: true, plate_index: plateIndex } }, undefined, { timeout: 110_000 });
+  const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file, ...ams, use_ams: true, plate_index: plateIndex } }, undefined, { timeout: 110_000 });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   const printed = JSON.parse(result.content[0].text);
   assert.equal(printed.bridgeMethod, "net.start_local_print");

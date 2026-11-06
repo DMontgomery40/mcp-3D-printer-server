@@ -8,6 +8,7 @@
  * is one plate. Only bounded metadata is read; nothing is extracted or run.
  */
 import { readSafe3mfArchive } from "../safety/archive.js";
+import { plateFilaments, type PlateFilament, type PlateLayout } from "./plate-filaments.js";
 
 export interface ModelPlate {
   /** Zero-based, as inspect_print_file's plate_index; slice_stl's slice_plate is index + 1. */
@@ -22,6 +23,12 @@ export interface ModelPlate {
   instances: { identify_id: number; name: string }[];
   /** The file already holds this plate's G-code. */
   sliced: boolean;
+  /**
+   * The project filaments this plate prints with, and only those (counterpart/1): what a client asks the person to
+   * choose spools for. From the slice when the file holds one (plate_N.json filament_ids), otherwise worked out as
+   * Bambu Studio does for the objects on this plate (see plate-filaments.ts). Filaments of other plates never appear.
+   */
+  filaments: PlateFilament[];
   /** The plate's own preview from the file (Metadata/plate_N.png), when asked for and present. */
   thumbnail_png_base64?: string;
 }
@@ -31,6 +38,11 @@ export interface ModelPlates {
   title?: string;
   designer?: string;
   licence?: string;
+  /**
+   * Every filament the project declares (project_settings.config), used on a plate or not, from 1: slice_stl takes one
+   * load_filaments profile per declared filament. Empty for a 3MF that declares none.
+   */
+  project_filaments: PlateFilament[];
 }
 
 /** For the settings and plate files; the model file can be large and is only scanned. */
@@ -58,7 +70,7 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
   if (!/<(?:\w+:)?model\b/.test(head)) throw new Error("That file is not a 3MF model.");
   // An element named `tag`, plain or with a namespace prefix (<item …>, <p:item …>).
   const has = (tag: string) => !!modelBytes && [" ", ">", "/", "\n", "\r", "\t"].some(end => modelBytes.includes(`<${tag}${end}`) || modelBytes.includes(`:${tag}${end}`));
-  const result: ModelPlates = { plate_count: 0, plates: [] };
+  const result: ModelPlates = { plate_count: 0, plates: [], project_filaments: [] };
   const metadata = new Map([...head.matchAll(/<metadata\s+name="([^"]+)"[^>]*>([^<]*)<\/metadata>/g)].map(match => [match[1], words(match[2])]));
   if (metadata.get("Title")) result.title = metadata.get("Title");
   if (metadata.get("Designer")) result.designer = metadata.get("Designer");
@@ -70,6 +82,7 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
     return [match[1], words(name?.[1] ?? "")];
   }));
   const plates = new Map<number, ModelPlate>();
+  const layouts = new Map<number, PlateLayout>();
   // A plate number out of range is skipped, as a slicer would not show it.
   const valid = (number: number) => Number.isSafeInteger(number) && number >= 1 && number <= MAX_PLATES;
   for (const match of settings.matchAll(/<plate\b[^>]*>([\s\S]*?)<\/plate>/g)) {
@@ -84,7 +97,8 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
       return object !== undefined && Number.isSafeInteger(identify) && identify > 0
         ? [{ identify_id: identify, name: objects.get(object) ?? "" }] : [];
     }).slice(0, MAX_INSTANCES_PER_PLATE);
-    plates.set(number, { index: number - 1, name: words(name?.[1] ?? "") || `Plate ${number}`, sliced: false, instances,
+    layouts.set(number, { number, objectIds: [...match[1].matchAll(/<metadata\s+key="object_id"\s+value="(\d+)"/g)].map(item => item[1]) });
+    plates.set(number, { index: number - 1, name: words(name?.[1] ?? "") || `Plate ${number}`, sliced: false, instances, filaments: [],
       objects: [...match[1].matchAll(/<metadata\s+key="object_id"\s+value="(\d+)"/g)].flatMap(item => objects.get(item[1]) ? [objects.get(item[1])!] : []) });
   }
   for (const name of Object.keys(zip.files)) {
@@ -92,11 +106,15 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
     if (!match) continue;
     const number = Number(match[1]);
     if (!valid(number)) continue;
-    const plate = plates.get(number) ?? { index: number - 1, name: `Plate ${number}`, objects: [], instances: [], sliced: false };
+    const plate = plates.get(number) ?? { index: number - 1, name: `Plate ${number}`, objects: [], instances: [], sliced: false, filaments: [] };
+    const layout = layouts.get(number) ?? { number, objectIds: [] };
+    layouts.set(number, layout);
     if (match[2] === "gcode") plate.sliced = true;
     else {
       try {
-        const value = JSON.parse(await text(name)) as { bbox_objects?: { name?: unknown }[] };
+        const value = JSON.parse(await text(name)) as { bbox_objects?: { name?: unknown }[]; filament_ids?: unknown };
+        // Studio's record of the filaments this plate's slice uses (0-based project positions).
+        if (Array.isArray(value.filament_ids)) layout.slicedFilamentIds = value.filament_ids.filter((id): id is number => Number.isInteger(id) && id >= 0 && id < 64);
         if (Array.isArray(value.bbox_objects)) plate.objects = value.bbox_objects
           .flatMap(object => typeof object.name === "string" && object.name !== "wipe_tower" ? [words(object.name)] : []).slice(0, 200);
       } catch { /* the plate keeps the objects model_settings lists */ }
@@ -105,13 +123,22 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
   }
   result.plates = [...plates.values()].sort((a, b) => a.index - b.index);
   // A standard single-build 3MF has no Bambu plate metadata: it is one plate.
-  if (!result.plates.length) result.plates.push({ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false });
+  if (!result.plates.length) {
+    result.plates.push({ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [] });
+    // Without plates every object is on the one plate.
+    layouts.set(1, { number: 1, objectIds: [...settings.matchAll(/<object\b[^>]*\bid="(\d+)"/g)].map(match => match[1]) });
+  }
   const geometry = has("item") && (has("mesh") || has("component"));
   if (!geometry) {
     // A sliced-only file (previews and G-code, no model): only its sliced plates can print.
     result.plates = result.plates.filter(plate => plate.sliced);
     if (!result.plates.length) throw new Error("This 3MF has previews and settings but no model or printable plate.");
   }
+  // A slice's G-code without its plate_N.json gives no filament list: the derivation stands.
+  const filaments = await plateFilaments(zip, settings, modelBytes && modelBytes.length <= 64 * 1024 * 1024 ? modelBytes.toString("utf8") : head,
+    result.plates.map(plate => layouts.get(plate.index + 1) ?? { number: plate.index + 1, objectIds: [] }));
+  for (const plate of result.plates) plate.filaments = filaments.plates.get(plate.index + 1) ?? [];
+  result.project_filaments = filaments.project;
   if (options.thumbnails) for (const plate of result.plates) {
     const file = zip.file(`Metadata/plate_${plate.index + 1}.png`);
     if (!file) continue;
