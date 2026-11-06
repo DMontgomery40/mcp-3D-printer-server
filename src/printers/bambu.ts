@@ -605,7 +605,12 @@ export class BambuImplementation extends PrinterImplementation {
 
     const remoteFileName = uniquePrintName(options.filePath);
     const remoteProjectPath = `cache/${remoteFileName}`;
-    await this.ftpUpload(host, token, options.filePath, `/${remoteProjectPath}`);
+    try {
+      await this.ftpUpload(host, token, options.filePath, `/${remoteProjectPath}`);
+    } catch (error) {
+      // Nothing has been sent to the printer but (part of) a file, so the print certainly did not start.
+      throw new PrinterRefusal("printer-upload-failed", `The print file did not reach the printer (${error instanceof Error ? error.message : String(error)}). No print was started.`);
+    }
     // Uploads can be long. Recheck current state before the command is dispatched.
     const dispatchStatus = await this.getSafetyStatus(host, serial, token);
     validatePrinterState(dispatchStatus, requirements);

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- When the upload of a `print_3mf` job fails, the error carries `code: "printer-upload-failed"` (counterpart/1), as bambu-printer-mcp 1.1.74 does: the file didn't reach the printer and no print command was sent, so a client knows the print did not start. Counterpart had reported such a failure as "could not confirm a print start". This server's upload already streams the file from disk, so it doesn't have bambu-printer-mcp 1.1.73's single-write upload timeout. Checked with the dispatch tests; no printer contacted.
+
 ## [1.2.56] – 2026-11-06
 
 ### Added
