@@ -2,7 +2,7 @@
 
 ## [1.2.52] – 2026-11-06
 
-These port bambu-printer-mcp 1.1.71's fixes from a read of Bambu Studio 02.08.02.61's source. The real Bambu Studio slices named below ran through bambu-printer-mcp's code, which is the same as this release's for these paths; this repo's tests use those Studio-written files.
+These port bambu-printer-mcp 1.1.72's fixes from a read of Bambu Studio 02.08.02.61's source. The real Bambu Studio slices named below ran through bambu-printer-mcp's code, which is the same as this release's for these paths; this repo's tests use those Studio-written files.
 
 ### Fixed
 
