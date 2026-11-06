@@ -55,6 +55,11 @@ function reportOf(result: unknown): { slicer_report?: ReturnType<typeof slicerRe
   const report = slicerReport(result);
   return report ? { slicer_report: report } : {};
 }
+/** A failed slice's report from its result.json, saying the plain sentence its text leads with. */
+function refusedReport(result: unknown, plain: string | undefined): { slicer_report?: ReturnType<typeof slicerReport> } {
+  const report = slicerReport(result);
+  return report ? { slicer_report: report.failed && plain ? { ...report, message: plain } : report } : {};
+}
 function withSlicerReport<T extends { slicer_result?: unknown }>(sliced: T): T & { slicer_report?: ReturnType<typeof slicerReport> } {
   return { ...sliced, ...reportOf(sliced.slicer_result) };
 }
@@ -1080,7 +1085,8 @@ class ThreeDPrinterMCPServer {
     // (src/slicer/bed-plates.ts), then that project is sliced, one plate (slice_plate, default 1) or all (0).
     let slicePath = String(args.stl_path);
     let bedSplit: BedSplit | undefined;
-    if (args.split_to_plates === true && /\.(stl|obj)$/i.test(slicePath)) {
+    // slice_stl only: it is the tool that hands back the plates (slice_with_template returns just a path).
+    if (toolName === "slice_stl" && args.split_to_plates === true && /\.(stl|obj)$/i.test(slicePath)) {
       if (!bambuCli || !options || !printerPreset) {
         throw new Error(`split_to_plates needs the Bambu Studio or OrcaSlicer CLI with a Bambu model, not ${slicerType}; nothing was sliced.`);
       }
@@ -3821,8 +3827,9 @@ class ThreeDPrinterMCPServer {
         tool,
         slicer: { phase: error.phase, ...error.details },
         // A slicer's refusal always carries slicer_report: the plain sentence a person sees, the slicer's words for the log.
-        ...(error.slicerResult ? { slicer_result: error.slicerResult, ...reportOf(error.slicerResult) }
-          : error.plain ? { slicer_report: { ...refusalReport([error.details.stderrTail, error.details.stdoutTail].filter(Boolean).join("\n") || message), message: error.plain } } : {}),
+        // The plain sentence of the text is the report's too (it also reads the slicer's output, not only result.json).
+        ...(error.slicerResult ? { slicer_result: error.slicerResult, ...refusedReport(error.slicerResult, error.plain) }
+          : error.plain ? { slicer_report: { ...refusalReport([error.details.stderrTail, error.details.stdoutTail].filter(Boolean).join("\n") || error.detail), message: error.plain } } : {}),
       };
     }
     if (SLICING_TOOLS.has(tool)) {

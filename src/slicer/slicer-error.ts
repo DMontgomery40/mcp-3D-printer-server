@@ -67,13 +67,19 @@ export class SlicerError extends Error {
   /** What a person is told: a plain sentence for an execution or output failure (src/slicer/slicer-messages.ts). */
   readonly plain?: string;
 
+  /** This server's own description of the failure, without the plain sentence or the slicer's words. */
+  readonly detail: string;
+
   constructor(phase: SlicerFailurePhase, message: string, details: SlicerFailureDetails = {}, readonly slicerResult?: SlicerResult) {
     const slicerText = slicerResult ? slicerResultText(slicerResult) : "";
-    const words = [slicerText, message, details.stderrTail, details.stdoutTail].filter(Boolean).join("\n");
-    // Preparation failures are this server's own words; a slicer's refusal is said plainly, its words follow.
-    const plain = phase === "preparation" ? undefined : plainSlicerError(words) ?? UNKNOWN_SLICER_ERROR;
-    super(plain ? `${plain}\nThe slicer said: ${slicerText ? `${slicerText}\n${message}` : message}` : slicerText ? `${slicerText}\n${message}` : message);
+    const output = [slicerText, details.stderrTail, details.stdoutTail].filter(Boolean).join("\n");
+    // Preparation failures, and a slicer that never said anything (it didn't start, timed out or was cancelled),
+    // are this server's own words. A slicer's refusal is said plainly, and its words follow.
+    const plain = phase === "preparation" ? undefined : plainSlicerError(`${output}\n${message}`) ?? (output ? UNKNOWN_SLICER_ERROR : undefined);
+    const words = slicerText ? `${slicerText}\n${message}` : message;
+    super(plain ? `${plain}\nThe slicer said: ${words}` : words);
     this.plain = plain;
+    this.detail = message;
     this.name = "SlicerError";
     this.phase = phase;
     this.details = details;

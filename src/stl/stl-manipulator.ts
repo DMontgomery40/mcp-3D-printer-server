@@ -1396,7 +1396,7 @@ export class STLManipulator extends EventEmitter {
       } catch (error) {
         // Keep the CLI's own result.json before the output directory is removed.
         const failedResult = cliOutputDir ? readCliResult(cliOutputDir) : undefined;
-        if (failedResult && error instanceof SlicerError) throw new SlicerError(error.phase, error.message, error.details, failedResult);
+        if (failedResult && error instanceof SlicerError) throw new SlicerError(error.phase, error.detail, error.details, failedResult);
         throw error;
       }
       const slicerResult = cliOutputDir ? readCliResult(cliOutputDir) : undefined;
@@ -1438,7 +1438,7 @@ export class STLManipulator extends EventEmitter {
         if (!bambuExport && slicerType !== 'orcaslicer') await keep();
       } catch (error) {
         if (error instanceof SlicerError) throw error;
-        throw new SlicerError('output', error instanceof Error ? error.message : String(error), { slicerType, slicerPath }, slicerResult);
+        throw new SlicerError('output', error instanceof SlicerError ? error.detail : error instanceof Error ? error.message : String(error), { slicerType, slicerPath }, slicerResult);
       }
 
       if (progressCallback) progressCallback(100, "Slicing completed successfully");
