@@ -187,6 +187,22 @@ test('AMS HT slot128 is addressed as unit128 slot0, preserving its material chec
   assert.doesNotThrow(() => check(fresh({ams:reported}),req({useAMS:true,amsMapping:[128]})));
   assert.throws(() => check(fresh({ams:reported}),req({materials:['PETG'],useAMS:true,amsMapping:[128]})),/material/i);
 });
+test('a second AMS HT (tray 129) is its own unit 129, slot 0, as Bambu Studio maps it', async () => {
+  // Bambu Studio 02.08.02.61 DevFilaSystem.cpp:367-368: an AMS-HT's tray index is its unit id; its one slot is 0.
+  const reported = {ams:[{id:'128',tray:[{id:'0',tray_type:'PLA'}]},{id:'129',tray:[{id:'0',tray_type:'PETG'}],tray_exist_bits:'1'}]};
+  assert.doesNotThrow(() => check(fresh({ams:reported}),req({materials:['PETG'],useAMS:true,amsMapping:[129]})));
+  assert.throws(() => check(fresh({ams:reported}),req({materials:['PLA'],useAMS:true,amsMapping:[129]})),/material/i);
+  assert.throws(() => check(fresh({ams:{ams:[{id:'129',tray:[{id:'0',tray_type:'PETG'}],tray_exist_bits:'0'}]}}),req({materials:['PETG'],useAMS:true,amsMapping:[129]})),/empty/i);
+  // ams_mapping2 sends the unit's own ams_id with slot 0 (SelectMachine.cpp:1489-1497); AMS and external spools are unchanged.
+  const { bridgeAmsMapping2Entry } = await import('../../dist/ams-mapping.js');
+  for (const dual of [false, true]) {
+    assert.deepEqual(bridgeAmsMapping2Entry(128, dual), { ams_id: 128, slot_id: 0 });
+    assert.deepEqual(bridgeAmsMapping2Entry(129, dual), { ams_id: 129, slot_id: 0 });
+    assert.deepEqual(bridgeAmsMapping2Entry(7, dual), { ams_id: 1, slot_id: 3 });
+  }
+  assert.deepEqual(bridgeAmsMapping2Entry(254, false), { ams_id: 254, slot_id: 254 });
+  assert.deepEqual(bridgeAmsMapping2Entry(255, true), { ams_id: 255, slot_id: 0 });
+});
 test('known dual-nozzle printers reject a scalar legacy report that cannot establish both nozzles', () => {
   assert.throws(() => check(fresh({model_id:'O1D'}),req({model:'h2d'})),/nozzle|ambiguous/i);
 });

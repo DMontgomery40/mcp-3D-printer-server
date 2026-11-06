@@ -622,3 +622,42 @@ test('H2C selected variant bases retain independent material and hardware ceilin
     [['PLA'],['Direct Drive Standard'],[-1]],
   ]) await assert.rejects(inspect(t,'',{model:'h2c'},h2cVariantFixture(materials,selected,targets)),/temperature|limit|material/i);
 });
+
+// Bambu Studio 02.08.02.61 names each plate three ways: project_settings / G-code header curr_bed_type
+// uses the enum key (libslic3r/PrintConfig.cpp:437-445), plate_N.json bed_type the G-code string
+// (PrintConfig.hpp:437-456 bed_type_to_gcode_string), and this server's bed_type its own token.
+const STUDIO_PLATES=[
+  ['Cool Plate','cool_plate','cool_plate'],
+  ['Engineering Plate','eng_plate','engineering_plate'],
+  ['High Temp Plate','hot_plate','hot_plate'],
+  ['Textured PEI Plate','textured_plate','textured_plate'],
+  ['Supertack Plate','supertack_plate','supertack_plate'],
+];
+test('every Bambu Studio plate agrees across its enum key, plate_N.json token and the selected bed type',async t=>{
+  for(const [key,token,selected] of STUDIO_PLATES) {
+    const entries={'Metadata/project_settings.config':{printer_model:'Bambu Lab P1S',nozzle_diameter:['0.4'],filament_type:['PLA'],curr_bed_type:key},
+      'Metadata/plate_1.json':{bed_type:token,filament_ids:[0]},'Metadata/plate_1.gcode':header()+`; curr_bed_type = ${key}\nM104 S220\n`};
+    await inspect(t,'',{model:'p1s',bedType:selected},entries);
+    // The GUI's label for the plate means the same plate.
+    for(const other of STUDIO_PLATES.filter(plate=>plate[0]!==key))
+      await assert.rejects(inspect(t,'',{model:'p1s',bedType:other[2]},entries),/bed/i,`${key} selected as ${other[2]}`);
+  }
+  // "Smooth PEI Plate / High Temp Plate" is the GUI label of High Temp Plate (PrintConfig.cpp:1309).
+  const hot={'Metadata/project_settings.config':{printer_model:'Bambu Lab P1S',nozzle_diameter:['0.4'],filament_type:['PLA'],curr_bed_type:'High Temp Plate'},
+    'Metadata/plate_1.json':{bed_type:'hot_plate',filament_ids:[0]},'Metadata/plate_1.gcode':header()+'M104 S220\n'};
+  await inspect(t,'',{model:'p1s',bedType:'Smooth PEI Plate / High Temp Plate'},hot);
+  // Two different plates in one file still contradict.
+  hot['Metadata/plate_1.json'].bed_type='eng_plate';
+  await assert.rejects(inspect(t,'',{model:'p1s'},hot),/contradictory bed type/);
+});
+test('real Bambu Studio 02.08.02.61 slices on the Engineering and SuperTack plates pass inspection with their bed type',async ()=>{
+  // macOS CLI slices of a 20 mm cube (Nov 6 2026): plate_1.json bed_type eng_plate / supertack_plate,
+  // curr_bed_type "Engineering Plate" / "Supertack Plate".
+  const {inspectPrintFile}=await load();
+  const file=name=>new URL(`../fixtures/studio-02.08.02.61/${name}`,import.meta.url).pathname;
+  for(const [name,bed,other] of [['p1s-engineering-plate-petg.3mf','engineering_plate','textured_plate'],['p1s-supertack-plate-pla.3mf','supertack_plate','cool_plate']]) {
+    const result=await inspectPrintFile(file(name),{model:'p1s',nozzleDiameters:[0.4],plateIndex:0,bedType:bed});
+    assert.equal(result.model,'p1s');
+    await assert.rejects(inspectPrintFile(file(name),{model:'p1s',nozzleDiameters:[0.4],plateIndex:0,bedType:other}),/bed type/);
+  }
+});

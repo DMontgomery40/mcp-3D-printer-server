@@ -17,14 +17,17 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { flattenForCli, detectProfilesRoot, resolveBblMachineProfile } from "./profile-flatten.js";
 import { mergeProcessKeys } from "./print-quality.js";
+import { bambuCliExitCode } from "./cli-exit-codes.js";
 
 export type BambuCliSlicerType = "bambustudio" | "orcaslicer" | "orcaslicer-bambulab";
 
+// curr_bed_type's enum keys (Bambu Studio 02.08.02.61 libslic3r/PrintConfig.cpp:437-445).
 export const BAMBU_CLI_BED_TYPES: Record<string, string> = {
   textured_plate: "Textured PEI Plate",
   cool_plate: "Cool Plate",
   engineering_plate: "Engineering Plate",
   hot_plate: "High Temp Plate",
+  supertack_plate: "Supertack Plate",
 };
 
 /** Bambu-compatible slicer CLI options exposed through slice_stl. */
@@ -92,11 +95,6 @@ export function configuredBambuProfileDirs(): string[] {
 export function resolveBambuCliBedType(bedType?: string): string | undefined {
   if (!bedType) return undefined;
   const normalized = bedType.trim().toLowerCase();
-  if (normalized === "supertack_plate") {
-    throw new Error(
-      "The Bambu CLI SuperTack bed type is not verified; use a pre-sliced 3MF or choose textured_plate, cool_plate, engineering_plate, or hot_plate."
-    );
-  }
   return BAMBU_CLI_BED_TYPES[normalized] || bedType;
 }
 
@@ -618,32 +616,6 @@ export function planBambuCliInput(slicerType: BambuCliSlicerType, is3mf: boolean
 }
 
 /**
- * Bambu Studio and OrcaSlicer CLI errors (libslic3r/Utils.hpp). The process
- * exits with the low byte of the code; on Linux result.json names the error.
- */
-const BAMBU_CLI_ERRORS: Record<number, string> = {
-  [-2]: "invalid parameters to the slicer",
-  [-3]: "input files not found",
-  [-5]: "preset file cannot be parsed",
-  [-6]: "model file cannot be parsed",
-  [-9]: "copying objects failed",
-  [-17]: "printer is not compatible with the process preset",
-  [-21]: "auto-arranging objects failed",
-  [-22]: "auto-orienting objects failed",
-  [-50]: "a plate is empty or has no object fully inside it; arrange the model or place it on the plate",
-  [-51]: "incorrect slicing parameters",
-  [-52]: "objects extend over the bed boundary",
-  [-60]: "no printable objects remain after skipping",
-  [-61]: "filaments are not compatible with the plate type",
-  [-62]: "the filaments' temperatures differ too much",
-  [-63]: "objects collide in print-by-object mode",
-  [-64]: "objects collide",
-  [-100]: "slicing the model failed",
-  [-101]: "G-code conflicts after slicing",
-  [-102]: "G-code in an unprintable area",
-};
-
-/**
  * The result.json in the run's fresh output directory, parsed verbatim. Bambu
  * Studio 02.08.02.61 writes it on macOS for successes and failures alike.
  */
@@ -663,8 +635,8 @@ export function bambuCliFailureReason(exitCode: number | null, outputDir: string
     return `${result.error_string.trim()}${result.return_code !== undefined ? ` [${result.return_code}]` : ""}`;
   }
   if (exitCode === null) return undefined;
-  const code = Object.keys(BAMBU_CLI_ERRORS).map(Number).find((value) => value === exitCode || (value & 0xff) === exitCode);
-  return code === undefined ? undefined : `${BAMBU_CLI_ERRORS[code]} [${code}]`;
+  const known = bambuCliExitCode(exitCode);
+  return known ? `${known.sentence} [${known.code}]` : undefined;
 }
 
 /** CLI flags for the prepared bundle and caller options (input path appended by the caller). */

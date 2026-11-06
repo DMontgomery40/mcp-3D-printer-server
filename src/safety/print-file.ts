@@ -30,13 +30,26 @@ function list(value: unknown): string[] {
   if (typeof value === 'string') return value.split(/[;,]/).map(s=>s.trim().replace(/^"|"$/g,''));
   return [];
 }
+/**
+ * Every name a Bambu plate goes by, to the plate_N.json bed_type token Bambu Studio writes for it
+ * (02.08.02.61 PrintConfig.hpp:437-456 bed_type_to_gcode_string). project_settings and the G-code header
+ * carry curr_bed_type's enum key instead (PrintConfig.cpp:437-445); the GUI labels (:1307-1311) and this
+ * server's own bed_type values name the same plates. Other names (another slicer's plates) stay as written,
+ * so two copies of the same name still agree.
+ */
+const BED_NAMES: Record<string, string[]> = {
+  cool_plate: ['cool plate'],
+  eng_plate: ['engineering plate'],
+  hot_plate: ['high temp plate', 'smooth pei plate', 'smooth pei plate / high temp plate', 'high temperature plate'],
+  textured_plate: ['textured pei plate'],
+  supertack_plate: ['supertack plate', 'bambu cool plate supertack', 'cool plate supertack'],
+};
+const BED_TOKENS = new Map(Object.entries(BED_NAMES).flatMap(([token, names]) =>
+  [token, ...names].map(name => [name.replace(/[_-]/g,' '), token] as const)));
 function normalizeBed(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
   const text = value.trim().toLowerCase().replace(/[_-]/g,' ').replace(/\s+/g,' ');
-  if (['textured pei plate','textured plate'].includes(text)) return 'textured pei plate';
-  if (['supertack plate','cool plate supertack'].includes(text)) return 'cool plate supertack';
-  if (['smooth pei plate','high temp plate','high temperature plate','hot plate'].includes(text)) return 'smooth pei plate';
-  return text;
+  return BED_TOKENS.get(text) ?? text;
 }
 function metadataValues(metadata: Metadata[], keys: string[]): unknown[] {
   return metadata.flatMap(data=>keys.filter(key=>data[key] !== undefined).map(key=>data[key]));

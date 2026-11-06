@@ -44,7 +44,7 @@ async function fixture(t, slicerType = 'bambustudio') {
   const customCapture = path.join(root, 'custom-gcodes.json');
   await fs.writeFile(pausedFixture, await pausedZip.generateAsync({ type: 'nodebuffer' }));
   await fs.mkdir(path.dirname(executable), { recursive: true });
-  await fs.writeFile(executable, `#!${process.execPath}\nconst fs = require('fs'); const path = require('path'); const args = process.argv.slice(2); fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args)); const custom = args.includes('--load-custom-gcodes') ? args[args.indexOf('--load-custom-gcodes') + 1] : undefined; if (custom) fs.copyFileSync(custom, ${JSON.stringify(customCapture)}); fs.copyFileSync(custom ? ${JSON.stringify(pausedFixture)} : ${JSON.stringify(slicedFixture)}, path.join(args[args.indexOf('--outputdir') + 1], args[args.indexOf('--export-3mf') + 1]));\n`, { mode: 0o755 });
+  await fs.writeFile(executable, `#!${process.execPath}\nconst fs = require('fs'); const path = require('path'); const args = process.argv.slice(2); fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(args)); const settings = args.includes('--load-settings') ? args[args.indexOf('--load-settings') + 1].split(';') : []; if (settings[1]) fs.copyFileSync(settings[1], ${JSON.stringify(capture)} + '.process.json'); const custom = args.includes('--load-custom-gcodes') ? args[args.indexOf('--load-custom-gcodes') + 1] : undefined; if (custom) fs.copyFileSync(custom, ${JSON.stringify(customCapture)}); fs.copyFileSync(custom ? ${JSON.stringify(pausedFixture)} : ${JSON.stringify(slicedFixture)}, path.join(args[args.indexOf('--outputdir') + 1], args[args.indexOf('--export-3mf') + 1]));\n`, { mode: 0o755 });
   const saved = Object.fromEntries(['BAMBU_PROFILES_ROOT', 'BAMBU_SLICER_PROFILE_DIRS', 'BAMBU_CLI_FLATTEN'].map(k => [k, process.env[k]]));
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   process.env.BAMBU_PROFILES_ROOT = profiles;
@@ -643,6 +643,11 @@ test('multi-nozzle machines get a prime tower every nozzle can reach', async t =
   assert.deepEqual(await tower(noTower), [undefined, undefined]);
 });
 
+// Files Bambu Studio 02.08.02.61 wrote itself (macOS CLI, 20 mm cube, Nov 6 2026): a project whose
+// Metadata/custom_gcode_per_layer.xml holds a colour change at 0.6 mm and a pause at 1.0 mm (layer 5),
+// and the CLI's own output after a pause was added before layer 8 (1.6 mm).
+const STUDIO = (name) => new URL(`../fixtures/studio-02.08.02.61/${name}`, import.meta.url);
+
 for (const slicerType of ['bambustudio', 'orcaslicer', 'orcaslicer-bambulab']) {
   test(`${slicerType} places requested pause before its exact layer and removes temporary custom G-code`, async t => {
     const f = await fixture(t, slicerType);
@@ -660,14 +665,68 @@ for (const slicerType of ['bambustudio', 'orcaslicer', 'orcaslicer-bambulab']) {
     await assert.rejects(f.slice({ pauseAtLayers: [3] }), /did not place the pause before layer 3/);
   });
 
-  test(`${slicerType} retains a project pause when no new layer was requested`, async t => {
+  test(`${slicerType} leaves a project's own pause to the CLI when no new layer was requested`, async t => {
     const f = await fixture(t, slicerType);
+    // Bambu Studio 02.08.02.61 saves a project's pauses in Metadata/custom_gcode_per_layer.xml and the CLI
+    // loads them with the project, so nothing is passed.
+    const designer = await JSZip.loadAsync(await fs.readFile(STUDIO('designer-colour-change-and-pause.3mf')));
     const project = new JSZip();
-    project.file('Metadata/custom_gcode_per_print_z.xml', '<custom_gcodes_per_layer><plate><plate_info id="1"/><layer top_z="0.6" type="1" color="" extruder="1"/><mode value="SingleExtruder"/></plate></custom_gcodes_per_layer>');
+    project.file('Metadata/custom_gcode_per_layer.xml', await designer.file('Metadata/custom_gcode_per_layer.xml').async('string'));
     const input = path.join(f.root, 'saved-pause.3mf');
     await fs.writeFile(input, await project.generateAsync({ type: 'nodebuffer' }));
     await f.slice({}, undefined, input);
-    const info = JSON.parse(await fs.readFile(f.customCapture, 'utf8'));
-    assert.deepEqual(info.gcodes.map(item => [item.type, item.print_z]), [['PausePrint', 0.6]]);
+    assert.equal((await f.args()).includes('--load-custom-gcodes'), false);
   });
 }
+
+async function studioProject(f, plates = 1) {
+  const designer = await JSZip.loadAsync(await fs.readFile(STUDIO('designer-colour-change-and-pause.3mf')));
+  const zip = new JSZip();
+  for (const [name, entry] of Object.entries(designer.files)) {
+    // The fake CLI never reads the input; only the files this server reads before slicing are kept.
+    if (entry.dir || /^Metadata\/(project_settings\.config|plate_\d+\.gcode(\.md5)?)$/.test(name)) continue;
+    zip.file(name, await entry.async('nodebuffer'));
+  }
+  if (plates > 1) {
+    const settings = await designer.file('Metadata/model_settings.config').async('string');
+    const plate = /<plate>[\s\S]*?<\/plate>/.exec(settings)[0];
+    zip.file('Metadata/model_settings.config', settings.replace(plate, plate + '\n  ' + plate.replace('key="plater_id" value="1"', 'key="plater_id" value="2"')));
+  }
+  const file = path.join(f.root, `designer-${plates}.3mf`);
+  await fs.writeFile(file, await zip.generateAsync({ type: 'nodebuffer' }));
+  await fs.copyFile(STUDIO('designer-colour-change-and-pause.3mf'), f.slicedFixture);
+  await fs.copyFile(STUDIO('paused-output.3mf'), f.pausedFixture);
+  return file;
+}
+
+test('a pause request keeps the colour change and pause Bambu Studio saved in the project', async t => {
+  const f = await fixture(t);
+  const input = await studioProject(f);
+  await f.slice({ pauseAtLayers: [8], slicePlate: 1 }, undefined, input);
+  const info = JSON.parse(await fs.readFile(f.customCapture, 'utf8'));
+  assert.equal(info.mode, 'SingleExtruder');
+  assert.deepEqual(info.gcodes.map(g => [g.type, Number(g.print_z.toFixed(4)), g.color]),
+    [['ColorChange', 0.6, '#FF0000'], ['PausePrint', 1, ''], ['PausePrint', 1.6, '']]);
+});
+
+test('pauses on a multi-plate project need one plate, or the other plates would lose their own', async t => {
+  const f = await fixture(t);
+  const input = await studioProject(f, 2);
+  for (const options of [{ pauseAtLayers: [8] }, { pauseAtLayers: [8], slicePlate: 0 }]) {
+    await assert.rejects(f.slice(options, undefined, input), /one plate at a time/);
+    await assert.rejects(fs.access(f.capture), { code: 'ENOENT' }, 'refused before any slice');
+  }
+  // Plate 2 has no entries of its own in the project; only the requested pause is passed.
+  await f.slice({ pauseAtLayers: [8], slicePlate: 2 }, undefined, input);
+  assert.deepEqual(JSON.parse(await fs.readFile(f.customCapture, 'utf8')).gcodes.map(g => [g.type, Number(g.print_z.toFixed(4))]), [['PausePrint', 1.6]]);
+});
+
+test('supertack_plate reaches the CLI as Bambu Studio\'s own "Supertack Plate" bed type', async t => {
+  // curr_bed_type's enum key (Bambu Studio 02.08.02.61 PrintConfig.cpp:437-445). A real slice with it on Nov 6
+  // wrote plate_1.json bed_type supertack_plate and heated the bed to the SuperTack temperature.
+  for (const [bed, key] of [['supertack_plate', 'Supertack Plate'], ['engineering_plate', 'Engineering Plate']]) {
+    const f = await fixture(t);
+    await f.slice({ bedType: bed });
+    assert.equal(JSON.parse(await fs.readFile(f.capture + '.process.json', 'utf8')).curr_bed_type, key);
+  }
+});

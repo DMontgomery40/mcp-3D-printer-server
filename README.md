@@ -633,7 +633,7 @@ Before anything is uploaded, the server inspects a private copy of the selected 
 - `connection_mode` and `connection_type` choose the route (default `BAMBU_DEFAULT_CONNECTION_MODE` and `BAMBU_DEFAULT_CONNECTION_TYPE`; see [FULU's BambuNetwork route](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/FULU.md#print-and-control-through-fulus-bambunetwork-route)). The bridge route sends Bambu Studio's `ams_mapping`, `ams_mapping2` and `ams_mapping_info` and the Send dialog's calibration options as Bambu Studio resolves them.
 - After sending the command, the server watches fresh reports for up to 15 seconds (`BAMBU_DISPATCH_CHECK_MS`) and returns `dispatch: "started"` or `"unconfirmed"`. If the firmware refuses the command (HMS 0500-0500-0001-0007 on firmware 01.08.05 and later without Developer Mode), the call fails and says so; the checked file stays on the printer's storage.
 - `nozzle_type` (`stainless_steel`, `hardened_steel`, `tungsten_carbide`, `brass`) sets the installed nozzle when the project must be auto-sliced. The job's nozzle type must match the printer's report.
-- `bed_type` is one of `textured_plate`, `cool_plate`, `engineering_plate`, or `hot_plate` (default `BED_TYPE`, else `textured_plate`). It must match the plate's bed metadata, so a file sliced for another plate, or without bed metadata, is refused until `bed_type` matches.
+- `bed_type` is one of `textured_plate`, `cool_plate`, `engineering_plate`, `hot_plate`, or `supertack_plate` (default `BED_TYPE`, else `textured_plate`). It must match the plate's bed metadata, so a file sliced for another plate, or without bed metadata, is refused until `bed_type` matches.
 - `nozzle_diameter` accepts 0.2, 0.4, 0.6, or 0.8 (default `NOZZLE_DIAMETER` or 0.4).
 - Calibration flags default to on (timelapse to off) when omitted.
 - `layer_height`, `nozzle_temperature`, `bed_temperature`, and `support_enabled` are accepted but not applied: those settings are baked into the sliced file. Change them in the slicer.
@@ -709,14 +709,14 @@ Options for the Bambu-compatible path:
 
 | Argument | What it does |
 |---|---|
-| `bed_type` | Build plate: `textured_plate`, `cool_plate`, `engineering_plate`, or `hot_plate` (default `BED_TYPE` or `textured_plate`) |
+| `bed_type` | Build plate: `textured_plate`, `cool_plate`, `engineering_plate`, `hot_plate`, or `supertack_plate` (default `BED_TYPE` or `textured_plate`) |
 | `nozzle_type` | Installed nozzle: `stainless_steel`, `hardened_steel`, `tungsten_carbide`, or `brass` (default `BAMBU_NOZZLE_TYPE`, else the preset's stock nozzle). Printing requires it to match the printer's reported nozzle |
 | `load_filaments` | Filament profile JSON paths in slot order, `;`-separated. One profile applies to every slot; otherwise give one per slot. PrusaSlicer and Slic3r take one `.ini` filament preset. `filament_profile` is an alias; `get_printer_filaments` reports a matching path as `slots[].profile` |
 | `load_filament_ids` | Comma-separated filament IDs mapping filaments to objects, such as `1,2,3,1` |
 | `filament_colours` | One `#RRGGBB` per filament slot, `;`-separated. Defaults to the input 3MF's colours, then each profile's colour |
 | `template_3mf_path`, `template_name`, `template_dir` | Reuse a 3MF's or profile's slicer settings as the process profile (defaults: `BAMBU_TEMPLATE_3MF_PATH`, `BAMBU_TEMPLATE_DIR`). An explicit `slicer_profile` takes precedence |
 | `uptodate`, `min_save`, `skip_modified_gcodes` | Refresh 3MF presets to the installed slicer, write a smaller 3MF, or ignore custom G-code embedded in an input 3MF |
-| `orient`, `arrange`, `ensure_on_bed`, `repetitions`, `clone_objects`, `skip_objects`, `slice_plate` | Placement: auto-orient, auto-arrange (STL input is arranged by default; set `false` to keep a 3MF layout), drop floating models onto the bed, copies (OrcaSlicer copies an STL with `--clone-objects`), a total clone count for the loaded model, objects to skip, and which plate to slice (0 = all) |
+| `orient`, `arrange`, `ensure_on_bed`, `repetitions`, `clone_objects`, `skip_objects`, `slice_plate` | Placement: auto-orient, auto-arrange (STL input is arranged by default; set `false` to keep a 3MF layout), drop floating models onto the bed, copies (OrcaSlicer copies an STL with `--clone-objects`), a total clone count for the loaded model, object copies to skip by `identify_id` (`list_3mf_plates` gives them as each plate's `instances`), and which plate to slice (0 = all) |
 | `scale`, `rotate`, `rotate_x`, `rotate_y` | Transform before slicing (uniform scale; rotations in degrees). For OrcaSlicer STL input the server applies them to a mesh copy in Orca's order to avoid a CLI crash; see [OrcaSlicer CLI limits](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SLICING.md#bambu-compatible-slicing) |
 | `enable_timelapse`, `allow_mix_temp` | Insert timelapse parking moves; allow filaments with different temperature needs on one plate |
 

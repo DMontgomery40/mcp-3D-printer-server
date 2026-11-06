@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.52] – 2026-11-06
+
+These port bambu-printer-mcp 1.1.72's fixes from a read of Bambu Studio 02.08.02.61's source. The real Bambu Studio slices named below ran through bambu-printer-mcp's code, which is the same as this release's for these paths; this repo's tests use those Studio-written files.
+
+### Fixed
+
+- `pause_at_layers` keeps a project's own colour changes and pauses. Bambu Studio saves them in `Metadata/custom_gcode_per_layer.xml` (02.08.02.61 `bbs_3mf.cpp:184`), not `custom_gcode_per_print_z.xml`, so they were never read. `--load-custom-gcodes` replaces the project's whole map (`BambuStudio.cpp:4005-4008`), so a requested pause on a designer's file dropped its colour changes and pauses. They are now merged in. Without a pause request nothing is passed: the CLI keeps the project's own entries itself. A pause on a project with more than one plate needs `slice_plate`, because the CLI carries custom G-code for one plate only. Checked on a Mac with Bambu Studio 02.08.02.61: a project saved with a colour change at 0.6 mm and a pause at 1.0 mm, sliced with a pause before layer 8, kept all three. Slicing only; nothing was printed.
+- Print safety no longer refuses every Engineering Plate job as "contradictory bed type metadata". Studio writes `eng_plate` in `plate_N.json` and `Engineering Plate` in the project settings (`PrintConfig.hpp:437-456`, `PrintConfig.cpp:437-445`). Every Studio name and token for each of its five plates now reads as one plate. Checked with a real Bambu Studio 02.08.02.61 Engineering Plate slice, which the previous code refused.
+- An AMS-HT after the first is addressed as its own unit. Tray 129 is `{ams_id: 129, slot_id: 0}`, as Bambu Studio maps it (`DevFilaSystem.cpp:367-368`, `SelectMachine.cpp:1489-1497`), instead of slot 1 of unit 128, which doesn't exist. The fresh-state check finds that unit's tray the same way. Checked with unit tests; no printer contacted.
+- When a slice fails without a usable result.json, the exit code is explained for every code Bambu Studio defines (`libslic3r/Utils.hpp:21-75`, 50 codes; 20 before), for example -66 (filaments can't be assigned to the nozzles) and -68 (a filament the nozzle can't print). A test checks the table against Utils.hpp.
+
+### Changed
+
+- `bed_type` accepts `supertack_plate`, which slices as Studio's own `Supertack Plate` bed type. Checked on a Mac with Bambu Studio 02.08.02.61: the slice's `plate_1.json` says `supertack_plate`, the project says `Supertack Plate`, and the start G-code heats the bed to the filament's SuperTack temperature (45 °C for PLA). Slicing only; nothing was printed. OrcaSlicer takes the same name but wasn't sliced with it.
+- `slice_stl`'s `skip_objects` takes identify_ids, which the CLI matches against each object copy (`BambuStudio.cpp:6530-6545`), not positions. `list_3mf_plates` gives each plate's `instances`: every object copy with its `identify_id` from `model_settings.config`.
+
 ## [1.2.51] – 2026-11-06
 
 ### Added
