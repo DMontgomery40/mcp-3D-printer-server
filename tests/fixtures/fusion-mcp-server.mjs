@@ -16,6 +16,7 @@ const tools = [
   { name: "export_stl", description: "Export a named body as an STL file", inputSchema: { type: "object", required: ["body_name"], properties: { body_name: { type: "string" }, file_path: { type: "string" } } } },
   { name: "export_f3d", description: "Export the design as a native Fusion 360 archive (.f3d)", inputSchema: { type: "object", properties: { file_path: { type: "string" } } } },
   { name: "create_sketch", description: "Create a new sketch on a plane", inputSchema: { type: "object", properties: { plane: { type: "string", enum: ["xy", "xz", "yz"] } } } },
+  { name: "get_design_type", description: "Return current design type: 'parametric' or 'direct'.", inputSchema: { type: "object", properties: {} } },
 ];
 log({ event: "spawn", pid: process.pid, printerSecretPresent: Boolean(process.env.BAMBU_TOKEN || process.env.API_KEY), fusionHost: process.env.FUSION_MCP_HOST ?? null, fusionPort: process.env.FUSION_MCP_PORT ?? null });
 
@@ -31,6 +32,8 @@ function call(name, args) {
   if (name === "ping") return mode === "addin-down" ? error(name, "CONNECTION", "Not connected to Fusion 360.") : ok(name, { status: "pong" });
   if (name === "create_sketch") return mode === "no-design" ? error(name, "NO_ACTIVE_DESIGN", "No active design") : ok(name, { sketch_name: "Sketch1", plane: args.plane ?? "xy" });
   if (mode === "no-design") return error(name, "NO_ACTIVE_DESIGN", "No active design");
+  if (name === "get_design_type" && mode === "design-type-hang") return undefined; // never answers
+  if (name === "get_design_type") return mode === "design-type-error" ? error(name, "UNKNOWN", "Fusion is busy") : ok(name, { design_type: "parametric", design_type_id: 1 });
   if (name === "export_stl") {
     if (args.body_name !== "Bracket" && args.body_name !== "Lid") return error(name, "NOT_FOUND", `Body '${args.body_name}' not found`);
     if (mode !== "no-files") fs.writeFileSync(args.file_path, stl(mode === "stl-cm" ? 0.1 : 1));
@@ -66,5 +69,5 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     return send(request.id, { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "fusion360-mcp-server", version: "1.30.0" } });
   }
   if (request.method === "tools/list") return send(request.id, { tools });
-  if (request.method === "tools/call") return send(request.id, call(request.params.name, request.params.arguments ?? {}));
+  if (request.method === "tools/call") { const answer = call(request.params.name, request.params.arguments ?? {}); return answer === undefined ? undefined : send(request.id, answer); }
 });

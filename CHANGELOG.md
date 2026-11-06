@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.56] – 2026-11-06
+
+### Added
+
+- `fusion_mcp_status` reports `activeDesign` when Fusion is connected: whether a design is open, read from the Fusion360MCP add-in itself. It calls the add-in's read-only `get_design_type`, which reads the active document's Design product the way every design command does (`_design()`, `addon/server/command_handler.py:310-332` and `:3555-3563` at the pinned `86a3016a5a5b`). Success means a design is open. The add-in's own error kind `NO_ACTIVE_DESIGN` (`addon/server/hints.py:17-19`, rendered as `**get_design_type** ERROR (NO_ACTIVE_DESIGN)` by `src/fusion360_mcp/server.py:122`) means none is: Fusion is on its Home tab, and the pinned add-in refuses every design command, `fusion_mcp_new_design` included, until one is open (faust issue #12). Any other answer leaves `activeDesign` out (unknown). Clients such as Counterpart read this field instead of matching Fusion's error wording. Checked with the bridge's fake Fusion MCP: an open design, no design, another error, and the add-in not answering. Not run against a live Fusion.
+
 ## [1.2.55] – 2026-11-06
 
 ### Added

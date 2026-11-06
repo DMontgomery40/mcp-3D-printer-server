@@ -177,6 +177,38 @@ test("fusion_mcp_export needs body_name for several bodies, warns on centimetre 
   assert.equal(existsSync(path.join(missing.temp, "part.parameters.json")), false, "nothing is published on failure");
 });
 
+test("activeDesign comes from the add-in's read-only get_design_type: true with a design, false on its NO_ACTIVE_DESIGN, else absent", async (t) => {
+  const port = await addinPort(t);
+  const status = async (mode) => {
+    const { call, requests } = await start(t, { mode, port });
+    const result = (await call("fusion_mcp_status")).structuredContent;
+    return { result, calls: requests().filter((entry) => entry.method === "tools/call").map((entry) => entry.name) };
+  };
+  const open = await status("normal");
+  assert.equal(open.result.connected, true);
+  assert.equal(open.result.activeDesign, true);
+  assert.deepEqual(open.calls, ["ping", "get_design_type"], "one read, nothing that changes the design");
+  // Fusion's Home tab (faust issue #12): the add-in's own error kind says no design is open.
+  const home = await status("no-design");
+  assert.equal(home.result.connected, true);
+  assert.equal(home.result.activeDesign, false);
+  // Any other failure is unknown, never a guess either way.
+  const busy = await status("design-type-error");
+  assert.equal(busy.result.connected, true);
+  assert.equal("activeDesign" in busy.result, false);
+  // Not connected: no design read at all.
+  const down = await status("addin-down");
+  assert.equal(down.result.connected, false);
+  assert.equal("activeDesign" in down.result, false);
+  assert.deepEqual(down.calls, ["ping"]);
+  // A read that never finishes: not connected, and the timeout named.
+  const { call: hung } = await start(t, { mode: "design-type-hang", port });
+  const stuck = (await hung("fusion_mcp_status", { timeout_ms: 500 })).structuredContent;
+  assert.equal(stuck.connected, false);
+  assert.equal("activeDesign" in stuck, false);
+  assert.match(stuck.error, /timed out|timeout/i);
+});
+
 test("fusion_mcp_status reports an unreachable add-in as not connected", async (t) => {
   const { call } = await start(t, { mode: "addin-down" });
   const status = (await call("fusion_mcp_status")).structuredContent;
