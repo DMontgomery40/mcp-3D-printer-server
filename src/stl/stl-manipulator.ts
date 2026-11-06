@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import { EventEmitter } from 'events';
 import * as crypto from 'crypto';
 import { detectProfilesRoot } from '../slicer/profile-flatten.js';
+import { listModelPlates } from '../counterpart/model-plates.js';
 import { flattenOrcaFilament } from '../slicer/filament-profiles.js';
 import { mergeProcessKeys } from '../slicer/print-quality.js';
 import {
@@ -1175,30 +1176,35 @@ export class STLManipulator extends EventEmitter {
       slicerProfile, progressCallback, printerPreset, filamentProfile, options, processOverrides);
     const layers = bambuOptions?.pauseAtLayers?.length ? bambuOptions.pauseAtLayers : undefined;
     const cli = STLManipulator.usesBambuCliPreparation(slicerType, printerPreset);
+    // Without new pauses the CLI keeps the project's own pauses and colour changes itself: it loads a
+    // Bambu 3MF's Metadata/custom_gcode_per_layer.xml with the project (Bambu Studio 02.08.02.61
+    // BambuStudio.cpp:1882, bbs_3mf.cpp:2051), so nothing is passed.
+    if (!layers) return once(bambuOptions);
+    if (!cli) throw new Error(`Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI, not ${slicerType}.`);
     const plate = bambuOptions?.slicePlate && bambuOptions.slicePlate > 0 ? bambuOptions.slicePlate : 1;
-    const project = cli && /\.3mf$/i.test(stlFilePath) ? await readProjectCustomGcodes(stlFilePath, plate) : undefined;
-    if (!layers && !project?.gcodes.length) return once(bambuOptions);
-    if (layers && !cli) throw new Error(`Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI, not ${slicerType}.`);
+    const threeMf = /\.3mf$/i.test(stlFilePath);
+    // --load-custom-gcodes replaces the whole per-plate map and holds one plate (--slice N, or plate 1 for
+    // --slice 0: BambuStudio.cpp:2224-2233, 4005-4008), so slicing every plate would drop plates 2..n's own.
+    if (threeMf && !(bambuOptions?.slicePlate && bambuOptions.slicePlate > 0)
+      && (await listModelPlates(stlFilePath)).plate_count > 1) {
+      throw new Error('Pausing at a layer works on one plate at a time. Choose the plate with slice_plate.');
+    }
+    // The map replaces the project's own entries for this plate, so they are merged in.
+    const project = threeMf ? await readProjectCustomGcodes(stlFilePath, plate) : undefined;
     const customGcodesFile = path.join(this.tempDir, `custom-gcodes-${crypto.randomUUID()}.json`);
     try {
-      let tops: number[] = [];
-      if (layers) {
-        if (progressCallback) progressCallback(10, `Finding layer heights for the pause before layer ${layers.join(", ")}`);
-        const plain = await once({ ...bambuOptions, pauseAtLayers: undefined, customGcodesFile: undefined });
-        const gcode = await readPlateGcode(plain.path, plate);
-        if (!gcode) throw new Error('The slicer wrote no plate G-code, so the pause layers cannot be placed.');
-        tops = layerTops(gcode);
-      }
-      const info = layers ? customGcodesWithPauses(tops, layers, project) : project!;
-      await fs.promises.writeFile(customGcodesFile, JSON.stringify(info));
+      if (progressCallback) progressCallback(10, `Finding layer heights for the pause before layer ${layers.join(", ")}`);
+      const plain = await once({ ...bambuOptions, pauseAtLayers: undefined, customGcodesFile: undefined });
+      const plainGcode = await readPlateGcode(plain.path, plate);
+      if (!plainGcode) throw new Error('The slicer wrote no plate G-code, so the pause layers cannot be placed.');
+      const tops = layerTops(plainGcode);
+      await fs.promises.writeFile(customGcodesFile, JSON.stringify(customGcodesWithPauses(tops, layers, project)));
       const result = await once({ ...bambuOptions, customGcodesFile });
-      if (layers) {
-        const gcode = await readPlateGcode(result.path, plate);
-        const placed = gcode ? pausedLayers(gcode, machinePauseGcode(gcode)) : [];
-        const missing = layers.filter(layer => !placed.includes(layer));
-        if (!gcode || missing.length || layerTops(gcode).length !== tops.length) {
-          throw new Error(`The slicer did not place the pause before layer ${(missing.length ? missing : layers).join(", ")}. Nothing was sent to the printer.`);
-        }
+      const gcode = await readPlateGcode(result.path, plate);
+      const placed = gcode ? pausedLayers(gcode, machinePauseGcode(gcode)) : [];
+      const missing = layers.filter(layer => !placed.includes(layer));
+      if (!gcode || missing.length || layerTops(gcode).length !== tops.length) {
+        throw new Error(`The slicer did not place the pause before layer ${(missing.length ? missing : layers).join(", ")}. Nothing was sent to the printer.`);
       }
       return result;
     } finally { await fs.promises.rm(customGcodesFile, { force: true }); }

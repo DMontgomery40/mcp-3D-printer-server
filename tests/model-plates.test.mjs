@@ -46,7 +46,7 @@ test("a sliced plate says so, and a plain 3MF is one plate", async (t) => {
     "Metadata/model_settings.config": `<config><plate><metadata key="plater_id" value="1"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>` });
   assert.deepEqual((await listModelPlates(sliced)).plates.map(p => [p.index, p.objects, p.sliced]), [[0, [], false], [1, ["Gear"], true]]);
   const plain = await write3mf(t, { "3D/3dmodel.model": MODEL });
-  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], sliced: false }], title: "3D scan platform", designer: "Kass 3D" });
+  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false }], title: "3D scan platform", designer: "Kass 3D" });
 });
 
 test("a file that isn't a 3MF is refused; a plate number out of range is skipped", async (t) => {
@@ -62,5 +62,14 @@ test("a plain 3MF with a large mesh is one plate", async (t) => {
   const big = `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${vertices}</vertices><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>`;
   assert.ok(big.length > 8 * 1024 * 1024);
   const file = await write3mf(t, { "3D/3dmodel.model": big });
-  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], sliced: false }]);
+  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false }]);
+});
+
+// Bambu Studio 02.08.02.61 CLI slice of three cube copies (Nov 6 2026): model_settings.config gives each copy's
+// identify_id in its <model_instance>, the ids slice_stl's skip_objects takes.
+test("each plate lists its object copies with their identify_id", async () => {
+  const file = new URL("./fixtures/studio-02.08.02.61/p1s-three-copies.3mf", import.meta.url).pathname;
+  const result = await listModelPlates(file);
+  assert.deepEqual(result.plates.map(p => p.instances), [[
+    { identify_id: 15, name: "cube.stl_1" }, { identify_id: 26, name: "cube.stl_2" }, { identify_id: 37, name: "cube.stl_3" }]]);
 });

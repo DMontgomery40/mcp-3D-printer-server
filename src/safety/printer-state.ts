@@ -377,8 +377,9 @@ function externalTray(raw: Record<string,any>, trayIndex: number, model: string)
   return object(raw.vt_tray) ? raw.vt_tray : undefined;
 }
 function mappedTray(raw: Record<string,any>, index: number): Record<string,any> {
-  const unit = index >= 128 ? 128 : Math.floor(index / 4);
-  const slot = index >= 128 ? index - 128 : index % 4;
+  // An AMS-HT tray index is the unit's own id, with its single slot 0 (Bambu Studio DevFilaSystem.cpp:367-368).
+  const unit = index >= 128 ? index : Math.floor(index / 4);
+  const slot = index >= 128 ? 0 : index % 4;
   const units = raw.ams?.ams;
   const ams = Array.isArray(units) ? units.find((value:any) => Number(value?.id) === unit) : undefined;
   const tray = Array.isArray(ams?.tray) ? ams.tray.find((value:any) => Number(value?.id) === slot) : undefined;

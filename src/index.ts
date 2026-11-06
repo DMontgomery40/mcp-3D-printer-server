@@ -354,7 +354,7 @@ function callerPrintOptions(args: Record<string, any> | undefined): CallerPrintO
 const VALID_BAMBU_MODELS = ["p1s", "p1p", "x1c", "x1e", "a1", "a1mini", "h2d"] as const;
 type BambuModel = typeof VALID_BAMBU_MODELS[number];
 
-const VALID_BED_TYPES = ["textured_plate", "cool_plate", "engineering_plate", "hot_plate"] as const;
+const VALID_BED_TYPES = ["textured_plate", "cool_plate", "engineering_plate", "hot_plate", "supertack_plate"] as const;
 
 // Map model IDs to BambuStudio --load-machine preset names
 const BAMBU_MODEL_PRESETS: Record<string, (nozzle: string) => string> = {
@@ -466,7 +466,7 @@ const SLICE_TOOL_PROPERTIES = {
   arrange: { type: "boolean", description: "Bambu-compatible slicing: auto-arrange objects on the plate (--arrange); STL input is arranged by default. Set false to keep an existing layout: an STL that is not already on the plate then fails to slice." },
   ensure_on_bed: { type: "boolean", description: "Bambu-compatible slicing: lower floating models onto the bed (--ensure-on-bed)." },
   clone_objects: { type: "string", description: "Bambu-compatible slicing: clone the loaded model, total copies as a single integer, e.g. '3' (--clone-objects). The Bambu-style CLIs count copies per input file and this tool loads one file, so a comma-separated list is rejected by the slicer." },
-  skip_objects: { type: "string", description: "Bambu-compatible slicing: comma-separated object indices to skip, e.g. '3,5,10'." },
+  skip_objects: { type: "string", description: "Bambu-compatible slicing: skip these object copies, by identify_id, comma-separated (e.g. '78,92'). The ids are the instances list_3mf_plates gives for each plate; they are not positions." },
   enable_timelapse: { type: "boolean", description: "Bambu-compatible slicing: insert timelapse parking moves (--enable-timelapse)." },
   allow_mix_temp: { type: "boolean", description: "Bambu-compatible slicing: allow filaments with different temperature requirements on one plate." },
   scale: { type: "number", description: "Bambu-compatible slicing: uniform scale factor applied before slicing (1.0 = original size)." },
@@ -2007,7 +2007,7 @@ class ThreeDPrinterMCPServer {
                 },
                 bed_type: {
                   type: "string",
-                  enum: ["textured_plate", "cool_plate", "engineering_plate", "hot_plate"],
+                  enum: [...VALID_BED_TYPES],
                   description: "Bed/plate type installed on the printer (default: textured_plate)."
                 },
                 nozzle_type: {
@@ -2221,7 +2221,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "list_3mf_plates",
-            description: "List a Bambu Studio or OrcaSlicer 3MF's plates as its designer laid them out, before slicing: plate_count, and for each plate its index (from 0; slice_stl's slice_plate is index + 1, inspect_print_file's plate_index is index), name, the objects on it and whether the file already holds its G-code (sliced). A plain 3MF without plate metadata is one plate. include_thumbnails adds each plate's own preview from the file (thumbnail_png_base64). Read-only.",
+            description: "List a Bambu Studio or OrcaSlicer 3MF's plates as its designer laid them out, before slicing: plate_count, and for each plate its index (from 0; slice_stl's slice_plate is index + 1, inspect_print_file's plate_index is index), name, the objects on it, each object copy's identify_id (instances: the ids slice_stl's skip_objects takes) and whether the file already holds its G-code (sliced). A plain 3MF without plate metadata is one plate. include_thumbnails adds each plate's own preview from the file (thumbnail_png_base64). Read-only.",
             inputSchema: {
               type: "object",
               properties: {
@@ -2267,7 +2267,7 @@ class ThreeDPrinterMCPServer {
                 },
                 bed_type: {
                   type: "string",
-                  enum: ["textured_plate", "cool_plate", "engineering_plate", "hot_plate"],
+                  enum: [...VALID_BED_TYPES],
                   description: "Bed/plate type installed on the printer (default: textured_plate)."
                 },
                 nozzle_type: {
