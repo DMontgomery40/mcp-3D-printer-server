@@ -35,6 +35,8 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   get_printer_filaments: read(true),
 
   // Printer actions.
+  connect_printer: write(false, true, true), // OctoPrint's serial connection, and PSU Control's power with power_on
+  octoprint_request_api_key: write(false, false, true), // asks OctoPrint to issue a key; the person allows it there
   upload_gcode: write(true, false, true), // can replace a file of the same name on the printer
   start_print: write(false, false, true),
   print_3mf: write(false, false, true),

@@ -2,14 +2,88 @@ import fs from "fs";
 import FormData from "form-data";
 import { isAxiosError } from "axios";
 import { GenericPrinterImplementation, type GenericPrinterState, type HeaterComponent, type SnapshotCandidate, type CameraCandidate } from "./generic-base.js";
-import type { CounterpartProgress, PrinterIdentity } from "../counterpart/contract.js";
+import type { CounterpartProblem, CounterpartProgress, PrinterIdentity } from "../counterpart/contract.js";
 import { nonEmptyText } from "../counterpart/contract.js";
 import { mapOctoPrint } from "../counterpart/progress.js";
+
+/** One entry of OctoPrint's file list, without its analysis tables, links and references. */
+function slimFile(entry: any): Record<string, unknown> {
+  const out: Record<string, unknown> = { name: entry?.name, path: entry?.path, type: entry?.type };
+  if (entry?.display && entry.display !== entry.name) out.display = entry.display;
+  if (entry?.origin) out.origin = entry.origin;
+  if (typeof entry?.size === "number") out.size = entry.size;
+  if (typeof entry?.date === "number") out.date = new Date(entry.date * 1000).toISOString();
+  const estimate = entry?.gcodeAnalysis?.estimatedPrintTime;
+  if (typeof estimate === "number" && Number.isFinite(estimate)) out.estimatedPrintTimeSec = Math.round(estimate);
+  const last = entry?.prints?.last;
+  if (last && typeof last.success === "boolean") out.lastPrint = { success: last.success, ...(typeof last.date === "number" ? { date: new Date(last.date * 1000).toISOString() } : {}) };
+  if (Array.isArray(entry?.children)) out.children = entry.children.map(slimFile);
+  return out;
+}
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+/** What counterpart_print_progress says when OctoPrint answers but isn't connected to the printer. */
+function disconnectedProblem(connection: OctoPrintConnection): CounterpartProblem {
+  const message = connection.powerOn === false
+    ? "OctoPrint is running, but the printer is switched off (PSU Control). connect_printer with power_on switches it on and connects."
+    : `OctoPrint is running, but it isn't connected to the printer (${connection.state || "Closed"}). connect_printer connects it with OctoPrint's saved port and baud rate.`;
+  return { code: "octoprint.disconnected", severity: "warning", message };
+}
 
 const BLOCKING_FLAGS = ["printing", "paused", "pausing", "cancelling", "resuming", "finishing", "error", "closedOrError"];
 
 function encodePath(filename: string): string {
   return filename.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/");
+}
+
+/**
+ * OctoPrint's base URL. PRINTER_HOST is a host name or address (http on PRINTER_PORT, as before), or a URL for an
+ * OctoPrint behind HTTPS or a reverse proxy at a sub-path ("https://octopi.local", "http://pi.lan/octoprint/").
+ * A URL keeps its own port; PRINTER_PORT is added only when the URL has none and it isn't 80 or 443 (the
+ * default this server passes), so "https://octopi.local" stays on 443. Sub-path installs are OctoPrint's
+ * documented reverse-proxy setup (X-Script-Name): https://community.octoprint.org/t/reverse-proxy-configuration-examples/1107
+ */
+export function octoPrintBaseUrl(host: string, port: string): string {
+  const raw = String(host ?? "").trim();
+  if (/^https?:\/\//i.test(raw)) {
+    let url: URL;
+    try { url = new URL(raw); } catch { throw new Error(`PRINTER_HOST is not a valid URL: ${raw}`); }
+    if (url.username || url.password) throw new Error("Put OctoPrint's API key in API_KEY, not in the PRINTER_HOST URL.");
+    const extra = String(port ?? "").trim();
+    if (!url.port && extra && extra !== "80" && extra !== "443") url.port = extra;
+    url.search = ""; url.hash = "";
+    return url.toString().replace(/\/+$/, "");
+  }
+  const portText = String(port ?? "").trim();
+  const hostText = raw.includes(":") && !raw.startsWith("[") ? `[${raw}]` : raw;
+  return portText ? `http://${hostText}:${portText}` : `http://${hostText}`;
+}
+
+/** OctoPi's mjpg-streamer behind haproxy: the web server's root, on port 80 for a plain host (not OctoPrint's own port). */
+function webcamFallbackUrl(host: string, port: string): string {
+  const raw = String(host ?? "").trim();
+  if (/^https?:\/\//i.test(raw)) return `${new URL(octoPrintBaseUrl(raw, port)).origin}/webcam/?action=snapshot`;
+  return `${octoPrintBaseUrl(raw, "")}/webcam/?action=snapshot`;
+}
+
+/** OctoPrint's connection to the printer (GET /api/connection, docs.octoprint.org/en/master/api/connection.html). */
+export interface OctoPrintConnection {
+  /** OctoPrint's own words: "Operational", "Closed", "Offline after error: …", "Detecting serial connection", … */
+  state: string;
+  connected: boolean;
+  port?: string;
+  baudrate?: number;
+  profile?: string;
+  ports: string[];
+  /** PSU Control plugin (kantlivelong/OctoPrint-PSUControl): whether the printer's power is on; absent without the plugin. */
+  powerOn?: boolean;
+}
+
+/** OctoPrint's not-connected states (octoprint/util/comm.py getStateString); "Offline after error" carries its reason. */
+function disconnectedState(state: string): boolean {
+  const text = state.trim().toLowerCase();
+  return text === "closed" || text === "offline" || text.startsWith("offline after error") || text === "error" || text.startsWith("error:") || text === "";
 }
 
 export class OctoPrintImplementation extends GenericPrinterImplementation {
@@ -24,7 +98,7 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
    * https://docs.octoprint.org/en/master/api/job.html
    */
   async counterpartProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress> {
-    const base = `http://${host}:${port}`;
+    const base = octoPrintBaseUrl(host, port);
     const headers = { "X-Api-Key": apiKey };
     const job = (await this.apiClient.get(`${base}/api/job`, { headers })).data;
     let printer: any;
@@ -43,7 +117,89 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
         .then((response) => response.data?.prints?.last)
         .catch(() => undefined);
     }
-    return mapOctoPrint({ job, printer, lastPrint }, observedAt);
+    const progress = mapOctoPrint({ job, printer, lastPrint }, observedAt);
+    if (printer === undefined) {
+      // OctoPrint answers, but it isn't connected to the printer: say so, instead of a bare "offline".
+      const connection = await this.connection(host, port, apiKey).catch(() => undefined);
+      if (connection && !connection.connected) progress.problems.push(disconnectedProblem(connection));
+    }
+    return progress;
+  }
+
+  /** GET /api/connection, and PSU Control's power state when that plugin is installed. */
+  async connection(host: string, port: string, apiKey: string): Promise<OctoPrintConnection> {
+    const base = octoPrintBaseUrl(host, port);
+    const headers = { "X-Api-Key": apiKey };
+    const [data, power] = await Promise.all([
+      this.apiClient.get(`${base}/api/connection`, { headers }).then(r => r.data),
+      this.psuPower(base, apiKey),
+    ]);
+    const current = data?.current ?? {};
+    const state = String(current.state ?? "");
+    return {
+      state, connected: !disconnectedState(state),
+      ...(nonEmptyText(current.port) ? { port: current.port } : {}),
+      ...(typeof current.baudrate === "number" ? { baudrate: current.baudrate } : {}),
+      ...(nonEmptyText(current.printerProfile) ? { profile: current.printerProfile } : {}),
+      ports: Array.isArray(data?.options?.ports) ? data.options.ports.filter((value: unknown) => typeof value === "string") : [],
+      ...(power !== undefined ? { powerOn: power } : {}),
+    };
+  }
+
+  /**
+   * GET /api/plugin/psucontrol → {isPSUOn}; undefined when PSU Control isn't installed (404) or can't be read.
+   * Source: kantlivelong/OctoPrint-PSUControl octoprint_psucontrol/__init__.py on_api_get / getPSUState.
+   */
+  private async psuPower(base: string, apiKey: string): Promise<boolean | undefined> {
+    try {
+      const data = (await this.apiClient.get(`${base}/api/plugin/psucontrol`, { headers: { "X-Api-Key": apiKey } })).data;
+      return typeof data?.isPSUOn === "boolean" ? data.isPSUOn : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Connect OctoPrint to the printer: POST /api/connection {command:"connect"} with OctoPrint's own saved port,
+   * baud rate and profile unless given (OctoPrint's AUTO detection when none is saved), then wait for it to
+   * settle. power_on first turns the printer on through PSU Control (POST /api/plugin/psucontrol
+   * {command:"turnPSUOn"}) when that plugin reports it off. Connecting runs no G-code of ours: OctoPrint
+   * sends its own "after connection" script, which the person configured. Already connected: nothing is sent.
+   * https://docs.octoprint.org/en/master/api/connection.html
+   */
+  async connectPrinter(host: string, port: string, apiKey: string, options: { serialPort?: string; baudrate?: number; profile?: string; powerOn?: boolean; waitMs?: number } = {}): Promise<OctoPrintConnection & { action: "none" | "connected" | "connecting" | "failed"; poweredOn: boolean; message: string }> {
+    const base = octoPrintBaseUrl(host, port);
+    const headers = { "X-Api-Key": apiKey, "Content-Type": "application/json" };
+    let before = await this.connection(host, port, apiKey);
+    if (before.connected) return { ...before, action: "none", poweredOn: false, message: `OctoPrint is already connected to the printer (${before.state}).` };
+    let poweredOn = false;
+    if (before.powerOn === false) {
+      if (!options.powerOn) {
+        return { ...before, action: "failed", poweredOn, message: "The printer is switched off (PSU Control). Call again with power_on: true to switch it on and connect." };
+      }
+      await this.apiClient.post(`${base}/api/plugin/psucontrol`, { command: "turnPSUOn" } as any, { headers });
+      poweredOn = true;
+      // PSU Control may connect by itself after power-on (its autoConnect setting); give the board time to boot.
+      await sleep(3_000);
+      before = await this.connection(host, port, apiKey);
+      if (before.connected) return { ...before, action: "connected", poweredOn, message: `Switched the printer on; OctoPrint connected (${before.state}).` };
+    }
+    const body: Record<string, unknown> = { command: "connect" };
+    if (options.serialPort) body.port = options.serialPort;
+    if (options.baudrate !== undefined) body.baudrate = options.baudrate;
+    if (options.profile) body.printerProfile = options.profile;
+    await this.apiClient.post(`${base}/api/connection`, body as any, { headers });
+    const deadline = Date.now() + Math.min(Math.max(options.waitMs ?? 20_000, 0), 60_000);
+    let after = await this.connection(host, port, apiKey);
+    while (!/^operational|^printing|^paused/i.test(after.state) && !/error/i.test(after.state) && Date.now() < deadline) {
+      await sleep(1_000);
+      after = await this.connection(host, port, apiKey);
+    }
+    if (/^operational|^printing|^paused/i.test(after.state)) {
+      return { ...after, action: "connected", poweredOn, message: `OctoPrint connected to the printer${after.port ? ` on ${after.port}` : ""} (${after.state}).` };
+    }
+    if (after.connected) return { ...after, action: "connecting", poweredOn, message: `OctoPrint is still connecting (${after.state}). Read counterpart_print_progress again in a moment.` };
+    return { ...after, action: "failed", poweredOn, message: `OctoPrint couldn't connect to the printer (${after.state || "Closed"}). Check the USB cable and that the printer is on${after.ports.length ? `; OctoPrint sees ${after.ports.join(", ")}` : "; OctoPrint sees no serial port"}.` };
   }
 
   /**
@@ -59,7 +215,7 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
   }
 
   async cameraCandidates(host: string, port: string, apiKey: string): Promise<CameraCandidate[]> {
-    const settings = (await this.apiClient.get(`http://${host}:${port}/api/settings`, { headers: { "X-Api-Key": apiKey } })).data;
+    const settings = (await this.apiClient.get(`${octoPrintBaseUrl(host, port)}/api/settings`, { headers: { "X-Api-Key": apiKey } })).data;
     const candidates: CameraCandidate[] = [];
     if (settings?.webcam?.webcamEnabled !== false) {
       // The settings API maps webcam.stream to streamUrl. Classic Webcam on
@@ -75,15 +231,16 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
         if (snapshot) candidates.push({url: snapshot, source: "octoprint-settings", configured: true, transport: "http-snapshot"});
       }
     }
-    candidates.push({ url: `http://${host}/webcam/?action=snapshot`, source: "octoprint-fallback", configured: false, transport: "http-snapshot" });
+    // OctoPi's mjpg-streamer sits at the web server's root, also when OctoPrint is proxied at a sub-path.
+    candidates.push({ url: webcamFallbackUrl(host, port), source: "octoprint-fallback", configured: false, transport: "http-snapshot" });
     return candidates;
   }
 
   async counterpartIdentity(host: string, port: string, apiKey: string): Promise<PrinterIdentity> {
     const headers = { "X-Api-Key": apiKey };
     const [profiles, settings] = await Promise.all([
-      this.apiClient.get(`http://${host}:${port}/api/printerprofiles`, { headers }).then((r) => r.data).catch(() => undefined),
-      this.apiClient.get(`http://${host}:${port}/api/settings`, { headers }).then((r) => r.data).catch(() => undefined),
+      this.apiClient.get(`${octoPrintBaseUrl(host, port)}/api/printerprofiles`, { headers }).then((r) => r.data).catch(() => undefined),
+      this.apiClient.get(`${octoPrintBaseUrl(host, port)}/api/settings`, { headers }).then((r) => r.data).catch(() => undefined),
     ]);
     const all = Object.values(profiles?.profiles ?? {}) as any[];
     const profile = all.find((entry) => entry?.current) ?? all.find((entry) => entry?.default);
@@ -100,14 +257,14 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
   }
 
   private async jobCommand(host: string, port: string, apiKey: string, body: Record<string, string>) {
-    const response = await this.apiClient.post(`http://${host}:${port}/api/job`, body as any, {
+    const response = await this.apiClient.post(`${octoPrintBaseUrl(host, port)}/api/job`, body as any, {
       headers: { "X-Api-Key": apiKey, "Content-Type": "application/json" },
     });
     return response.data;
   }
 
   async getStatus(host: string, port: string, apiKey: string) {
-    const url = `http://${host}:${port}/api/printer`;
+    const url = `${octoPrintBaseUrl(host, port)}/api/printer`;
     const response = await this.apiClient.get(url, {
       headers: {
         "X-Api-Key": apiKey
@@ -116,18 +273,28 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
     return response.data;
   }
 
+  /**
+   * GET /api/files?recursive=true, cut to what a person or a model needs per file (name, path, size, date, OctoPrint's
+   * estimate and last print) so a large library fits in a model's context (issue #4: 324 files were 500 KB). A folder
+   * keeps its children. https://docs.octoprint.org/en/master/api/files.html
+   */
   async getFiles(host: string, port: string, apiKey: string) {
-    const url = `http://${host}:${port}/api/files`;
+    const url = `${octoPrintBaseUrl(host, port)}/api/files?recursive=true`;
     const response = await this.apiClient.get(url, {
       headers: {
         "X-Api-Key": apiKey
       }
     });
-    return response.data;
+    const data = response.data ?? {};
+    return {
+      files: Array.isArray(data.files) ? data.files.map(slimFile) : [],
+      ...(typeof data.free === "number" ? { free: data.free } : {}),
+      ...(typeof data.total === "number" ? { total: data.total } : {}),
+    };
   }
 
   async getFile(host: string, port: string, apiKey: string, filename: string) {
-    const url = `http://${host}:${port}/api/files/local/${filename}`;
+    const url = `${octoPrintBaseUrl(host, port)}/api/files/local/${encodePath(filename)}`;
     const response = await this.apiClient.get(url, {
       headers: {
         "X-Api-Key": apiKey
@@ -143,10 +310,13 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
   protected async readPrinterState(host: string, port: string, apiKey: string): Promise<GenericPrinterState> {
     let data: any;
     try {
-      data = (await this.apiClient.get(`http://${host}:${port}/api/printer`, { headers: { "X-Api-Key": apiKey } })).data;
+      data = (await this.apiClient.get(`${octoPrintBaseUrl(host, port)}/api/printer`, { headers: { "X-Api-Key": apiKey } })).data;
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 409) {
-        return { state: "Offline", ready: false, reason: "OctoPrint reports the printer is not operational" };
+        const connection = await this.connection(host, port, apiKey).catch(() => undefined);
+        return { state: connection?.state || "Offline", ready: false, reason: connection && !connection.connected
+          ? disconnectedProblem(connection).message
+          : "OctoPrint reports the printer is not operational" };
       }
       throw new Error(`Cannot read OctoPrint printer state; nothing was sent: ${(error as Error).message}`);
     }
@@ -166,11 +336,11 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
   }
 
   protected async downloadRemoteFile(host: string, port: string, apiKey: string, filename: string, destination: string): Promise<void> {
-    await this.downloadToFile(`http://${host}:${port}/downloads/files/local/${encodePath(filename)}`, { "X-Api-Key": apiKey }, destination);
+    await this.downloadToFile(`${octoPrintBaseUrl(host, port)}/downloads/files/local/${encodePath(filename)}`, { "X-Api-Key": apiKey }, destination);
   }
 
   protected async rawUploadFile(host: string, port: string, apiKey: string, filePath: string, filename: string, print: boolean) {
-    const url = `http://${host}:${port}/api/files/local`;
+    const url = `${octoPrintBaseUrl(host, port)}/api/files/local`;
 
     const formData = new FormData();
     formData.append("file", fs.createReadStream(filePath));
@@ -191,7 +361,7 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
   }
 
   protected async rawStartJob(host: string, port: string, apiKey: string, filename: string) {
-    const url = `http://${host}:${port}/api/files/local/${filename}`;
+    const url = `${octoPrintBaseUrl(host, port)}/api/files/local/${encodePath(filename)}`;
 
     const response = await this.apiClient.post(url, {
       command: "select",
@@ -203,11 +373,11 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
       }
     });
 
-    return response.data;
+    return response.data || { status: "started", message: `OctoPrint selected ${filename} and started printing it.` };
   }
 
   protected async rawCancelJob(host: string, port: string, apiKey: string) {
-    const url = `http://${host}:${port}/api/job`;
+    const url = `${octoPrintBaseUrl(host, port)}/api/job`;
 
     const response = await this.apiClient.post(url, {
       command: "cancel"
@@ -218,7 +388,8 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
       }
     });
 
-    return response.data;
+    // 204 No Content: OctoPrint accepted the cancel and ends the job on its own.
+    return response.data || { status: "cancelling", message: "OctoPrint is cancelling the print." };
   }
 
   /** OctoPrint tool targets are keyed tool{n} (POST /api/printer/tool, command "target"). */
@@ -232,13 +403,13 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
   }
 
   protected async rawSetTemperature(host: string, port: string, apiKey: string, component: string, temperature: number) {
-    let url = `http://${host}:${port}/api/printer/tool`;
+    let url = `${octoPrintBaseUrl(host, port)}/api/printer/tool`;
 
     const data: Record<string, any> = {};
     if (component === "bed") {
       data.command = "target";
       data.target = temperature;
-      url = `http://${host}:${port}/api/printer/bed`;
+      url = `${octoPrintBaseUrl(host, port)}/api/printer/bed`;
     } else if (/^tool\d+$/.test(component)) {
       data.command = "target";
       data.targets = { [component]: temperature };
@@ -253,6 +424,6 @@ export class OctoPrintImplementation extends GenericPrinterImplementation {
       }
     });
 
-    return response.data;
+    return response.data || { status: "set", component, target: temperature };
   }
 }

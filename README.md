@@ -40,7 +40,9 @@ Preserve my existing servers and settings. Prefer the published npm package
 
 Ask which printer system I use and set PRINTER_TYPE to match. Never guess it.
 Then ask only for the values that backend needs:
-- octoprint: PRINTER_HOST, PRINTER_PORT if not 80, API_KEY
+- octoprint: PRINTER_HOST (an address, or a URL for HTTPS or a sub-path),
+  PRINTER_PORT if not 80, API_KEY (octoprint_request_api_key gets one when
+  I click Allow in OctoPrint)
 - klipper (Moonraker): PRINTER_HOST, PRINTER_PORT (usually 7125),
   API_KEY if Moonraker requires authentication
 - duet: PRINTER_HOST, PRINTER_PORT if not 80
@@ -175,7 +177,7 @@ See the [changelog](./CHANGELOG.md) for versioned changes. The next release brin
 | Backend | `PRINTER_TYPE` | Testing evidence |
 |---|---|---|
 | Bambu Lab | `bambu` | Most tested, including maintainer hardware testing shared with the Bambu-only fork |
-| OctoPrint | `octoprint` | Community-reported |
+| OctoPrint | `octoprint` | Community-reported; checked with OctoPrint 1.11.8 and 2.1-dev Virtual Printers |
 | Klipper (Moonraker) | `klipper` | Community-reported, including a Creality K1 Max through Moonraker |
 | PrusaLink and Prusa Connect | `prusa` | Community-reported |
 | Duet | `duet` | Implemented; no hardware reports yet |
@@ -483,6 +485,22 @@ Pause the current print. Pausing is never gated. Routes: OctoPrint `POST /api/jo
   "host": "192.168.1.50",
   "port": "7125"
 }
+```
+
+#### connect_printer
+
+OctoPrint only. Connects OctoPrint to the printer when it is running but not connected: `counterpart_print_progress` reports `octoprint.disconnected` then. It uses OctoPrint's own saved serial port, baud rate and printer profile unless `serial_port`, `baudrate` or `printer_profile` is given, and waits up to `wait_ms` (default 20000) for the connection to settle. With `power_on: true` it first switches the printer on through the PSU Control plugin when that plugin reports the power off. If OctoPrint is already connected, nothing is sent. The result has `action` (`none`, `connected`, `connecting` or `failed`), a `message`, and OctoPrint's connection (`state`, `port`, `baudrate`, `ports`, `powerOn`).
+
+```json
+{ "type": "octoprint", "host": "octopi.local", "power_on": true }
+```
+
+#### octoprint_request_api_key
+
+Gets an OctoPrint API key through OctoPrint's [Application Keys](https://docs.octoprint.org/en/master/bundledplugins/appkeys.html) approval, so nobody copies a key by hand. Call it with OctoPrint's `host` and `port`, and an `app` name for OctoPrint's prompt. The result is `pending`, with a `request_id` and `approve_url` (OctoPrint's own approval page; every signed-in OctoPrint page also shows the prompt). Call again with `request_id` and `wait_ms` (up to 120000) to wait for the answer. `approved` returns `api_key` and `env: {"API_KEY": …}`. The other statuses are `denied`, `expired`, `unsupported` (no Application Keys plugin: copy a key from OctoPrint's settings), `unreachable` and `rate-limited` (OctoPrint allows 3 requests a minute, 5 in 10 minutes and 10 an hour). OctoPrint drops a request that isn't polled every 5 seconds, so this server keeps polling between calls, for up to 10 minutes.
+
+```json
+{ "host": "octopi.local", "port": "80", "app": "Counterpart" }
 ```
 
 #### resume_print
@@ -939,7 +957,7 @@ bambu-printer-mcp serves the same guidance.
 
 1. **Status depth varies by backend.** `get_printer_status` returns each backend's own status data: Bambu includes progress, layers, and time remaining; OctoPrint's `/api/printer` and Moonraker's `/printer/info` have no job progress. Use `counterpart_print_progress` for job progress on every backend. Its OctoPrint and Klipper mappings were checked against OctoPrint 1.8 and 1.11 virtual printers and a simulated Klipper printer; PrusaLink, Duet, Repetier, and Creality follow their API documentation and have not been checked on hardware.
 2. **Resume only what this server started.** `resume_print` refuses a job it did not inspect and start, including one it started before a restart. Repetier's pause command and its time fields are not in Repetier's API manual.
-3. **Plain HTTP for most backends.** OctoPrint, Klipper, Duet, Repetier, and Creality adapters connect over `http://`. The Prusa adapter uses HTTPS for Prusa Connect, an `https://` host, or port 443.
+3. **Plain HTTP for most backends.** Klipper, Duet, Repetier, and Creality adapters connect over `http://`. OctoPrint does too, unless `PRINTER_HOST` is an `https://` URL (certificates are verified). The Prusa adapter uses HTTPS for Prusa Connect, an `https://` host, or port 443.
 4. **Moonraker authentication is optional; Duet has no password support.** Set `API_KEY` for Moonraker hosts that require authentication. Leave it empty only when Moonraker trusts the MCP host. A password-protected Duet cannot be reached yet.
 5. **Command sent is not print finished.** A success response means the printer or its host accepted the request. Check status, and the printer itself, before you walk away.
 6. **Bambu prints need a sliced project and the right model.** `print_3mf` needs a `.3mf` with `Metadata/plate_<n>.gcode`, uploads it to `cache/`, and starts the zero-based `plate_index` selection (default 0). Print settings such as layer height and temperatures cannot be changed at print time. `start_print` handles plain `.gcode` files only.

@@ -13,6 +13,7 @@ import {CameraStreams, cameraNativeAvailable, type FrameOptions} from "./camera-
 import {openHttpCameraSource} from "./camera-sources.js";
 import {cameraNumber} from "./camera-tools.js";
 import { BambuImplementation } from "../printers/bambu.js";
+import { octoPrintBaseUrl } from "../printers/octoprint.js";
 import {
   COUNTERPART_CONTRACT,
   PRINTER_KINDS,
@@ -69,6 +70,13 @@ export interface SnapshotOptions {
 /** No HTTP response at all (refused, timed out, unreachable): the printer is offline, not erroring. */
 function unreachable(error: unknown): boolean {
   return isAxiosError(error) && !error.response;
+}
+
+/** The printer's web base: PRINTER_HOST as a URL (HTTPS, a reverse proxy's sub-path), or http on host and port. */
+function targetBase(target: PrinterTarget): string {
+  if (/^https?:\/\//i.test(target.host.trim())) return octoPrintBaseUrl(target.host, target.port);
+  const host = target.host.includes(":") && !target.host.startsWith("[") ? `[${target.host}]` : target.host;
+  return `http://${host}:${target.port}`;
 }
 
 function kindOf(type: string): PrinterKind {
@@ -343,8 +351,7 @@ export class CounterpartService {
   close(): void { this.closed = true; this.streams.stopAll(); }
 
   private cameraHeaders(url: string, target: PrinterTarget): Record<string, string> {
-    const host = target.host.includes(":") && !target.host.startsWith("[") ? `[${target.host}]` : target.host;
-    const sameOrigin = new URL(url).origin === new URL(`http://${host}:${target.port}`).origin;
+    const sameOrigin = new URL(url).origin === new URL(targetBase(target)).origin;
     return sameOrigin && target.apiKey && target.type.toLowerCase() !== "bambu" ? {"X-Api-Key": target.apiKey} : {};
   }
 
@@ -353,17 +360,22 @@ export class CounterpartService {
    * paths and loopback hosts mean the printer itself.
    */
   resolve(raw: string, target: PrinterTarget): string[] {
-    const host = target.host.includes(":") && !target.host.startsWith("[") ? `[${target.host}]` : target.host;
+    const hostIsUrl = /^https?:\/\//i.test(target.host.trim());
+    const host = target.host.includes(":") && !target.host.startsWith("[") && !hostIsUrl ? `[${target.host}]` : target.host;
     let parsed: URL;
     try {
       parsed = new URL(raw);
     } catch {
-      // Relative to the printer host: the web front end on port 80, then the API port.
+      // A printer reached by URL (HTTPS, a reverse proxy): resolved as OctoPrint's page resolves it in a browser,
+      // "/webcam/…" against the web server's root and "webcam/…" against OctoPrint's own sub-path.
+      if (hostIsUrl) return [new URL(raw, `${targetBase(target)}/`).toString()];
       const pathPart = raw.startsWith("/") ? raw : `/${raw}`;
+      // Relative to the printer host: the web front end on port 80, then the API port.
       return [...new Set([`http://${host}${pathPart}`, `http://${host}:${target.port}${pathPart}`])];
     }
     if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(`Unsupported snapshot URL scheme: ${parsed.protocol}`);
-    if (LOOPBACK.has(parsed.hostname) && !LOOPBACK.has(target.host)) parsed.hostname = target.host;
+    const hostname = hostIsUrl ? new URL(targetBase(target)).hostname : target.host;
+    if (LOOPBACK.has(parsed.hostname) && !LOOPBACK.has(hostname)) parsed.hostname = hostname;
     // "localhost" can resolve to ::1 first, and Node 18 has no IPv4 fallback for it: try both loopbacks.
     if (parsed.hostname === "localhost") {
       const v4 = new URL(parsed.toString()); v4.hostname = "127.0.0.1";

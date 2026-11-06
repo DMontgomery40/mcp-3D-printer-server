@@ -64,6 +64,7 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   pause_print: "control",
   resume_print: "control",
   set_printer_temperature: "control",
+  connect_printer: "control", // OctoPrint's serial connection; power_on switches the printer on (PSU Control)
   blender_mcp_export_stl: "control",
   fusion_mcp_new_design: "control",
   fusion_mcp_export: "control",
@@ -76,6 +77,7 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   upload_gcode: "raw",
   save_template: "raw",
   fulu_bambu_network_rpc: "raw",
+  octoprint_request_api_key: "raw", // returns a new OctoPrint API key
   blender_mcp_call: "raw",
   blender_mcp_edit_model: "raw",
   fusion_mcp_call: "raw",
@@ -97,7 +99,7 @@ export const CONFIG_ARGUMENTS: ReadonlySet<string> = new Set([
   "country_code", "connection_type", "connection_mode", "route", "bambu_model", "nozzle_diameter", "nozzle_diameters",
   "bridge_command", "slicer_path", "slicer_type", "ffmpeg_path", "plugin_dir", "runtime_dir", "template_dir",
   "config_filename", "bambu_network_method", "use_ssl_for_mqtt", "use_ssl_for_ftp", "extra_options",
-  "allow_mutating_method",
+  "allow_mutating_method", "serial_port", "baudrate", "printer_profile",
 ]);
 /** Top-level only: the printer type (`type`); a nested `type` is a plain value. */
 const TOP_LEVEL_CONFIG: ReadonlySet<string> = new Set(["type"]);

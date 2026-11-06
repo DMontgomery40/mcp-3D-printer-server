@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.51] – 2026-11-06
+
+### Added
+
+- OctoPrint: `octoprint_request_api_key` gets an API key through OctoPrint's Application Keys approval (the person clicks Allow in OctoPrint), keeping the request open between calls because OctoPrint drops one that isn't polled every 5 seconds. `counterpart_setup_fields` offers it on OctoPrint's key as `obtain`, so a client can show an "Approve in OctoPrint" button instead of asking for a pasted key.
+- OctoPrint: `connect_printer` connects OctoPrint to its printer with OctoPrint's saved port and baud rate, and with `power_on` first switches the printer on through PSU Control. `counterpart_print_progress` reports `octoprint.disconnected` (and a switched-off printer) instead of a bare offline, and a refused print says the same.
+- OctoPrint: `PRINTER_HOST` may be a URL, for an OctoPrint behind HTTPS or a reverse proxy at a sub-path. The camera's relative and loopback URLs resolve against it as OctoPrint's page does in a browser (`/webcam/…` from the web server's root, `webcam/…` under OctoPrint's sub-path).
+- `npm run test:octoprint-live`: an opt-in check against a real OctoPrint whose only printer is the Virtual Printer (it refuses any other).
+
+### Fixed
+
+- PrusaSlicer configs with binary G-code on (Prusa's MK4, MK4S, MINI, XL and CORE One profiles once it is enabled) wrote binary bytes into the `.gcode` file, which inspection then refused. `slice_stl` adds `--no-binary-gcode` for such a config, and a slice that still comes out binary stops with an explanation.
+- OctoPrint file names with spaces or other reserved characters are encoded when a file is read or started.
+- OctoPrint's file list is cut to each file's name, path, type, size, date, estimated print time and last print, with folders' children (#4: a 324-file library was 500 KB).
+- OctoPrint's cancel, start and temperature calls answer 204 with no body; their results now say what was done instead of being empty.
+
+Checked against OctoPrint 1.11.8 and the 2.1 development build (`octoprint/octoprint:canary`) in Docker with OctoPrint's Virtual Printer, directly and behind an nginx sub-path proxy, through this server over stdio. The approval was given the way a browser gives it (sign-in, approval page, decision with OctoPrint's CSRF token). PSU Control is checked against a fake OctoPrint only, and PrusaSlicer's binary output with PrusaSlicer 2.8.1's CLI on Linux. No physical printer was used.
+
 ## [1.2.50] – 2026-11-06
 
 ### Added

@@ -76,6 +76,40 @@ export function orcaProcessOverrides(overrides: ProcessOverrides | undefined): R
 }
 
 /**
+ * `--no-binary-gcode` when a loaded PrusaSlicer config turns binary G-code on (`binary_gcode = 1`, the default of
+ * Prusa's MK4, MK4S, MINI, XL and CORE One printer profiles once binary output is enabled in Preferences). PrusaSlicer
+ * then writes binary bytes even into a .gcode output (checked with PrusaSlicer 2.8.1). This server inspects the exact
+ * G-code before it prints, and OctoPrint, Klipper, Duet and Repetier stream plain text; PrusaLink takes plain text
+ * too. Only a config that names the key gets the option, so PrusaSlicer before 2.7 (no such option) is unaffected.
+ * Prusa: https://help.prusa3d.com/article/binary-g-code_646763
+ */
+export function prusaSlicerPlainGcodeArgs(slicerType: string, loadedConfigs: string[]): string[] {
+  if (slicerType !== 'prusaslicer') return [];
+  let binary = false;
+  for (const config of loadedConfigs) {
+    let text = '';
+    try { text = fs.readFileSync(config, 'utf8'); } catch { continue; }
+    const match = /^\s*binary_gcode\s*=\s*(\d)/m.exec(text);
+    if (match) binary = match[1] === '1';
+  }
+  return binary ? ['--no-binary-gcode'] : [];
+}
+
+/** Binary G-code (bgcode) starts with the magic "GCDE" (libbgcode's file header). */
+export function isBinaryGcode(file: string): boolean {
+  const head = Buffer.alloc(4);
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+    return fs.readSync(fd, head, 0, 4, 0) === 4 && head.toString('latin1') === 'GCDE';
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/**
  * PrusaSlicer/Slic3r command-line options, which override the loaded config. A strength floor keeps the
  * loaded config's own `perimeters` / `fill_density` when they are already higher.
  */
@@ -1324,6 +1358,7 @@ export class STLManipulator extends EventEmitter {
               ...(slicerProfile ? ['--load', slicerProfile] : []),
               ...filaments.flatMap((filament) => ['--load', filament]),
               ...prusaSlicerOverrideArgs(processOverrides, slicerProfile ? [slicerProfile] : []),
+              ...prusaSlicerPlainGcodeArgs(slicerType, [...(slicerProfile ? [slicerProfile] : []), ...filaments]),
               stlFilePath
             ];
             break;
@@ -1434,6 +1469,11 @@ export class STLManipulator extends EventEmitter {
 
         if (!fs.existsSync(outputFilePath)) {
           throw new Error(`Slicer finished but output file not found: ${outputFilePath}`);
+        }
+        if (!bambuExport && isBinaryGcode(outputFilePath)) {
+          throw new SlicerError('output', `${slicerType} wrote binary G-code (bgcode), which can't be checked before printing or streamed by OctoPrint. ` +
+            `Turn off binary G-code in the slicer config (PrusaSlicer: Printer Settings → General → Firmware → Supports binary G-code) and slice again.`,
+            { slicerType, slicerPath });
         }
         if (!bambuExport && slicerType !== 'orcaslicer') await keep();
       } catch (error) {

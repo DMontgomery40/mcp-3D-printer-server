@@ -19,6 +19,13 @@ export type SetupField = {
   choices?: Array<{ value: string; label: string }>;
   /** A model field: the model a serial number names, by its first `prefixLength` characters. */
   fromSerial?: { prefixLength: number; models: Record<string, string> };
+  /**
+   * A secret this server can fetch instead of the person typing it: call `tool` with the form's host and port. While its
+   * result's `status` is "pending", show its `message` (and `approve_url` as a link) and call again with its `request_id`
+   * and `wait_ms`; on "approved", write each of its `env` values. Any other status: show `message`, keep the field.
+   * The tool is called on the computer that runs this server (remotely it is raw scope, and host and port are config).
+   */
+  obtain?: { tool: string; label: string; hint?: string };
 };
 export type SetupKind = {
   kind: typeof PRINTER_KINDS[number]; label: string;
@@ -97,7 +104,12 @@ export function genericSetupFields(options: { server: { name: string; version: s
     server: options.server,
     kinds: [
       kind("bambu", "Bambu Lab", BAMBU_FIELDS(options.models, fromSerial)),
-      kind("octoprint", "OctoPrint", [host, port("Only if OctoPrint isn't on port 80"), secret("API key", "In OctoPrint: Settings → API", true)]),
+      kind("octoprint", "OctoPrint", [
+        { ...host, hint: "OctoPrint's address (octopi.local or an IP address), or its full URL for HTTPS or a sub-path (https://octoprint.example.com, http://pi.lan/octoprint)" },
+        port("Only if OctoPrint isn't on port 80 (OctoPi uses 80; a plain install uses 5000)"),
+        { ...secret("API key", "Approve this app in OctoPrint, or copy a key from OctoPrint: Settings → Application Keys", true),
+          obtain: { tool: "octoprint_request_api_key", label: "Approve in OctoPrint", hint: "OctoPrint asks you to allow this app in its web page" } },
+      ]),
       kind("klipper", "Klipper (Moonraker)", [host, port("Moonraker's port, often 7125"), secret("API key", "Only if Moonraker asks for one", false)]),
       kind("prusa", "Prusa (PrusaLink)", [host, port("Only if PrusaLink isn't on port 80"), secret("API key", "The key PrusaLink shows in its settings", true)]),
       kind("creality", "Creality", [host, port("Only if your printer uses another port"), secret("API key", "Only if your printer asks for one", false)]),
@@ -116,6 +128,7 @@ const field = {
     label: { type: "string" }, hint: { type: "string" }, required: { type: "boolean" }, input: { type: "string", enum: ["path"] }, transform: { type: "string", enum: ["uppercase"] },
     choices: { type: "array", items: { type: "object", properties: { value: { type: "string" }, label: { type: "string" } }, required: ["value", "label"] } },
     fromSerial: { type: "object", properties: { prefixLength: { type: "integer" }, models: { type: "object", additionalProperties: { type: "string" } } }, required: ["prefixLength", "models"] },
+    obtain: { type: "object", properties: { tool: { type: "string" }, label: { type: "string" }, hint: { type: "string" } }, required: ["tool", "label"] },
   },
   required: ["name", "env", "label", "required"],
 };
