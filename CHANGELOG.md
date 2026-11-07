@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A large Bambu `print_3mf` upload no longer fails with "Timeout (data socket)" when a P1S's SD card pauses mid-file. The upload now waits up to 120 s for the printer to take more data. FTP commands keep their 15 s limit, so a printer that has really stopped is still reported. With bambu-printer-mcp on Nov 6, an 18.4 MB plate stopped at 13,287,424 bytes for more than 15 s; this server used the same 15 s limit. Checked with a local FTP server that pauses for twice the command timeout partway through a 12 MB file; no printer contacted by this server's tests.
+
+### Added
+
+- Bambu `print_3mf` reports its LAN upload as MCP progress (counterpart/1) when the call has a progress token: `progress` is bytes sent, `total` the file's bytes, and `_meta["counterpart/stage"]` is `"upload"`, at most once per whole percent, as bambu-printer-mcp does. Checked with unit tests and a local FTP server.
+
 ## [1.2.57] – 2026-11-06
 
 ### Changed
