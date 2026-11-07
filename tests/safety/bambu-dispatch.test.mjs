@@ -135,6 +135,16 @@ test("printer becoming busy during upload stops the final print command", async 
   assert.equal(events.filter(({ action }) => action === "publish").length, 0);
 });
 
+test("print3mf hands its upload progress callback to the FTPS upload", async (t) => {
+  const file = await fixture(t);
+  const { printer } = isolatedPrinter();
+  const reported = [];
+  const upload = printer.ftpUpload;
+  printer.ftpUpload = async (host, token, local, remote, onProgress) => { onProgress?.(5, 10); onProgress?.(10, 10); return upload(host, token, local, remote); };
+  await print3mf(printer, file, { onUploadProgress: (sent, total) => reported.push([sent, total]) }).catch(() => undefined);
+  assert.deepEqual(reported, [[5, 10], [10, 10]]);
+});
+
 test("a failed upload refuses with a stable code and sends no print command", async (t) => {
   const file = await fixture(t);
   const { printer, events } = isolatedPrinter();

@@ -1,4 +1,5 @@
 import { PrinterRefusal } from "../refusal.js";
+import { uploadFile } from "./ftp-upload.js";
 import { PrinterImplementation } from "../types.js";
 import { createHash } from "node:crypto";
 import { createReadStream, readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from "node:fs";
@@ -31,6 +32,8 @@ import { assertExpectedPeaks, validateExpectedPeaks, type ExpectedPeakTemperatur
 import { controlReply, refusedControlMessage, type ControlReply } from "../control-reply.js";
 
 export interface BambuPrintOptionsInternal {
+  /** Bytes sent to the printer so far over FTPS, and the file's size (LAN route). */
+  onUploadProgress?: (sent: number, total: number) => void;
   projectName: string;
   filePath: string;
   bambuModel?: string;
@@ -606,7 +609,7 @@ export class BambuImplementation extends PrinterImplementation {
     const remoteFileName = uniquePrintName(options.filePath);
     const remoteProjectPath = `cache/${remoteFileName}`;
     try {
-      await this.ftpUpload(host, token, options.filePath, `/${remoteProjectPath}`);
+      await this.ftpUpload(host, token, options.filePath, `/${remoteProjectPath}`, options.onUploadProgress);
     } catch (error) {
       // Nothing has been sent to the printer but (part of) a file, so the print certainly did not start.
       throw new PrinterRefusal("printer-upload-failed", `The print file did not reach the printer (${error instanceof Error ? error.message : String(error)}). No print was started.`);
@@ -1199,7 +1202,8 @@ export class BambuImplementation extends PrinterImplementation {
     host: string,
     token: string,
     localPath: string,
-    remotePath: string
+    remotePath: string,
+    onProgress?: (sent: number, total: number) => void
   ): Promise<void> {
     const client = new FTPClient(15_000);
     try {
@@ -1209,7 +1213,8 @@ export class BambuImplementation extends PrinterImplementation {
       const remoteDir = path.posix.dirname(absoluteRemote);
       await client.ensureDir(remoteDir);
       // uploadFrom with just the basename since we're already in the right dir
-      await client.uploadFrom(localPath, path.posix.basename(absoluteRemote));
+      // Waits out the printer's SD card pausing mid-file, and reports bytes sent (counterpart/1).
+      await uploadFile(client, localPath, path.posix.basename(absoluteRemote), { onProgress });
     } finally {
       client.close();
     }

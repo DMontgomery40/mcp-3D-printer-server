@@ -42,6 +42,7 @@ import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOver
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { PRINT_QUALITY_PROPERTIES, withPrintQuality } from "./slicer/print-quality.js";
 import { PrinterRefusal } from "./refusal.js";
+import { uploadProgressReporter } from "./upload-progress.js";
 import { isBambuProjectSlicer, usesBambuCli } from "./slicer/capabilities.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
 import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
@@ -2695,6 +2696,16 @@ class ThreeDPrinterMCPServer {
     // A designer's settings extracted for this call are removed when it settles.
     this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withExtractedSettingsCleanup(async () => {
       const { name, arguments: args } = request.params;
+      // counterpart/1: print_3mf reports its FTPS upload as MCP progress (src/upload-progress.ts).
+      const progressToken = extra._meta?.progressToken;
+      let progressNotifications = Promise.resolve();
+      const reportUpload = progressToken === undefined
+        ? undefined
+        : uploadProgressReporter(params => {
+            progressNotifications = progressNotifications
+              .then(() => extra.sendNotification({ method: "notifications/progress", params: { progressToken, ...params } }))
+              .catch(() => {});
+          });
       
       // Set default values for common parameters
       const host = String(args?.host || DEFAULT_HOST);
@@ -3173,6 +3184,7 @@ class ThreeDPrinterMCPServer {
                     ? Boolean(args.vibration_calibration)
                     : undefined,
                 layerInspect: args?.layer_inspect !== undefined ? Boolean(args.layer_inspect) : undefined,
+                onUploadProgress: reportUpload,
                 timelapse: args?.timelapse !== undefined ? Boolean(args.timelapse) : undefined,
               });
               break;
@@ -3545,7 +3557,8 @@ class ThreeDPrinterMCPServer {
                     projectName: projectName,
                     filePath: threeMFPath,
                     plateIndex: printPlate,
-                    ...printOptions // Spread the final options
+                    ...printOptions, // Spread the final options
+                    onUploadProgress: reportUpload,
                 });
                 // Report what the printer did, not merely that a command was published.
             } catch (printError) {
