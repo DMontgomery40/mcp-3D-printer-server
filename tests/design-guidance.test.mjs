@@ -1,3 +1,4 @@
+import {trackedMkdtempSync} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -11,7 +12,7 @@ import { DESIGN_PROMPTS, FDM_SLICING_PROMPT, slicingGuidance, FDM_AFTER_SLICE, F
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function server(t, env = {}) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "design-guidance-"));
+  const directory = trackedMkdtempSync(path.join(os.tmpdir(), "design-guidance-"));
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(root, "dist/index.js")],

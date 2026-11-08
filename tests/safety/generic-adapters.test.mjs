@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -141,7 +142,7 @@ async function mockPrinter(t, adapter, { state = "idle", download } = {}) {
 }
 
 async function gcodeFile(t, content, name = "job.gcode") {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "generic-print-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "generic-print-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, name);
   await fs.writeFile(file, content);

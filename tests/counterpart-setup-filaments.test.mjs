@@ -1,3 +1,4 @@
+import {trackedMkdtempSync} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -96,7 +97,7 @@ test("the person's choices are checked against what's loaded now, and painted sl
 });
 
 test("spool words: Bambu Studio's colour names, tray labels as Studio prints them", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "colour-names-"));
+  const dir = trackedMkdtempSync(path.join(os.tmpdir(), "colour-names-"));
   try {
     fs.writeFileSync(path.join(dir, "filaments_color_codes.json"), JSON.stringify({ data: [
       { fila_id: "GFA00", fila_color: ["#FEC600FF"], fila_color_name: { en: "Sunflower Yellow" } },
@@ -167,7 +168,7 @@ test("discovery merges both scans and a held Bambu port is unavailable, not none
 });
 
 test("with no printer configured, the server lists the three tools and answers setup and discovery without a prompt", async t => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "counterpart-setup-"));
+  const directory = trackedMkdtempSync(path.join(os.tmpdir(), "counterpart-setup-"));
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, "dist/index.js")], cwd: directory,
     env: { PATH: process.env.PATH ?? "", HOME: directory, MCP_TRANSPORT: "stdio", SLICER_TYPE: "bambustudio", SLICER_PATH: path.join(directory, "no-such", "bambu-studio"), BAMBU_PROFILES_ROOT: "", BAMBU_MODEL: "", PRINTER_HOST: "", PRINTER_TYPE: "", BAMBU_SERIAL: "", BAMBU_TOKEN: "" }, stderr: "pipe" });
   transport.stderr?.on("data", () => {});

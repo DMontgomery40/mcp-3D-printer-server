@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.61] – 2026-11-08
+
+### Fixed
+
+- Remove test fixture directories at file teardown even after failures or early returns, and run the full Node test suite in a private temporary directory that fails on leftovers. Regression checks cover clean, leaking and failing suites; printer transports are mocked and no printer is contacted.
+- Remove the server-owned temporary output directory on exit while retaining caller-specified `TEMP_DIR` contents, matching the Bambu fork. Checked through local stdio and HTTP server shutdown tests.
+
 ## [1.2.60] – 2026-11-08
 
 ### Fixed

@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs/promises';
@@ -12,7 +13,7 @@ async function fixture(t, entries) {
   const zip = new JSZip();
   for (const [name, value] of entries) zip.file(name, value, { createFolders: false });
   const bytes = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'bambu-archive-'));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), 'bambu-archive-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'job.3mf');
   await fs.writeFile(file, bytes);

@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -34,7 +35,7 @@ function service(type) {
 const target = (port, type = 'octoprint') => ({host: '127.0.0.1', port, type, apiKey: 'API_SECRET'});
 
 async function mcp(t, env, withoutNative = false) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'generic-camera-mcp-'));
+  const directory = await trackedMkdtemp(path.join(os.tmpdir(), 'generic-camera-mcp-'));
   t.after(() => fs.rm(directory, {recursive: true, force: true}));
   const args = [];
   if (withoutNative) {

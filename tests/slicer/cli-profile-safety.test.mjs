@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -9,7 +10,7 @@ import { flattenForCli, detectProfilesRoot } from '../../dist/slicer/profile-fla
 
 // Exercise profile preparation and the emitted CLI arguments; never run a real slicer.
 async function fixture(t, slicerType = 'bambustudio') {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cli-profile-safety-'));
+  const root = await trackedMkdtemp(path.join(os.tmpdir(), 'cli-profile-safety-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const profiles = path.join(root, 'BambuStudio.app', 'Contents', 'Resources', 'profiles');
   const bbl = path.join(profiles, 'BBL');

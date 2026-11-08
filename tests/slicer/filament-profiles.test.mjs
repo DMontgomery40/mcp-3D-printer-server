@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 // get_printer_filaments slots[].profile: the installed slicer filament profile
 // for a material, resolved from fake OrcaSlicer and PrusaSlicer trees.
 import { test } from "node:test";
@@ -8,7 +9,7 @@ import path from "node:path";
 import { resolveFilamentProfile } from "../../dist/slicer/filament-profiles.js";
 
 async function tree(t, files) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "filament-profiles-"));
+  const root = await trackedMkdtemp(path.join(os.tmpdir(), "filament-profiles-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   for (const [file, content] of Object.entries(files)) {
     const full = path.join(root, file);

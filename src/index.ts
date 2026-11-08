@@ -156,7 +156,18 @@ const DEFAULT_TYPE = process.env.PRINTER_TYPE || FALLBACK_PRINTER_TYPE;
 // Resolve an explicit TEMP_DIR (e.g. ./temp) against the server's working directory, as
 // dotenv's own .env lookup is: slicer CLIs receive paths under it, and Bambu Studio fails
 // every 3MF export to a relative --outputdir (bambu-printer-mcp 1.1.44 fixed the same).
-const TEMP_DIR = process.env.TEMP_DIR ? path.resolve(process.env.TEMP_DIR) : fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
+const AUTOMATIC_TEMP_DIR = process.env.TEMP_DIR ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
+const TEMP_DIR = process.env.TEMP_DIR ? path.resolve(process.env.TEMP_DIR) : AUTOMATIC_TEMP_DIR!;
+if (AUTOMATIC_TEMP_DIR) {
+  // Only our own directory is disposable; an explicit TEMP_DIR belongs to the caller.
+  process.once("exit", () => {
+    try {
+      fs.rmSync(AUTOMATIC_TEMP_DIR, { recursive: true, force: true });
+    } catch (error) {
+      console.error("Unable to remove the server's temporary directory:", error);
+    }
+  });
+}
 
 // Slicer configuration
 const CANONICAL_SLICER_TYPES = [

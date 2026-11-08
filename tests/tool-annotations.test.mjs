@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 // Every tool this server lists carries all four MCP tool annotations, from one table.
 // Discovery over stdio only; no printer, Blender or Fusion is contacted.
 import { test } from "node:test";
@@ -14,7 +15,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HINTS = ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"];
 
 async function listedTools(t, env) {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "tool-annotations-"));
+  const temp = await trackedMkdtemp(path.join(os.tmpdir(), "tool-annotations-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
   const transport = new StdioClientTransport({
     command: process.execPath,

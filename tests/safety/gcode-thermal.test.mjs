@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -127,7 +128,7 @@ test("inspection reports the exact byte hash and every peak", () => {
 });
 
 test("confirm_temperatures reports R targets and only matches the true peak (audit repro)", async (t) => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "confirm-temps-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "confirm-temps-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, "audit.gcode");
   await fs.writeFile(file, "M104 S220\nM104 S400\nM109 R450\nM140 S60\nM104 T0 S230\n");

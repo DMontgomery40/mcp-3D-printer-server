@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 // MCP-level slicing regressions: the slice_stl / template tools drive a fake
 // Bambu-compatible CLI inside a synthetic BBL profile tree. No printer is
 // contacted, and the real user profile tree is never searched.
@@ -28,7 +29,7 @@ async function zipBytes(entries) {
 
 /** A P1S-shaped BBL tree whose leaf presets use inherits/include like the real bundle. */
 async function createFakeInstall(t) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "slice-tool-"));
+  const root = await trackedMkdtemp(path.join(os.tmpdir(), "slice-tool-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const app = path.join(root, "BambuStudio.app", "Contents");
   const bbl = path.join(app, "Resources", "profiles", "BBL");
@@ -737,7 +738,7 @@ test("machine settings inside a template or process profile never replace the se
 });
 
 test("PrusaSlicer, Slic3r, and Cura keep their G-code paths and report failures", async (t) => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "generic-slicer-"));
+  const root = await trackedMkdtemp(path.join(os.tmpdir(), "generic-slicer-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const executable = path.join(root, "fake-slicer");
   const capture = path.join(root, "args.json");
@@ -820,7 +821,7 @@ test("print-sheet overrides: layer_height, wall_loops and sparse_infill_density 
   }
 
   // PrusaSlicer/Slic3r flags, generic OrcaSlicer process copy, Cura refused.
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "override-slicers-"));
+  const root = await trackedMkdtemp(path.join(os.tmpdir(), "override-slicers-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const capture = path.join(root, "args.json");
   const executable = path.join(root, "fake-slicer");
@@ -911,7 +912,7 @@ test("optional: installed BambuStudio slices P1S 0.4 into a 3MF with P1S plate G
     t.skip("SKIP_REAL_SLICER=1");
     return;
   }
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "real-bambustudio-"));
+  const root = await trackedMkdtemp(path.join(os.tmpdir(), "real-bambustudio-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const install = { root, executable: REAL_BAMBU_STUDIO };
   const { call } = await startServer(t, install);
@@ -1006,7 +1007,7 @@ test("quality and strength map to slicer settings; explicit values win; bad valu
 
 test("PrusaSlicer strength floors keep a loaded config's own higher walls and infill", async () => {
   const { prusaSlicerOverrideArgs } = await import("../../dist/stl/stl-manipulator.js");
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "prusa-floor-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "prusa-floor-"));
   const dense = path.join(dir, "dense.ini"), light = path.join(dir, "light.ini");
   await fs.writeFile(dense, "perimeters = 2\nfill_density = 100%\n");
   await fs.writeFile(light, "perimeters = 2\nfill_density = 15%\n");
@@ -1020,7 +1021,7 @@ test("PrusaSlicer strength floors keep a loaded config's own higher walls and in
 
 test("two same-named projects' settings extract to distinct files, so concurrent slices can't swap processes", async () => {
   const { extractBambuTemplateSettings } = await import("../../dist/slicer/templates.js");
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "template-extract-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "template-extract-"));
   const write = async (sub, layer) => {
     await fs.mkdir(path.join(dir, sub));
     const file = path.join(dir, sub, "model.3mf");
@@ -1037,7 +1038,7 @@ test("two same-named projects' settings extract to distinct files, so concurrent
 
 test("every extraction has its own path, even of the same project, and an operation removes what it extracted", async (t) => {
   const { extractBambuTemplateSettings, withExtractedSettingsCleanup } = await import("../../dist/slicer/templates.js");
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "template-extract-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "template-extract-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const project = path.join(dir, "model.3mf");
   await fs.writeFile(project, await zipBytes({ "Metadata/project_settings.config": JSON.stringify({ layer_height: "0.16" }) }));
