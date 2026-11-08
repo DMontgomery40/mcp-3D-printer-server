@@ -512,3 +512,21 @@ test("counterpart dispatch truth brackets the actual print3mf transport", async 
     });
   });
 });
+
+test("counterpart dispatch truth brackets the raw G-code transport", async (t) => {
+  const { withPrintDispatch, printOutcome } = await import("../../dist/refusal.js");
+  const file = await fixture(t, { raw: true });
+  for (const phase of ["preflight", "dispatch"]) {
+    const { printer, events } = isolatedPrinter();
+    if (phase === "preflight") printer.getSafetyStatus = async () => { throw new Error("fresh report unavailable"); };
+    else printer.getPrinter = async () => ({ publish: async () => { throw new Error("reply lost"); } });
+    await withPrintDispatch(async () => {
+      await assert.rejects(printer.uploadFile(host, "8883", apiKey, file, "job.gcode", true, { bambuModel: "p1s" }), error => {
+        assert.equal(printOutcome(error), phase === "preflight" ? "not-sent" : "unknown");
+        return true;
+      });
+    });
+    if (phase === "preflight") assertNoDispatch(events);
+    else assert.equal(events.filter(event => event.action === "upload").length, 1);
+  }
+});

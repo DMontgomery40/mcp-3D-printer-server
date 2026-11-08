@@ -3731,7 +3731,7 @@ class ThreeDPrinterMCPServer {
         
         const errorMessage = error instanceof Error ? error.message : String(error);
         // A printer refusal adds its stable code (src/refusal.ts); the message and suggestion stay as they were.
-        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}), ...(name === "print_3mf" ? { printOutcome: printOutcome(error) } : {}) };
+        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}), ...(["print_3mf", "upload_gcode", "process_and_print_stl"].includes(name) ? { printOutcome: printOutcome(error) } : {}) };
         
         return {
           content: [

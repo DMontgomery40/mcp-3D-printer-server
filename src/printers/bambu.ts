@@ -1116,6 +1116,7 @@ export class BambuImplementation extends PrinterImplementation {
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
+    markPrintCommandSent();
     await publishBambuCommand(printer, "print", "gcode_file", { param: remotePath });
     this.recordCheckedJob(host, serial, remotePath, requirements, resumeFile);
     const dispatch = await this.settleRecorded(watcher, host, serial, remotePath);
