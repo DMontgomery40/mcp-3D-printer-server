@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.60] – 2026-11-08
+
+### Fixed
+
+- Drain FULU events after a polling sleep crosses the delivery deadline so a queued printer reply is read before disconnecting. Validated with mocked hosts under CPU load; no physical printer was used.
+
 ## [1.2.59] – 2026-11-08
 
 ### Fixed
