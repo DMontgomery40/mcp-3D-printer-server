@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.59] – 2026-11-08
+
+### Fixed
+
+- Bambu inspection accepts OrcaSlicer 2.5 dual-nozzle singleton `nozzle_volume_type` only when the selected plate declares both physical extruders and matching variants. Conflicting aliases and incomplete selections still reject, and independent hardware/material temperature limits remain enforced. Verified with synthetic X2D, H2C and H2D archives; no printer contacted.
+- `print_3mf` delivers queued upload progress, including the final 100%, before returning its result. Notification failures log to stderr and do not fail the print. Verified through the public MCP handler with mocked dispatch and delayed/failing notifications; no printer contacted.
+
 ## [1.2.58] – 2026-11-07
 
 ### Fixed
