@@ -35,3 +35,17 @@ ${mode.includes('fail') ? "throw new Error('intentional failure');" : ''}
     assert.deepEqual(readdirSync(root), ['case.test.mjs']);
   });
 }
+
+// Shutdown can exit with a snapshot operation still pending, before its finally runs.
+test('exit removes an in-flight print snapshot', t => {
+  const root = mkdtempSync(join(tmpdir(), 'snapshot-exit-'));
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const source = join(root, 'source.gcode');
+  writeFileSync(source, 'G1 X0 Y0\n');
+  const artifact = new URL('../dist/safety/artifact.js', import.meta.url).href;
+  const script = `import {withPrintSnapshot} from ${JSON.stringify(artifact)};
+    await withPrintSnapshot(${JSON.stringify(source)}, async () => process.exit(0), ${JSON.stringify(root)});`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding:'utf8', timeout:30000});
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readdirSync(root), ['source.gcode']);
+});

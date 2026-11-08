@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Track checked print snapshots from allocation so server shutdown also removes in-flight copies whose operation has not returned. Verified with an exiting child process and mocked native shutdown; no printer contacted.
+
 - Remove test fixture directories at file teardown even after failures or early returns, and run the full Node test suite in a private temporary directory that fails on leftovers. Regression checks cover clean, leaking and failing suites; printer transports are mocked and no printer is contacted.
 - Remove the server-owned temporary output directory on exit while retaining caller-specified `TEMP_DIR` contents, matching the Bambu fork. Checked through local stdio and HTTP server shutdown tests.
 

@@ -91,7 +91,7 @@ async function startServer(t, cwd, transportKind, tempDirectory) {
     let stderr = "";
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
-      if (stderr.includes("MCP server running on http://")) resolve();
+      if (stderr.includes("MCP server running on streamable-http at http://")) resolve();
     });
   });
   await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
