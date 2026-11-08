@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 /**
  * A printer refusal with a stable code, returned as structuredContent.code on the tool's error, so clients
  * such as Counterpart act on the code instead of matching the message (whose words, HMS numbers and
@@ -16,4 +18,20 @@ export class PrinterRefusal extends Error {
     super(message);
     this.name = "PrinterRefusal";
   }
+}
+
+/** counterpart/1 print_3mf errors describe dispatch truth independently of firmware-specific codes. */
+export type PrintOutcome = "not-sent" | "unknown" | "rejected";
+const printDispatch = new AsyncLocalStorage<{ attempted: boolean }>();
+export function withPrintDispatch<T>(run: () => T): T {
+  return printDispatch.run({ attempted: false }, run);
+}
+/** Call immediately before handing a print command to a transport. An acknowledgement may then be lost. */
+export function markPrintCommandSent(): void {
+  const dispatch = printDispatch.getStore();
+  if (dispatch) dispatch.attempted = true;
+}
+export function printOutcome(error: unknown): PrintOutcome {
+  if (error instanceof PrinterRefusal && error.code === "printer-command-rejected") return "rejected";
+  return printDispatch.getStore()?.attempted === false ? "not-sent" : "unknown";
 }

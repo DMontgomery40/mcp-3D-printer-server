@@ -491,3 +491,24 @@ test("use_ams:false maps every used filament to the external spool on the wire",
   assert.equal(publish.use_ams, false);
   assert.deepEqual(publish.ams_mapping, [-1, 254, -1, -1, -1]);
 });
+
+// The Nov 6 P1S refusal: no fresh status, no upload and no print command.
+test("counterpart dispatch truth brackets the actual print3mf transport", async (t) => {
+  const { withPrintDispatch, printOutcome } = await import("../../dist/refusal.js");
+  const file = await fixture(t);
+  const { printer, events } = isolatedPrinter();
+  printer.getSafetyStatus = async () => { throw new Error("Timed out waiting for a fresh MQTT safety report"); };
+  await withPrintDispatch(async () => {
+    await assert.rejects(printer.print3mf(host, serial, token, { projectName: "job", filePath: file, bambuModel: "p1s", useAMS: false }), error => {
+      assert.equal(printOutcome(error), "not-sent"); return true;
+    });
+  });
+  assertNoDispatch(events);
+  const after = isolatedPrinter();
+  after.printer.getPrinter = async () => ({ publish: async () => { throw new Error("reply lost"); } });
+  await withPrintDispatch(async () => {
+    await assert.rejects(after.printer.print3mf(host, serial, token, { projectName: "job", filePath: file, bambuModel: "p1s", useAMS: false }), error => {
+      assert.equal(printOutcome(error), "unknown"); return true;
+    });
+  });
+});
