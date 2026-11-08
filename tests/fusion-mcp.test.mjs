@@ -12,7 +12,7 @@ import path from "node:path";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport, terminateChildProcess } from "./support/stdio.mjs";
 import { spawn } from "node:child_process";
 import { FUSION_ADDIN_DEFAULT_PORT, FUSION_MCP_DEFAULT_ARGS, FUSION_MCP_PINNED_COMMIT, fusionLaunchArguments } from "../dist/fusion-mcp-bridge.js";
 
@@ -263,7 +263,7 @@ test("closing stdin without a signal shuts the server and its Fusion MCP child d
     env: { PATH: process.env.PATH, HOME: process.env.HOME, MCP_TRANSPORT: "stdio", TEMP_DIR: temp, PRINTER_TYPE: "octoprint",
       FUSION_MCP_COMMAND: process.execPath, FUSION_MCP_ARGS: JSON.stringify([FIXTURE, "normal", logPath]), FUSION_MCP_PORT: "1" },
   });
-  t.after(() => child.kill("SIGKILL"));
+  t.after(() => terminateChildProcess(child));
   let out = "";
   child.stdout.on("data", (chunk) => { out += chunk; });
   const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);

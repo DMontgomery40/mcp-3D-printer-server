@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
-import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
+import {StdioClientTransport} from './support/stdio.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check) { for (let n = 0; n < 200; n++) { if (await check()) return; await pause(10); } assert.fail('timed out'); }

@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "./support/stdio.mjs";
 
 // Ported from bambu-printer-mcp tests/filament-inventory.test.mjs. The printer
 // report is a fixture (BambuImplementation.getStatus is replaced before the

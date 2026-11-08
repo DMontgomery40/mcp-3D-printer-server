@@ -12,7 +12,7 @@ import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "./support/stdio.mjs";
 import { BambuNetworkBridge, LOCAL_PRINT_TIMING } from "../dist/bambu-network-bridge.js";
 import { linuxPluginLibraryEnv } from "../dist/fulu-orca.js";
 import { BAMBU_NETWORK_CERTIFICATES } from "../dist/bambu-network-certs.js";

@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
-import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
+import {StdioClientTransport} from './support/stdio.mjs';
 import JSZip from 'jszip';
 async function fixture(t, readyPlate) {
  const dir=await trackedMkdtemp(join(tmpdir(),'plate-routing-')),file=join(dir,'original.3mf'),network=join(dir,'network.log');

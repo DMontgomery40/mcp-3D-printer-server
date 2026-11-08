@@ -12,7 +12,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { STLManipulator } from "../dist/stl/stl-manipulator.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "./support/stdio.mjs";
 
 // A 30 x 20 x 2 plate must rest on a 600 mm² face, regardless of its
 // starting orientation. Excluding Z-aligned normals stands it on an edge.

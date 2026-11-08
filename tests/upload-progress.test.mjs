@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport } from './support/stdio.mjs';
 import { ProgressNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 test("upload progress is bytes sent of the file's bytes, marked as the upload stage, once per whole percent", () => {

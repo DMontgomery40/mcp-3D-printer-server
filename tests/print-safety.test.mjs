@@ -9,7 +9,7 @@ import { once } from "node:events";
 import { test } from "node:test";
 import JSZip from "jszip";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "./support/stdio.mjs";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));

@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Run the standalone STL test and Node test runner inside the same guarded private temporary directory.
+
+- Join spawned test server processes before teardown finishes, forward test-guard cancellation to the child process group, and await close before auditing/removing its private temporary directory. The guard bounds its scheduling backstop to 250 ms. Local tests use mocked transports, not printers.
+
 - Track checked print snapshots from allocation so server shutdown also removes in-flight copies whose operation has not returned. Verified with an exiting child process and mocked native shutdown; no printer contacted.
 
 - Remove test fixture directories at file teardown even after failures or early returns, and run the full Node test suite in a private temporary directory that fails on leftovers. Regression checks cover clean, leaking and failing suites; printer transports are mocked and no printer is contacted.

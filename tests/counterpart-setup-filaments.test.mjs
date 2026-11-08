@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "./support/stdio.mjs";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { colourDistance, matchColours, proposeFilaments, loadColourNames, bambuTrayLabel, spoolName, PROPOSE_FILAMENTS_OUTPUT_SCHEMA } from "../dist/counterpart/filaments.js";
 import { parseBambuAdvert, modelFromSerial, modelFromDevModel, parseZoneLine, parseAvahiLine, discoverPrinters, DISCOVER_OUTPUT_SCHEMA } from "../dist/counterpart/discovery.js";

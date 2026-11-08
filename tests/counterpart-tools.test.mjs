@@ -12,7 +12,7 @@ import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import axios from "axios";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "./support/stdio.mjs";
 import { cameraNativeAvailable } from "../dist/counterpart/camera-stream.js";
 import { CounterpartService } from "../dist/counterpart/service.js";
 
