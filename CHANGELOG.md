@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.61 — 2026-11-08
+## 1.2.62 — 2026-11-08
 
 - Report `printOutcome` in `print_3mf`, `upload_gcode` and `process_and_print_stl` errors (`counterpart/1`): `not-sent` before any print command, `unknown` after a possible dispatch, or `rejected` when the printer refuses it. Fresh MQTT report timeouts no longer make clients guess whether printing started. Request-local tracking covers direct MQTT, FULU and all non-Bambu upload/start boundaries without matching error wording. Verified with mocked transports; no physical print started.
 
