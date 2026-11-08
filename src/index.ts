@@ -2704,7 +2704,7 @@ class ThreeDPrinterMCPServer {
         : uploadProgressReporter(params => {
             progressNotifications = progressNotifications
               .then(() => extra.sendNotification({ method: "notifications/progress", params: { progressToken, ...params } }))
-              .catch(() => {});
+              .catch(error => { console.error("Failed to send upload progress notification:", error); });
           });
       
       // Set default values for common parameters
@@ -3745,6 +3745,10 @@ class ThreeDPrinterMCPServer {
           ...(OUTPUT_SCHEMA_TOOLS.has(name) ? {} : { structuredContent: structuredError }),
           isError: true
         };
+      } finally {
+        // Deliver queued upload progress before either the success or error result.
+        // Individual notification failures are logged above and never fail a print.
+        await progressNotifications;
       }
     }));
   }

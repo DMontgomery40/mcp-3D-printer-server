@@ -274,6 +274,21 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
       const entries=normalizedEntries(value);
       if(!entries) return undefined;
       if(entries.length===nozzleDiameters.length) return entries;
+      // Orca 2.5 repeats a singleton volume type for both physical nozzles.
+      // Only the selected plate can corroborate this; project defaults and
+      // the nozzle_flow alias must not supply missing physical selections.
+      if(keys[0]==='nozzle_volume_type' && dualNozzle && nozzleDiameters.length===2 && entries.length===1) {
+        const selected=(key:string)=>consistent(metadataValues(headers,[key]),value=>{
+          const selection=normalizedEntries(value);
+          return selection?.length===2?selection:undefined;
+        },`selected ${key.replace(/_/g,' ')}`);
+        const ids=selected('printer_extruder_id');
+        const variants=selected('printer_extruder_variant');
+        const extruders=selected('extruder_type');
+        if(ids.some((id,index)=>id!==String(index+1)) ||
+           variants.some((variant,index)=>variant!==`${extruders[index]}_${entries[0]}`)) return undefined;
+        return [entries[0],entries[0]];
+      }
       if(!variantRows) return undefined;
       // Bambu GUI projects may store nozzle types per extruder variant, while
       // diameters and selected flow types are per physical extruder. Never truncate
@@ -305,7 +320,8 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
       return resolved;
     },keys[0].replace(/_/g,' ')) : undefined;
   };
-  const nozzleFlows=nozzleMetadata(['nozzle_flow','nozzle_volume_type']);
+  const flowDeclarations=[nozzleMetadata(['nozzle_flow']),nozzleMetadata(['nozzle_volume_type'])].filter(value=>value!==undefined);
+  const nozzleFlows=flowDeclarations.length?consistent(flowDeclarations,normalizedEntries,'nozzle flow'):undefined;
   const nozzleTypes=nozzleMetadata(['nozzle_type'],true);
   const materials=consistent(metadataValues(metadata,['filament_type']),value=>{
     const values=list(value);return values.length && values.every(v=>!!normalizeMaterial(v))?values.map(v=>normalizeMaterial(v)!):undefined;

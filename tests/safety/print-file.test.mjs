@@ -117,6 +117,57 @@ test('Bambu nozzle_volume_type is retained and conflicting flow aliases reject',
   entries['Metadata/project_settings.config'].nozzle_volume_type=['Standard','High Flow'];
   await assert.rejects(inspect(t,'',{model:'h2d'},entries),/nozzle.*flow|contradict/i);
 });
+// OrcaSlicer 2.5.0 (40ecc66f) macOS CLI output: the cache-backed machine
+// keeps a singleton volume type, but writes both selected physical variants.
+function orcaDualFlowEntries(model='X2D') {
+  const extruders=model==='X2D'?['Direct Drive','Bowden']:['Direct Drive','Direct Drive'];
+  const variants=extruders.map(type=>`${type} Standard`);
+  return {
+    'Metadata/project_settings.config':{
+      printer_model:`Bambu Lab ${model}`,nozzle_diameter:['0.4','0.4'],filament_type:['PLA'],
+      nozzle_volume_type:['Standard'],extruder_type:extruders,
+      printer_extruder_id:['1','1','1','2','2','2'],
+      printer_extruder_variant:extruders.flatMap(type=>[`${type} Standard`,`${type} High Flow`,`${type} E3D High Flow`]),
+      nozzle_type:['undefine','undefine','undefine','undefine','undefine','undefine']
+    },
+    'Metadata/plate_1.gcode':header(model,'PLA','0.4,0.4')+
+      '; nozzle_volume_type = Standard\n; nozzle_type = undefine,undefine\n; printer_extruder_id = 1,2\n'+
+      `; printer_extruder_variant = "${variants[0]}";"${variants[1]}"\n; extruder_type = ${extruders.join(',')}\n`+
+      '; physical_extruder_map = 1,0\n; filament_map = 1\nM104 S220\n'
+  };
+}
+test('Orca dual-nozzle singleton volume type resolves from both selected physical variants',async t=>{
+  for(const model of ['X2D','H2C','H2D']) {
+    const entries=orcaDualFlowEntries(model);
+    const result=await inspect(t,'',{model:model.toLowerCase()},entries);
+    assert.deepEqual(result.nozzleFlows,['standard','standard']);
+    assert.deepEqual(result.nozzleTypes,['undefine','undefine']);
+    assert.deepEqual(result.filamentNozzleIndices,[1]);
+    for(const target of [300,400]) {
+      const hot={...entries,'Metadata/plate_1.gcode':entries['Metadata/plate_1.gcode']+`M104 S${target}\n`};
+      await assert.rejects(inspect(t,'',{model:model.toLowerCase()},hot),/temperature|limit/i);
+    }
+  }
+});
+test('Orca singleton volume never fills missing, conflicting or unordered physical selections',async t=>{
+  for(const [before,after] of [
+    ['; printer_extruder_id = 1,2\n',''],['printer_extruder_id = 1,2','printer_extruder_id = 2,1'],
+    ['printer_extruder_id = 1,2','printer_extruder_id = 1'],
+    ['; extruder_type = Direct Drive,Bowden\n',''],
+    ['; printer_extruder_variant = "Direct Drive Standard";"Bowden Standard"\n',''],
+    ['"Direct Drive Standard";"Bowden Standard"','"Direct Drive Standard"'],
+    ['"Bowden Standard"','"Bowden High Flow"'],
+    ['nozzle_volume_type = Standard','nozzle_volume_type = Standard,High Flow'],
+    ['nozzle_volume_type = Standard','nozzle_volume_type = Standard,Standard,Standard'],
+    ['nozzle_volume_type = Standard','nozzle_flow = Standard'],
+  ]) {
+    const entries=orcaDualFlowEntries();entries['Metadata/plate_1.gcode']=entries['Metadata/plate_1.gcode'].replace(before,after);
+    await assert.rejects(inspect(t,'',{model:'x2d'},entries),/metadata|extruder|variant|nozzle.*flow|volume/i,`${before} -> ${after}`);
+  }
+  const entries=orcaDualFlowEntries();
+  entries['Metadata/project_settings.config'].nozzle_volume_type=['Standard','High Flow'];
+  await assert.rejects(inspect(t,'',{model:'x2d'},entries),/contradict/i);
+});
 test('selected plate nozzle diameters must match project metadata with float precision tolerance',async t=>{
   const entries={'Metadata/plate_1.gcode':header('H2D','PLA','0.4;0.4')+'M104 S220\n','Metadata/plate_1.json':{nozzle_diameter:0.4000000059604645}};
   await inspect(t,'',{model:'h2d'},entries);
