@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { uploadProgressReporter, UPLOAD_STAGE_META } from "../dist/upload-progress.js";
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import JSZip from 'jszip';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ProgressNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 test("upload progress is bytes sent of the file's bytes, marked as the upload stage, once per whole percent", () => {
   const sent = [];
@@ -16,17 +24,16 @@ test("upload progress is bytes sent of the file's bytes, marked as the upload st
 });
 
 // The process runs the real MCP handler; only dispatch and delivery latency are mocked.
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import JSZip from 'jszip';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { ProgressNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-
-for (const failNotification of [false, true]) {
-  test(`print_3mf delivers final upload progress before its result (send failure: ${failNotification})`, async t => {
+// Each case: which progress sends fail, whether dispatch throws after uploading, and what the client sees, in order.
+const cases = [
+  { failing: '', dispatchFails: false, events: [0, 100, 'result'] },
+  { failing: '0', dispatchFails: false, events: [100, 'result'] },
+  { failing: '100', dispatchFails: false, events: [0, 'result'] },
+  { failing: '', dispatchFails: true, events: [0, 100, 'result'] },
+  { failing: '100', dispatchFails: true, events: [0, 'result'] },
+];
+for (const { failing, dispatchFails, events: expected } of cases) {
+  test(`print_3mf delivers queued upload progress before its result (failing sends: ${failing || 'none'}, dispatch fails: ${dispatchFails})`, async t => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'upload-progress-order-'));
     const file = path.join(dir, 'job.3mf');
     const zip = new JSZip();
@@ -37,7 +44,7 @@ for (const failNotification of [false, true]) {
       command: process.execPath,
       args: ['--import', fileURLToPath(new URL('./fixtures/upload-progress-spy.mjs', import.meta.url)), fileURLToPath(new URL('../dist/index.js', import.meta.url))],
       cwd: dir, stderr: 'pipe',
-      env: { HOME: dir, MCP_TRANSPORT: 'stdio', PRINTER_TYPE: 'bambu', BAMBU_SERIAL: 'TEST', BAMBU_TOKEN: 'TEST', FAIL_UPLOAD_NOTIFICATION: failNotification ? '1' : '0' },
+      env: { HOME: dir, MCP_TRANSPORT: 'stdio', PRINTER_TYPE: 'bambu', BAMBU_SERIAL: 'TEST', BAMBU_TOKEN: 'TEST', FAIL_UPLOAD_NOTIFICATION: failing, FAIL_UPLOAD_DISPATCH: dispatchFails ? '1' : '0' },
     });
     let stderr = '';
     transport.stderr.on('data', data => { stderr += data; });
@@ -50,8 +57,12 @@ for (const failNotification of [false, true]) {
       name: 'print_3mf', arguments: { three_mf_path: file, bambu_model: 'p1s' }, _meta: { progressToken: 'upload-order' },
     });
     events.push('result');
-    assert.equal(result.isError, undefined, JSON.stringify(result));
-    assert.deepEqual(events, failNotification ? [100, 'result'] : [0, 100, 'result']);
-    if (failNotification) assert.match(stderr, /upload progress.*mock progress send failure/i);
+    assert.deepEqual(events, expected);
+    if (dispatchFails) {
+      // A failed progress send never masks the dispatch error.
+      assert.equal(result.isError, true, JSON.stringify(result));
+      assert.match(result.content[0].text, /mock dispatch failure/);
+    } else assert.equal(result.isError, undefined, JSON.stringify(result));
+    if (failing) assert.match(stderr, /upload progress.*mock progress send failure/i);
   });
 }
