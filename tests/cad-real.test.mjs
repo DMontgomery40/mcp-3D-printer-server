@@ -3,7 +3,6 @@ import test from "node:test";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import sharp from "sharp";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -19,6 +18,8 @@ test(
     timeout: 900000,
   },
   async (t) => {
+    // Sharp is optional in this package; load the image checker only for the opt-in test.
+    const { default: sharp } = await import("sharp");
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cad-real-"));
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
     const c = new Client({ name: "cad-real-test", version: "1" });
