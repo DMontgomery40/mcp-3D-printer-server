@@ -67,3 +67,8 @@ Thank you to the [MCP TypeScript SDK contributors](https://github.com/modelconte
 Thanks again to [Patrick Juchli](https://github.com/patrickjuchli) and the basic-ftp maintainers for the [6.2.4 listing correction](https://github.com/patrickjuchli/basic-ftp/releases/tag/v6.2.4) included in the prepared 6.2.5 dependency update. Offline regression and package validation cover this update; publication is pending.
 
 Thanks to [Steve Pritchard (sjpritchard)](https://github.com/sjpritchard) for the official H2C first-layer temperature-table report in [bambu-printer-mcp #81](https://github.com/DMontgomery40/bambu-printer-mcp/issues/81). Its safety-preserving correction is ported here and checked with isolated Studio output; publication of this port is pending.
+
+### November 10 maintenance
+
+- [Rowan McMahon](https://github.com/rowanmcmahon): A1 stopped-job firmware evidence, recovery code and regressions in [bambu-printer-mcp#133](https://github.com/DMontgomery40/bambu-printer-mcp/pull/133), adapted here without broadening recovery to other models.
+- [Axios contributors](https://github.com/axios/axios/graphs/contributors) and [Patrick Juchli and basic-ftp contributors](https://github.com/patrickjuchli/basic-ftp/graphs/contributors): the compatible Axios 1.21.1 and basic-ftp 6.2.6 maintenance releases.

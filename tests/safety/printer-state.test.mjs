@@ -331,3 +331,16 @@ test("a paused job's own pause notice does not block Resume, and nothing else is
     "a busy printer refuses with a stable code clients act on");
   assert.throws(() => check(fresh({ print_error: PAUSE_NOTICE })), /print error/, "an idle printer reporting it still refuses a new job");
 });
+
+// Rowan McMahon's A1 firmware evidence and regressions: bambu-printer-mcp#133.
+test('A1 clean stopped job passes while incomplete, active and other-model reports remain blocked', () => {
+  const raw = {model_id:undefined, model:'a1', gcode_state:'FAILED', print_type:'idle', print_error:0, hms:[], subtask_name:'previous', gcode_file:'cache/previous.3mf'};
+  const status = (change={}) => fresh({...raw,...change}, {model:'a1',serial:'039TEST'});
+  const requirements=req({model:'a1',verifyMaterials:false});
+  assert.doesNotThrow(() => check(status(), requirements));
+  for (const change of [{print_type:'local'},{print_type:undefined},{print_error:1},{print_error:undefined},{hms:undefined},{hms:[{attr:1,code:0x20001}]},{subtask_name:'',gcode_file:''},{gcode_state:'PAUSE'},{gcode_state:'RUNNING'},{nozzle_diameter:'0.6'}]) assert.throws(() => check(status(change),requirements),JSON.stringify(change));
+  const stale=status(); stale.observation.requestedAt-=60000;
+  assert.throws(() => check(stale,requirements),/fresh|stale/);
+  for (const model of ['a1mini','p1p','x1c','h2s']) assert.throws(() => check(fresh({...raw,model}),req({model,verifyMaterials:false})),/not safely idle/);
+  assert.throws(() => check(status({model:undefined,modules:[{name:'ota',sn:'030TEST'}]}),requirements),/serial|model|identity/i);
+});
