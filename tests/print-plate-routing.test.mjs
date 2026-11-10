@@ -1,6 +1,7 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,rm,access} from 'node:fs/promises';
+import {writeFile,rm,access} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -8,7 +9,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import JSZip from 'jszip';
 async function fixture(t, readyPlate) {
- const dir=await mkdtemp(join(tmpdir(),'plate-routing-')),file=join(dir,'original.3mf'),network=join(dir,'network.log');
+ const dir=await trackedMkdtemp(join(tmpdir(),'plate-routing-')),file=join(dir,'original.3mf'),network=join(dir,'network.log');
  const zip=new JSZip();zip.file('3D/3dmodel.model','<model><resources/><build/></model>');
  if(readyPlate!==undefined)zip.file(`Metadata/plate_${readyPlate+1}.gcode`,'; fixture gcode');
  await writeFile(file,await zip.generateAsync({type:'nodebuffer'}));

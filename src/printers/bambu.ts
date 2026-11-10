@@ -1,4 +1,4 @@
-import { PrinterRefusal } from "../refusal.js";
+import { PrinterRefusal, markPrintCommandSent } from "../refusal.js";
 import { uploadFile } from "./ftp-upload.js";
 import { PrinterImplementation } from "../types.js";
 import { createHash } from "node:crypto";
@@ -646,6 +646,7 @@ export class BambuImplementation extends PrinterImplementation {
     };
 
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
+    markPrintCommandSent();
     await printer.publish(projectFileCmd);
     this.recordCheckedJob(host, serial, remoteProjectPath, requirements, resumeFile);
     await sleep(COMMAND_SETTLE_MS);
@@ -1115,6 +1116,7 @@ export class BambuImplementation extends PrinterImplementation {
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
+    markPrintCommandSent();
     await publishBambuCommand(printer, "print", "gcode_file", { param: remotePath });
     this.recordCheckedJob(host, serial, remotePath, requirements, resumeFile);
     const dispatch = await this.settleRecorded(watcher, host, serial, remotePath);

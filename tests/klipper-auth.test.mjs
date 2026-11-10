@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {createServer} from 'node:http';
@@ -20,7 +21,7 @@ for (const key of ['fixture-api-key','']) test(`Moonraker authentication covers 
     res.end(JSON.stringify({result:{status:{webhooks:{state:'ready'},print_stats:{state:'standby'}},item:{path:'job.gcode'}}}));
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'moonraker-auth-'));
+  const dir=await trackedMkdtemp(path.join(os.tmpdir(),'moonraker-auth-'));
   t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await fs.rm(dir,{recursive:true,force:true});});
   const source=path.join(dir,'job.gcode');await fs.writeFile(source,'; filament_type = PLA\nM104 S220\n');
   const adapter=new KlipperImplementation(axios.create());const args=['127.0.0.1',String(server.address().port),key];

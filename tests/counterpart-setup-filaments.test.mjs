@@ -1,3 +1,4 @@
+import {trackedMkdtempSync} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -96,7 +97,7 @@ test("the person's choices are checked against what's loaded now, and painted sl
 });
 
 test("spool words: Bambu Studio's colour names, tray labels as Studio prints them", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "colour-names-"));
+  const dir = trackedMkdtempSync(path.join(os.tmpdir(), "colour-names-"));
   try {
     fs.writeFileSync(path.join(dir, "filaments_color_codes.json"), JSON.stringify({ data: [
       { fila_id: "GFA00", fila_color: ["#FEC600FF"], fila_color_name: { en: "Sunflower Yellow" } },
@@ -137,6 +138,8 @@ test("setup fields: every PRINTER_TYPE with the .env names this server reads, an
   assert.equal(result.model, "p1s");
   assert.deepEqual(result.kinds.map(kind => kind.kind), ["bambu", "octoprint", "klipper", "prusa", "creality", "duet", "repetier"]);
   for (const kind of result.kinds) assert.equal(kind.env.PRINTER_TYPE, kind.kind, `${kind.kind} sets PRINTER_TYPE`);
+  // No setup check asks this server for a picture: no field writes a camera it reads (a webcam is found once it runs).
+  assert.deepEqual(result.kinds.map(kind => kind.cameraSnapshot), result.kinds.map(() => false));
   assert.deepEqual(genericSetupFields({ server: { name: "m", version: "9" }, models, defaultKind: "octoprint" }).kinds.filter(kind => kind.default).map(kind => kind.kind), ["octoprint"],
     "the kind this server runs with no PRINTER_TYPE is declared, so a client can recognise such a .env");
   const bambu = result.kinds[0];
@@ -167,7 +170,7 @@ test("discovery merges both scans and a held Bambu port is unavailable, not none
 });
 
 test("with no printer configured, the server lists the three tools and answers setup and discovery without a prompt", async t => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "counterpart-setup-"));
+  const directory = trackedMkdtempSync(path.join(os.tmpdir(), "counterpart-setup-"));
   const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, "dist/index.js")], cwd: directory,
     env: { PATH: process.env.PATH ?? "", HOME: directory, MCP_TRANSPORT: "stdio", SLICER_TYPE: "bambustudio", SLICER_PATH: path.join(directory, "no-such", "bambu-studio"), BAMBU_PROFILES_ROOT: "", BAMBU_MODEL: "", PRINTER_HOST: "", PRINTER_TYPE: "", BAMBU_SERIAL: "", BAMBU_TOKEN: "" }, stderr: "pipe" });
   transport.stderr?.on("data", () => {});
