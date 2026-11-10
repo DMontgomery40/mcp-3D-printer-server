@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { uploadProgressReporter, UPLOAD_STAGE_META } from "../dist/upload-progress.js";
@@ -34,7 +35,7 @@ const cases = [
 ];
 for (const { failing, dispatchFails, events: expected } of cases) {
   test(`print_3mf delivers queued upload progress before its result (failing sends: ${failing || 'none'}, dispatch fails: ${dispatchFails})`, async t => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'upload-progress-order-'));
+    const dir = await trackedMkdtemp(path.join(os.tmpdir(), 'upload-progress-order-'));
     const file = path.join(dir, 'job.3mf');
     const zip = new JSZip();
     zip.file('3D/3dmodel.model', '<model><resources/><build/></model>');

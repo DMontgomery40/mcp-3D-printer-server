@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -24,7 +25,7 @@ function safetyStatus({ model = "p1s", nozzle = "0.4", state = "IDLE", ...raw } 
 }
 
 async function fixture(t, { model = "p1s", nozzle = "0.4", material = "PLA", gcode = "M104 S220\nM140 S60\nG1 X10 Y10 Z1\n", raw = false, bed = "Textured PEI Plate" } = {}) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-safety-dispatch-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-safety-dispatch-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, raw ? "job.gcode" : "job.gcode.3mf");
   const content = `; printer_model = Bambu Lab ${model === "a1mini" ? "A1 mini" : model.toUpperCase()}\n; nozzle_diameter = ${nozzle}\n; filament_type = ${material}\n; filament_colour = #FFFFFF\n; curr_bed_type = ${bed}\n${gcode}`;
@@ -433,7 +434,7 @@ test("cancel publishes stop immediately with a string sequence id", async () => 
 // AMS tray choice, ported from bambu-printer-mcp: ams_slots names one tray per
 // used filament and expands to the project-level ams_mapping.
 async function twoFilamentFixture(t, { used = [1], materials = ["PLA", "PETG"] } = {}) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-ams-slots-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-ams-slots-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, "two.3mf");
   const content = `; printer_model = Bambu Lab P1S\n; nozzle_diameter = 0.4\n; filament_type = ${materials.join(";")}\n; filament_colour = #FFFFFF;#000000\n; curr_bed_type = Textured PEI Plate\nM104 S240\nM140 S70\nG1 X10 Y10 Z1\n`;

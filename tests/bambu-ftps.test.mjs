@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -93,7 +94,7 @@ test("Bambu FTPS uses a resumed TLS 1.2 data session and preserves upload paths"
   for (const rejectUpload of [false, true]) {
     await t.test(rejectUpload ? "failed transfer closes the client" : "successful transfer", async (t) => {
       const peer = await ftpsServer(t, rejectUpload);
-      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-ftps-"));
+      const directory = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-ftps-"));
       t.after(() => fs.rm(directory, { recursive: true, force: true }));
       const local = path.join(directory, "local.gcode");
       const payload = Buffer.from("G28\n; exact upload bytes\n");

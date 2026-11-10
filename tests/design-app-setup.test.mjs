@@ -1,3 +1,4 @@
+import {trackedMkdtempSync} from './support/temp.mjs';
 // blender_mcp_setup and fusion_mcp_setup, against stand-ins for uvx, launchctl, tar's input and the network:
 // temporary Blender add-on and Fusion AddIns folders, never the person's own apps.
 import test from "node:test";
@@ -12,7 +13,7 @@ import { FUSION_MCP_DEFAULT_ARGS, FUSION_MCP_PINNED_COMMIT as FUSION_MCP_PIN } f
 import { TOOL_ANNOTATIONS } from "../dist/tool-annotations.js";
 
 const sha = text => createHash("sha256").update(text).digest("hex");
-const temp = (t, prefix) => { const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; };
+const temp = (t, prefix) => { const dir = fs.realpathSync(trackedMkdtempSync(path.join(os.tmpdir(), prefix))); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; };
 const addon = protocol => `bl_info = {\n    "name": "MCP for Blender",\n    "version": (1, 2, 0),\n}\nADDON_PROTOCOL_VERSION = ${protocol}\n`;
 
 /** A stand-in uvx: `python -c` prints the inspect report; `install-addon --addons-dir` stages blender_mcp.py. */
