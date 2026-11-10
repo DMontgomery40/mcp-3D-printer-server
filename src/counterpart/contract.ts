@@ -53,6 +53,7 @@ export interface CounterpartProgress {
 }
 
 export interface CounterpartCapabilities {
+  cad?: {contract: string; status: string; setup: string; run: string; checkFit: string; prompt: string};
   progress: boolean;
   layers: boolean;
   camera: CameraCapability;
@@ -151,6 +152,7 @@ export const PRINTER_INFO_OUTPUT_SCHEMA = {
       type: "object",
       required: ["progress", "layers", "camera", "filaments", "pause", "resume", "cancel", "print3mf", "gcode"],
       properties: {
+        cad: {type: "object", properties: {contract: {type: "string", const: "cad/1"}, status: {type: "string"}, setup: {type: "string"}, run: {type: "string"}, checkFit: {type: "string"}, prompt: {type: "string"}}, required: ["contract", "status", "setup", "run", "checkFit", "prompt"]},
         progress: { type: "boolean" },
         layers: { type: "boolean" },
         camera: { type: "string", enum: ["bambu-tcp", "rtsp", "http-snapshot", "none"] },

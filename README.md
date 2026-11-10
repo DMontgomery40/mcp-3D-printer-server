@@ -802,6 +802,39 @@ Use `slice_stl`, `confirm_temperatures`, and `upload_gcode` separately when you 
 </details>
 
 <details>
+<summary><strong>Optional code-CAD engine</strong></summary>
+
+### Code-CAD
+
+This MCP includes an optional headless design engine built on **build123d**, with trimesh and Manifold for mesh checks. It supports dimensioned parts and script-based captured-mesh work, saving editable Python, named dimensions, STL, and STEP for solid designs without starting Blender or Fusion. Nothing is downloaded until you explicitly call `cad_setup` with `install: true`. Allow about **1.5 GiB** for its isolated Python, packages and download cache; the exact size varies by platform. It needs `uv`, plus macOS Seatbelt or Linux `bubblewrap`; it refuses to run without confinement.
+
+Why include it: a local comparison made a bottle-holder cavity at 65.800 × 28.800 mm, changed its height by exactly 1 mm with one parameter edit in 137 seconds, and exported an articulated unicorn in 657 seconds where two recorded Blender attempts reached 901 seconds without a model. Initial holder worker passes took 238–893 seconds; this is not a speed guarantee. The unicorn still had dimension and pose errors. These few runs do not establish general superiority, reliable articulation or physical print fit. Both holders collided with an oversized raw scan; numerical checks exposed that rather than silently resizing it.
+
+**Don't want it?** Set `CAD_ENABLED=0` in the MCP's environment and restart the MCP. Its CAD tools, prompt and advertised capability disappear; printer tools and the existing Blender/Fusion bridges stay available. To remove a downloaded environment, stop the MCP and move its CAD data folder to Trash (default locations and `CAD_DATA_DIR` are in [the CAD guide](docs/CAD.md)). Your saved model outputs are separate. Leaving it disabled installs nothing and starts no Python.
+
+#### cad_status
+
+Read the pinned version, Python path, platform and last verified readiness. No installation or Python process is started.
+
+#### cad_setup
+
+Check only by default. `{"install":true}` installs a pinned isolated environment in the MCP's data directory and proves a confined small build plus STL/STEP round trip. On macOS it requires an internal disk with file ownership enabled. USB/network data volumes are refused before installation because the experiment found native-import stalls there; nothing is re-signed.
+
+#### cad_run
+
+Read the `cad_design` prompt first. Supply `script` or a saved `script_path`, `output_dir`, and `name`. Scripts declare literal `P = {...}` parameters and a `build()` function returning a build123d shape. One later call with `script_path` and `parameters` changes a dimension and rebuilds. Each run creates a new subfolder and preserves its source/parameter checkpoint, even on failure. The result contains STL/STEP paths, measured geometry, validity checks, six views and a contact sheet.
+
+Explicit `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]` snapshots the files a script may read as `INPUTS["scan"]`. For a mesh-only edit, use `mode: "mesh"` and return `trimesh.Trimesh`: it exports and validates STL plus renders, with `step: null` and a clear reason. For captured meshes, the injected `load_scan` helper takes explicit source units and an up-axis, converts coordinates to millimetres/Z-up, and grounds the mesh without fitting its size. Cleanup choices and labels belong to the caller’s rules; the MCP supplies execution, mesh libraries, checks and renders.
+
+#### cad_check_fit
+
+Check a model and reference STL with an explicit rigid transform. Returns interference volume and minimum surface gap, without quietly scaling a scan. Open/nonmanifold meshes are refused. A gap of zero includes intentional floor contact, so choose clearance checks to match the interface you actually want to measure.
+
+See [CAD setup, confinement, script contract and removal](docs/CAD.md) for configuration, examples and limits.
+
+</details>
+
+<details>
 <summary><strong>Advanced Tools</strong></summary>
 
 ### Advanced Tools

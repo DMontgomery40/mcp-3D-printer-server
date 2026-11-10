@@ -404,7 +404,7 @@ function sectionParagraph(doc, heading) {
 }
 
 function sourceToolNames() {
-  const source = fs.readFileSync(path.join(REPO_DIR, 'src', 'index.ts'), 'utf8');
+  const source = ['index.ts', 'cad/contracts.ts'].map(file => fs.readFileSync(path.join(REPO_DIR, 'src', file), 'utf8')).join('\n');
   return new Set([...source.matchAll(/^\s*name: "([a-z0-9_]+)",$/gm)].map((m) => m[1]));
 }
 

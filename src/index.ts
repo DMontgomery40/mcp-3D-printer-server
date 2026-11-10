@@ -20,6 +20,8 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import os from "node:os";
+import { CadEngine } from "./cad-engine.js";
+import { CAD_TOOLS, cadEnabled } from "./cad/contracts.js";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
 import { BLENDER_SETUP_OUTPUT_SCHEMA, BlenderAddonSetup, FUSION_ADDIN_REPOSITORY, FUSION_SETUP_OUTPUT_SCHEMA, FusionAddinSetup, defaultSetupSystem, parseAddonHandshake, type BlenderAddonHandshake } from "./design-app-setup.js";
 import { resolveFilamentProfile } from "./slicer/filament-profiles.js";
@@ -142,6 +144,7 @@ import { bambuColourNames } from "./printers/bambu-filaments.js";
 
 // Load environment variables from .env file
 dotenv.config();
+const CAD_ENABLED = cadEnabled();
 
 const SERVER_NAME = "mcp-3d-printer-server";
 const SERVER_VERSION: string = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
@@ -548,6 +551,7 @@ const PRINTER_TARGET_PROPERTIES = {
 
 /** Tools that declare an outputSchema: their errors carry no structuredContent, which clients would validate. */
 const OUTPUT_SCHEMA_TOOLS = new Set([
+  "cad_status", "cad_setup", "cad_run", "cad_check_fit",
   "counterpart_discover_printers", "counterpart_setup_fields", "counterpart_propose_filaments",
   "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
@@ -887,6 +891,7 @@ function credentialSuggestion(): string {
 
 class ThreeDPrinterMCPServer {
   private server: Server;
+  private readonly cad = new CadEngine({outputRoots:[TEMP_DIR,...(process.env.CAD_OUTPUT_DIRS?.split(path.delimiter).filter(Boolean)??[])]});
   private readonly blender = new BlenderMcpBridge();
   private readonly fusion = new FusionMcpBridge();
   // Downloads and installer output are staged in this server's own temporary folder.
@@ -914,7 +919,7 @@ class ThreeDPrinterMCPServer {
           resources: {},
           tools: {}
         },
-        instructions: SERVER_INSTRUCTIONS
+        instructions: SERVER_INSTRUCTIONS + (CAD_ENABLED ? " For headless dimensioned designs and parameter edits, read the cad_design prompt before using cad_run." : "")
       }
     );
 
@@ -1385,7 +1390,7 @@ class ThreeDPrinterMCPServer {
   /** The FDM design guidance as MCP prompts: the client decides when to attach each one. */
   setupPromptHandlers() {
     this.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-      prompts: [...DESIGN_PROMPTS, FDM_SLICING_PROMPT].map(({ name, title, description }) => ({ name, title, description })),
+      prompts: [...DESIGN_PROMPTS.filter(p => CAD_ENABLED || p.name !== "cad_design"), FDM_SLICING_PROMPT].map(({ name, title, description }) => ({ name, title, description })),
     }));
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       if (request.params.name === FDM_SLICING_PROMPT.name) {
@@ -1396,7 +1401,7 @@ class ThreeDPrinterMCPServer {
           messages: [{ role: "user" as const, content: { type: "text" as const, text: slicingGuidance(DEFAULT_SLICER_TYPE, sliceCapabilities(DEFAULT_SLICER_TYPE, bambu)) } }],
         };
       }
-      const prompt = DESIGN_PROMPTS.find(item => item.name === request.params.name);
+      const prompt = DESIGN_PROMPTS.find(item => item.name === request.params.name && (CAD_ENABLED || item.name !== "cad_design"));
       if (!prompt) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${request.params.name}`);
       return {
         description: prompt.description,
@@ -2543,6 +2548,7 @@ class ThreeDPrinterMCPServer {
               required: ["stl_path"]
             }
           },
+          ...(CAD_ENABLED ? CAD_TOOLS : []),
           {
             name: "blender_mcp_status",
             description: "Inspect Blender MCP configuration or connect and discover the remote server's tools. Lists tool names and summaries; pass tool_names for the full input schemas of the tools you will call. Connecting does not edit the scene; use get_scene_info through blender_mcp_call to check the Blender addon.",
@@ -2707,6 +2713,7 @@ class ThreeDPrinterMCPServer {
               .catch(error => { console.error("Failed to send upload progress notification:", error); });
           });
       
+      if (!CAD_ENABLED && name.startsWith("cad_")) return {isError:true, content:[{type:"text",text:"Code-CAD is disabled by CAD_ENABLED=0."}]};
       // Set default values for common parameters
       const host = String(args?.host || DEFAULT_HOST);
       const port = String(args?.port || DEFAULT_PORT);
@@ -3667,6 +3674,27 @@ class ThreeDPrinterMCPServer {
             const layFlatResult = await this.stlManipulator.layFlatWithResult(String(args.stl_path));
             // The text stays the STL path clients read; structuredContent says whether it was laid flat.
             return { content: [{ type: "text", text: layFlatResult.path }], structuredContent: layFlatResult };
+          }
+
+          case "cad_status":
+            if (args && Object.keys(args).length) throw new Error("cad_status takes no arguments.");
+            return structured(await this.cad.status());
+          case "cad_setup":
+          case "cad_run":
+          case "cad_check_fit": {
+            const started = Date.now();
+            let sequence = 0;
+            const heartbeat = progressToken === undefined ? undefined : setInterval(() => {
+              progressNotifications = progressNotifications.then(() => extra.sendNotification({method: "notifications/progress", params: {
+                progressToken, progress: ++sequence, message: `${name}: working for ${Math.round((Date.now()-started)/1000)} seconds`,
+              }})).catch(() => {});
+            }, 5000);
+            try {
+              result = name === "cad_setup" ? await this.cad.setup(args ?? {}, extra.signal)
+                : name === "cad_run" ? await this.cad.run(args ?? {}, extra.signal)
+                : await this.cad.checkFit(args ?? {}, extra.signal);
+            } finally { if (heartbeat) clearInterval(heartbeat); }
+            return structured(result);
           }
 
           case "blender_mcp_setup":

@@ -1,3 +1,4 @@
+import {CAD_CAPABILITY} from "../dist/cad/contracts.js";
 // counterpart/1 tools over MCP stdio against loopback printer mocks. The SDK
 // client validates structuredContent against each tool's outputSchema, so a
 // passing call proves the declared schema. No printer is contacted.
@@ -95,7 +96,7 @@ test("OctoPrint over MCP: info, progress, filaments and a Classic Webcam snapsho
   assert.equal(info.contract, "counterpart/1");
   assert.equal(info.server.name, "mcp-3d-printer-server");
   assert.deepEqual(info.printer, { kind: "octoprint", host: "127.0.0.1", model: "Prusa i3", name: "Default" });
-  assert.deepEqual(info.capabilities, { progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true,
+  assert.deepEqual(info.capabilities, { cad: CAD_CAPABILITY, progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true,
     slicing: { supports: false, copies: false, orient: false } }, "PrusaSlicer (the default for OctoPrint) takes none of them here");
   const progress = (await call(client, "counterpart_print_progress")).structuredContent;
   assert.equal(progress.state, "printing");

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.64] – 2026-11-09
+
+### Added
+
+- Add optional confined code-CAD parity with bambu-printer-mcp: cad_status/setup/run/check_fit, cad_design and cad/1, pinned CAD/mesh libraries, protected scan inputs and explicit millimetre/Z-up preparation, independent checks and six renders. CAD_ENABLED=0 hides the family; setup installs only on request and requires internal ownership-enabled macOS storage without re-signing. Validated with stubbed printer transports and headless CAD; no physical print or installed Counterpart update.
+
 ## [1.2.60] – 2026-11-08
 
 ### Fixed

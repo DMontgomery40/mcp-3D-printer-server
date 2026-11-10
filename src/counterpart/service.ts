@@ -1,3 +1,4 @@
+import {CAD_CAPABILITY,cadEnabled} from "../cad/contracts.js";
 /**
  * counterpart/1 tools for every printer type this server drives. Generic
  * adapters supply firmware reads; this module turns them into the shared
@@ -157,6 +158,7 @@ export class CounterpartService {
         slicing: sliceCapabilities(this.bambuProfileSource().slicerType ?? "prusaslicer", false),
       };
     }
+    if (cadEnabled()) capabilities.cad = CAD_CAPABILITY;
     const streamCandidates = await this.cameraCandidates(target).catch(() => []);
     capabilities.cameraStream = await cameraNativeAvailable() && streamCandidates.length > 0 &&
       (capabilities.camera !== "none" || streamCandidates.some(candidate => candidate.configured));
