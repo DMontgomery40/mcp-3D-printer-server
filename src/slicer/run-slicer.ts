@@ -111,7 +111,8 @@ export function runSlicerProcess(options: SlicerRunOptions): Promise<SlicerRunRe
     child.on("close", (code, signal) => {
       const stdoutTail = stdout.text();
       const stderrTail = stderr.text();
-      if (stalled && !timedOut && !cancelled) {
+      // A slicer that finished cleanly as it was stopped finished; only a stopped one is reported as stalled.
+      if (stalled && !timedOut && !cancelled && (code !== 0 || signal)) {
         settle(() => reject(stalledSlicerError(slicerType, stallSeconds)));
         return;
       }
