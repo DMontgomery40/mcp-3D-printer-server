@@ -782,7 +782,7 @@ test("slice_stl gives a Bambu-compatible slicer its own home folder on macOS", a
 
 // watchForStall itself, on every platform with ps or /proc: an idle child is reported, a computing one and one that
 // exits are not.
-test("watchForStall reports an idle child, not a computing or finished one", async () => {
+test("watchForStall reports an idle child, not a computing or finished one", { skip: process.platform === "win32" && "no CPU time to read on Windows" }, async () => {
   const { spawn } = await import("node:child_process");
   const { watchForStall } = await import("../../dist/slicer/slicer-launch.js");
   const run = (script, ms) => new Promise((resolve) => {
