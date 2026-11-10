@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.64] – 2026-11-10
+
+### Added
+
+- Report CAD installation estimates/measured bytes and coded refusals; queue runs within their own deadlines, retain protected final-result validation records, reuse content-hash input bundles, and reveal preview openings with depth/feature edges. Clarify scan-reference scope and measured-interface precedence. Validated through confined headless fixtures; no physical fit/print or app update.
+
+- Add optional confined code-CAD parity with bambu-printer-mcp: cad_status/setup/run/check_fit, cad_design and cad/1, pinned CAD/mesh libraries, protected scan inputs and explicit millimetre/Z-up preparation, independent checks and six renders. CAD_ENABLED=0 hides the family; setup installs only on request and requires internal ownership-enabled macOS storage without re-signing. Validated with stubbed printer transports and headless CAD; no physical print or installed Counterpart update.
+
 ## [1.2.63] – 2026-11-10
 
 ### Added

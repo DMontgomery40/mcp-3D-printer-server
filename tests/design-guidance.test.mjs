@@ -32,7 +32,7 @@ test("the FDM design guidance is served as MCP prompts, a resource and the serve
   assert.ok(client.getServerCapabilities()?.prompts, "the server declares prompts");
 
   const { prompts } = await client.listPrompts();
-  assert.deepEqual(prompts.map(prompt => prompt.name), ["fdm_design", "fdm_multicolor", "fdm_assembly", "fdm_after_slice", "fdm_slicing"]);
+  assert.deepEqual(prompts.map(prompt => prompt.name), ["cad_design", "fdm_design", "fdm_multicolor", "fdm_assembly", "fdm_after_slice", "fdm_slicing"]);
   for (const [name, text] of [["fdm_design", FDM_CORE], ["fdm_multicolor", FDM_MULTICOLOR], ["fdm_assembly", FDM_ASSEMBLY], ["fdm_after_slice", FDM_AFTER_SLICE]]) {
     const result = await client.getPrompt({ name });
     assert.equal(result.messages.length, 1, name);

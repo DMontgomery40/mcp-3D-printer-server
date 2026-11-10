@@ -40,6 +40,10 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   inspect_print_file: "read",
   list_3mf_plates: "read",
   check_fulu_orca_setup: "read",
+  cad_status: "read",
+  cad_setup: "read",
+  cad_run: "design",
+  cad_check_fit: "design",
   blender_mcp_status: "read",
   fusion_mcp_status: "read",
   blender_mcp_setup: "read", // checks only; update raises it
@@ -84,6 +88,7 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
 };
 
 const RAISED_BY: Readonly<Record<string, Record<string, RemoteScope>>> = {
+  cad_setup: { install: "raw" },
   fusion_mcp_status: { launch: "design" }, // starts Fusion on this computer
   blender_mcp_status: { connect: "design" }, // connects to Blender
   blender_mcp_setup: { update: "raw" }, // replaces the add-on in the person's Blender
@@ -109,6 +114,7 @@ const FILE_ARGUMENTS: ReadonlySet<string> = new Set(["filament_profile", "slicer
 const isPath = (key: string) => /(?:path|dir|directory|_file)$/.test(key) || FILE_ARGUMENTS.has(key);
 
 function kindOf(tool: string, key: string, depth: number): ArgumentKind | undefined {
+  if (tool === "cad_check_fit" && depth === 0 && ["model", "reference"].includes(key)) return "path";
   // counterpart_print_route's own `route` is the connection the caller chooses.
   if ((CONFIG_ARGUMENTS.has(key) && !(key === "route" && tool === "counterpart_print_route")) || /config_dir$/.test(key)) return "config";
   if (depth === 0 && TOP_LEVEL_CONFIG.has(key)) return "config-top";

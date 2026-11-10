@@ -18,6 +18,7 @@ let camera;
 try {
   const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", directory], { cwd: root, encoding: "utf8" }))[0];
   for (const file of ["dist/index.js", "dist/http-server.js", "dist/sse-server.js", "dist/blender-mcp-bridge.js", "dist/3mf_parser.js",
+    "dist/cad-engine.js", "dist/cad/process.js", "dist/cad/contracts.js", "src/cad/worker.py", "src/cad/geometry.py", "src/cad/requirements.lock", "src/cad/requirements.in", "docs/CAD.md",
     "dist/counterpart/camera-stream.js", "dist/counterpart/camera-sources.js", "dist/counterpart/camera-tools.js"]) {
     assert.ok(packed.files.some((entry) => entry.path === file), `Package must contain ${file}`);
   }
@@ -26,6 +27,8 @@ try {
   execFileSync("npm", ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", path.join(directory, packed.filename)], { cwd: directory, stdio: "pipe" });
   const installed = path.join(directory, "node_modules", "mcp-3d-printer-server");
   const pkg = JSON.parse(await fs.readFile(path.join(installed, "package.json"), "utf8"));
+  for (const file of ['src/cad/worker.py','src/cad/geometry.py','src/cad/requirements.lock','src/cad/requirements.in'])
+    assert.equal(await fs.readFile(path.join(installed,file),'utf8'),await fs.readFile(path.join(root,file),'utf8'),`Packed CAD asset differs: ${file}`);
   for (const target of Object.values(pkg.bin)) await fs.access(path.join(installed, target));
   // Resolve the optional native processor from the installed tarball, not this checkout.
   const [major, minor] = process.versions.node.split(".").map(Number);
@@ -35,12 +38,15 @@ try {
     : Buffer.from("/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAT/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKwAf//Z", "base64");
   camera = createServer((_request, response) => { response.writeHead(200, {"Content-Type": "image/jpeg"}); response.end(jpeg); });
   camera.listen(0, "127.0.0.1"); await once(camera, "listening");
-  const env = { ...process.env, PRINTER_CAMERA_SNAPSHOT_URL: `http://127.0.0.1:${camera.address().port}/still`, MCP_TRANSPORT: "stdio", PRINTER_TYPE: "octoprint", PRINTER_HOST: "127.0.0.1", BLENDER_MCP_COMMAND: "", BLENDER_MCP_BRIDGE_COMMAND: "", TEMP_DIR: path.join(directory, "scratch") };
+  const env = { ...process.env, PRINTER_CAMERA_SNAPSHOT_URL: `http://127.0.0.1:${camera.address().port}/still`, CAD_DATA_DIR: path.join(directory,"cad-data"), MCP_TRANSPORT: "stdio", PRINTER_TYPE: "octoprint", PRINTER_HOST: "127.0.0.1", BLENDER_MCP_COMMAND: "", BLENDER_MCP_BRIDGE_COMMAND: "", TEMP_DIR: path.join(directory, "scratch") };
   async function check(client) {
     assert.equal(client.getServerVersion().version, pkg.version);
     const names = (await client.listTools()).tools.map((tool) => tool.name);
     for (const name of ["get_printer_status", "print_3mf", "blender_mcp_status", "blender_mcp_call", "blender_mcp_edit_model"]) assert.ok(names.includes(name));
     for (const name of ["camera_stream_start", "camera_frame", "camera_stream_stop"]) assert.ok(names.includes(name));
+    for (const name of ['cad_status','cad_setup','cad_run','cad_check_fit']) assert.ok(names.includes(name));
+    assert.equal((await client.callTool({name:'cad_status',arguments:{}})).structuredContent.ready,false);
+    assert.match((await client.getPrompt({name:'cad_design'})).messages[0].content.text,/load_scan/);
     const frame = await client.callTool({name: "camera_frame", arguments: {}});
     assert.equal(frame.structuredContent.status, "stopped");
     if (!nativeSupported) {
