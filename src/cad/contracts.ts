@@ -1,3 +1,4 @@
+import { CAD_REFUSAL_CODES } from "./refusal.js";
 /** cad/1 is an optional engine owned by the printer MCP. Readiness comes from cad_status, not the capability. */
 export function cadEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return !["0", "false", "off"].includes(
@@ -12,7 +13,24 @@ export const CAD_CAPABILITY = {
   checkFit: "cad_check_fit",
   prompt: "cad_design",
 } as const;
+const storage = {
+  type: "object",
+  properties: {
+    expected_download_bytes: { type: "integer" },
+    expected_installed_bytes: { type: "integer" },
+    installed_bytes: { type: ["integer", "null"] },
+    measurement: { type: "string", const: "allocated-last-setup" },
+    measured_at: { type: "string" },
+  },
+  required: [
+    "expected_download_bytes",
+    "expected_installed_bytes",
+    "installed_bytes",
+    "measurement",
+  ],
+};
 const status = {
+  storage,
   configured: { type: "boolean" },
   ready: { type: "boolean" },
   python: { type: ["string", "null"] },
@@ -20,17 +38,29 @@ const status = {
   platform: { type: "string" },
   error: { type: "string" },
 };
+const failure = {
+  type: "object",
+  properties: {
+    status: { type: "string", const: "error" },
+    code: { type: "string", enum: [...CAD_REFUSAL_CODES] },
+    message: { type: "string" },
+    tool: { type: "string" },
+    retryable: { type: "boolean" },
+    suggestion: { type: "string" },
+    storage,
+  },
+  required: ["status", "code", "message", "tool", "retryable", "suggestion"],
+};
 const output = (properties: Record<string, unknown>, required: string[]) => ({
   type: "object" as const,
-  properties,
-  required,
+  anyOf: [{ type: "object", properties, required }, failure],
 });
 const timeout = {
   type: "integer",
   minimum: 100,
   maximum: 900000,
   description:
-    "Total execution plus inspection deadline. Default 120000 ms; cancellation kills the dispatched process group.",
+    "Total queue wait, preparation, execution and inspection deadline. Default 120000 ms; cancellation kills the dispatched process group.",
 };
 export const CAD_TOOLS = [
   {
@@ -48,6 +78,7 @@ export const CAD_TOOLS = [
       "python",
       "build123d",
       "platform",
+      "storage",
     ]),
   },
   {
@@ -73,13 +104,13 @@ export const CAD_TOOLS = [
         installed: { type: "boolean" },
         message: { type: "string" },
       },
-      ["supported", "configured", "ready"],
+      ["supported", "configured", "ready", "storage"],
     ),
   },
   {
     name: "cad_run",
     description:
-      "Build parametric CAD headlessly in OS confinement. Read cad_design first: declare literal P = {...} and build() returning a build123d Shape. Supply script OR script_path; parameters overrides saved named values in one call before derived dimensions. Each call creates a private immutable subfolder under allowed output_dir, never overwriting previous artifacts. The saved .py and .parameters.json are the recovery checkpoint even after cancellation. Returns independently measured geometry, STL/STEP, six renders and a contact sheet; valid geometry is not a physical-fit or motion proof.",
+      "Build parametric CAD headlessly in OS confinement. Read cad_design first: declare literal P = {...} and build() returning a build123d Shape. Supply script OR script_path; parameters overrides saved named values in one call before derived dimensions. Calls wait for the environment’s exclusive execution slot up to their own deadline and report queue_wait_ms. Each call creates a private immutable subfolder under allowed output_dir, never overwriting previous artifacts. The saved .py and .parameters.json are the recovery checkpoint even after cancellation. Returns independently measured geometry, STL/STEP, six renders and a contact sheet; valid geometry is not a physical-fit or motion proof.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -93,7 +124,7 @@ export const CAD_TOOLS = [
             additionalProperties: false,
           },
           description:
-            "Explicit named files [{name, path}]. Immutable snapshots are exposed to build() as INPUTS[name]; nested path is declared for remote path policy.",
+            "Explicit named files [{name, path}]. Content-addressed immutable input bundles are reused; snapshot_bytes_added/reused report storage. Only the selected declared bundle is exposed to build() as INPUTS[name]; nested path is declared for remote path policy.",
         },
         mode: {
           type: "string",
@@ -130,6 +161,12 @@ export const CAD_TOOLS = [
           description:
             "Plain file stem for STL, STEP, Python and parameter artifacts.",
         },
+        final: {
+          type: "boolean",
+          default: false,
+          description:
+            "Mark the selected result. The protected cad-result.json records this flag and all returned validation; select completed final records after restart and still inspect valid/checks.",
+        },
         timeout_ms: timeout,
       },
       required: ["output_dir", "name"],
@@ -137,6 +174,18 @@ export const CAD_TOOLS = [
     },
     outputSchema: output(
       {
+        status: { type: "string", const: "completed" },
+        final: { type: "boolean" },
+        completed_at: { type: "string" },
+        lineage_id: { type: "string" },
+        result_manifest: { type: "string" },
+        queue_wait_ms: { type: "integer" },
+        snapshot_bytes_added: { type: "integer" },
+        snapshot_bytes_reused: { type: "integer" },
+        input_hashes: {
+          type: "object",
+          additionalProperties: { type: "string" },
+        },
         valid: { type: "boolean" },
         units: { const: "mm", type: "string" },
         script: { type: "string" },
@@ -164,6 +213,14 @@ export const CAD_TOOLS = [
       },
       [
         "valid",
+        "status",
+        "final",
+        "completed_at",
+        "lineage_id",
+        "result_manifest",
+        "queue_wait_ms",
+        "snapshot_bytes_added",
+        "snapshot_bytes_reused",
         "script",
         "parameters",
         "stl",
@@ -253,6 +310,8 @@ export const CAD_DESIGN_PROMPT = {
 Declare exactly one top-level P = {...} dictionary of JSON-compatible literal named parameters. Put every functional dimension in P; derive geometry from P. Define build() to return a build123d Shape or Compound of disjoint solid parts. Do not put construction or exports in a __main__ block: cad_run calls build() and exports the result. Imports, functions and derived P entries are fine. Parameters are applied to the literal defaults before derived expressions execute. For solid designs without inputs, the script and parameters file alone reconstruct it. For input-dependent designs, declare inputs as an array of {name, path} files: cad_run snapshots only those allowed files, exposes INPUTS[alias] to your script, and saves an inputs manifest. Retain the snapshots too for recovery; subsequent script_path edits reuse them unless inputs is explicitly supplied. No other personal files are readable. For a mesh-only experiment use mode: "mesh" and return a trimesh.Trimesh from build(); it exports and checks STL plus six renders, with step: null and an explicit reason. It does not manufacture a fake parametric STEP or promise scan-cleanup capability.
 Call cad_run with script, output_dir and a plain name. It saves <name>.py and <name>.parameters.json before running, then exports <name>.stl and <name>.step in a fresh subfolder. For an edit, one cad_run with script_path pointing to the earlier .py, parameters containing just the changed dimension, output_dir and name regenerates it without resending the script. Existing parameter values are retained; unknown names and type changes are refused. A killed run can be retried from its checkpoint in a new workspace; mutations are never replayed automatically.
 Captured mesh preparation: load_scan(name, source_units="m" or "mm", up_axis="x"|"-x"|"y"|"-y"|"z"|"-z", ground=True) is provided to build(). Name must be a declared input. Declare source units and the object's usage-up axis explicitly: the helper converts metres to millimetres, applies a rigid up-axis rotation and translates the lowest Z to zero; it never guesses scale or fits to calipers. Geometry/texture references must be declared inputs too; snapshots preserve distinct original filenames. Exports must be millimetres, Z up, in the orientation the object is used.
+Fit reference workflow: return load_scan("scan", source_units="m", up_axis="y") from build() in mode: "mesh" to export an unchanged, prepared reference STL for cad_check_fit. Declare every linked OBJ/MTL/texture asset. If you crop, simplify, fill, or otherwise alter this reference, report exactly what you excluded/changed and that the fit check proves only that reduced reference in the stated pose. A fit check against a scan is information; it must never resize or override an interface specified by measured dimensions. Keep those measured interfaces and report the discrepancy.
+Result selection and edits: set final: true only on the result you select. cad-result.json in each immediate run folder is protected from script writes and retains final, completed_at, lineage_id (source hash), full checks and artifact paths; clients can discover the latest completed final record after restart without rebuilding. Final is a selection marker, not a replacement for valid/checks. Queued calls may expire with cad-queue-timeout before dispatch; do not automatically replay. Unchanged declared files reuse a read-only content-addressed bundle under output_dir/.cad-inputs, preserving filenames and restricting reads to that bundle. Keep this shared cache with the saved runs.
 Mesh cleanup workflow: return a trimesh.Trimesh in mode: "mesh". Load the prepared mesh, fit needed geometry with NumPy/SciPy, rebuild regular sections/features with build123d or manifold3d CrossSection/extrusion/revolve, and combine meshes with manifold3d booleans. scikit-image supplies marching cubes for voxel/SDF work; Shapely supplies planar operations; Pillow supplies image/texture reads. Keep numeric choices in P and regenerate from declared inputs. Validate closure, winding, manifold status, dimensions and all six views using cad_run. What to regularise, infer, preserve or label comes from the caller's cleanup rules, not this engine prompt.
 The result includes paths, millimetre bounds/size, mesh and STEP volumes, solid count, watertight/manifold/winding/STEP checks, six orthographic renders (front, back, left, right, top, bottom) and contact sheet. Inspect all six; revise visible defects. A valid mesh or nominal parameter does not prove the requested dimension: measure the actual exported interfaces. Use cad_check_fit on a model and reference STL with an explicit rigid transform; report raw-scan interference and minimum gap. Calipers are authoritative but disagreement with a scan is unresolved measurement evidence, not permission to silently rescale it. Check assembly/insertion paths and actual articulated poses, not sums of local joint limits or reference points alone. Printing, clearance under load, supports and motion need separate evidence. Apply fdm_design and fdm_slicing too; never invoke a printer as part of constructing CAD.`,
 };

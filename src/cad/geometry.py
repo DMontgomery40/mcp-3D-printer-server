@@ -41,6 +41,16 @@ def inspect(request):
 def render(m, folder):
     folder.mkdir(exist_ok=True)
     tri, centres, normals = m.triangles, m.triangles.mean(axis=1), m.face_normals
+    # Keep only boundaries, creases and view silhouettes, not every STL triangle.
+    # Each stroke is painted with its triangle so nearer surfaces hide rear edges.
+    edges = np.sort(m.faces[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)
+    _, inverse, counts = np.unique(edges, axis=0, return_inverse=True, return_counts=True)
+    ordered = np.argsort(inverse, kind='stable')
+    starts = np.cumsum(counts) - counts
+    paired = np.flatnonzero(counts == 2)
+    a, b = ordered[starts[paired]] // 3, ordered[starts[paired] + 1] // 3
+    feature = counts != 2
+    feature[paired] = np.einsum('ij,ij->i', normals[a], normals[b]) < math.cos(math.radians(35))
     views = [('front', 0, 2, 1, 1), ('back', 0, 2, 1, -1), ('left', 1, 2, 0, -1),
              ('right', 1, 2, 0, 1), ('top', 0, 1, 2, 1), ('bottom', 0, 1, 2, -1)]
     images, paths = [], {}
@@ -57,8 +67,20 @@ def render(m, folder):
         light = np.zeros(3); light[depth] = sign * .85; light[v] = .45; light[u] = -.3 * sign * (-1 if depth == 1 else 1)
         light /= np.linalg.norm(light)
         shades = .4 + .6 * np.clip(normals @ light, 0, 1)
-        for i in np.argsort(centres[:, depth] * sign):
+        # Parallel interior walls otherwise get exactly the same flat lighting as
+        # the near wall, concealing openings that look onto the back of a cavity.
+        depths = tri[:, :, depth] * sign
+        span = float(np.ptp(depths))
+        near = (centres[:, depth] * sign - depths.min()) / span if span > 0 else np.ones(len(tri))
+        shades *= .76 + .24 * near
+        outlines = feature.copy()
+        facing = normals[:, depth] * sign > 1e-8
+        outlines[paired] |= facing[a] != facing[b]
+        outlines = outlines[inverse].reshape(-1, 3)
+        for i in np.argsort(centres[:, depth] * sign, kind='stable'):
             draw.polygon([tuple(a) for a in xy[i]], fill=tuple(int(k * shades[i]) for k in (79, 166, 186)))
+            for j in np.flatnonzero(outlines[i]):
+                draw.line([tuple(xy[i, j]), tuple(xy[i, (j + 1) % 3])], fill=(27, 62, 70), width=2)
         draw.text((24, 22), name + ' | ' + ', '.join(f'{x:.2f}' for x in m.extents) + ' mm', fill='black')
         file = folder / (name + '.png'); im.save(file); paths[name] = str(file); images.append(im)
     sheet = Image.new('RGB', (1600, 2400), 'white')

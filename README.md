@@ -826,6 +826,12 @@ Read the `cad_design` prompt first. Supply `script` or a saved `script_path`, `o
 
 Explicit `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]` snapshots the files a script may read as `INPUTS["scan"]`. For a mesh-only edit, use `mode: "mesh"` and return `trimesh.Trimesh`: it exports and validates STL plus renders, with `step: null` and a clear reason. For captured meshes, the injected `load_scan` helper takes explicit source units and an up-axis, converts coordinates to millimetres/Z-up, and grounds the mesh without fitting its size. Cleanup choices and labels belong to the caller’s rules; the MCP supplies execution, mesh libraries, checks and renders.
 
+`cad_status` and `cad_setup` expose `storage.expected_download_bytes`, `expected_installed_bytes` and cached measured `installed_bytes`; the first two are fresh-install budget estimates, not remaining transfer sizes. Setup failures carry `structuredContent.code`, `message`, `suggestion` and `retryable`, so clients do not parse wording.
+
+Runs wait for the environment's execution slot up to their own total timeout and return `queue_wait_ms`. Mark the selected result with `final: true`: each run's script-protected `cad-result.json` keeps the flag, full validation and artifact paths for recovery after restart. Check `status`, `valid` and the checks as well as `final`.
+
+Unchanged declared inputs reuse immutable content-hash bundles, with `snapshot_bytes_added` and `snapshot_bytes_reused` in the result. Keep the referenced `.cad-inputs` bundles with saved designs. Previews now use depth cues and feature edges to reveal windows and recesses without a heavy renderer.
+
 #### cad_check_fit
 
 Check a model and reference STL with an explicit rigid transform. Returns interference volume and minimum surface gap, without quietly scaling a scan. Open/nonmanifold meshes are refused. A gap of zero includes intentional floor contact, so choose clearance checks to match the interface you actually want to measure.

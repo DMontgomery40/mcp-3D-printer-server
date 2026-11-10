@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import os from "node:os";
 
 export interface CadProcessOptions {
   env: NodeJS.ProcessEnv;
@@ -104,6 +103,7 @@ export interface CadSandboxRoots {
   assets: string;
   python: string;
   readonly: string[];
+  inputs?: string[];
 }
 const sb = (s: string) => JSON.stringify(s);
 
@@ -114,10 +114,35 @@ export async function cadSandbox(
 ): Promise<{ command: string; args: string[] }> {
   if (platform === "darwin") {
     // Runtime system files remain readable, but personal data, IPC, network and process spawning do not.
-    const variants = (p: string) => [p,...(/^\/(?:Users|private|Volumes)(?:\/|$)/.test(p) ? ["/System/Volumes/Data"+p] : [])];
-    const homes=[os.homedir(),await fs.realpath(os.homedir()).catch(()=>os.homedir())];
-    const denied=["/Users","/Volumes","/private/var","/private/tmp","/tmp",...homes].flatMap(variants);
-    const readable=[path.join(r.data,"runtime"),path.join(r.data,"python"),r.assets,r.job].flatMap(variants);
+    const variants = (p: string) => [
+      p,
+      ...(/^\/(?:Users|private|Volumes)(?:\/|$)/.test(p)
+        ? ["/System/Volumes/Data" + p]
+        : []),
+    ];
+    const systemReads = [
+      "/System/Library",
+      "/System/Cryptexes",
+      "/System/Volumes/Preboot",
+      "/private/preboot",
+      "/Library/Fonts",
+      "/usr/lib",
+      "/usr/share",
+      "/usr/bin",
+      "/bin",
+      "/sbin",
+      "/dev",
+      "/private/etc/localtime",
+      "/etc/localtime",
+    ];
+    const readable = [
+      ...systemReads,
+      path.join(r.data, "runtime"),
+      path.join(r.data, "python"),
+      r.assets,
+      r.job,
+      ...(r.inputs ?? []),
+    ].flatMap(variants);
     const profile = `(version 1)(allow default)
 (deny process-info*)(allow process-info* (target self))
 (deny sysctl-read)
@@ -126,11 +151,17 @@ export async function cadSandbox(
  (sysctl-name "kern.version") (sysctl-name "kern.maxfiles") (sysctl-name "kern.maxfilesperproc"))
 (deny file-link)(deny network*)(deny appleevent-send)(deny mach-lookup)(deny signal)(deny process-fork)
 (deny process-exec)(allow process-exec (literal ${sb(await fs.realpath(r.python).catch(() => r.python))}))
-(deny file-read* ${denied.map(p=>`(subpath ${sb(p)})`).join(" ")})
+(deny file-read*)
 (allow file-read-metadata)(deny file-write*)
-(allow file-read* ${readable.map(p=>`(subpath ${sb(p)})`).join(" ")})
-(allow file-write* ${variants(r.job).map(p=>`(subpath ${sb(p)})`).join(" ")} (literal "/dev/null"))
-${r.readonly.flatMap(variants).map((p) => `(deny file-write* (subpath ${sb(p)}))`).join("\n")}`;
+(allow file-read* (literal "/") (literal "/System") (literal "/System/Volumes") (literal "/System/Volumes/Data") (literal "/private"))
+(allow file-read* ${readable.map((p) => `(subpath ${sb(p)})`).join(" ")})
+(allow file-write* ${variants(r.job)
+      .map((p) => `(subpath ${sb(p)})`)
+      .join(" ")} (literal "/dev/null"))
+${r.readonly
+  .flatMap(variants)
+  .map((p) => `(deny file-write* (subpath ${sb(p)}))`)
+  .join("\n")}`;
     return { command: "/usr/bin/sandbox-exec", args: ["-p", profile] };
   }
   if (platform === "linux") {
@@ -168,10 +199,14 @@ ${r.readonly.flatMap(variants).map((p) => `(deny file-write* (subpath ${sb(p)}))
       path.join(r.data, "runtime"),
       path.join(r.data, "python"),
       r.assets,
+      ...(r.inputs ?? []),
     ])
       args.push("--ro-bind", dir, dir);
     args.push("--bind", r.job, r.job);
-    for (const file of r.readonly) args.push("--ro-bind", file, file);
+    for (const file of r.readonly.filter(
+      (file) => !(r.inputs ?? []).includes(file),
+    ))
+      args.push("--ro-bind", file, file);
     args.push("--chdir", r.job);
     return { command: "bwrap", args };
   }

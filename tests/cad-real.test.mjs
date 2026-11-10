@@ -349,6 +349,7 @@ test(
     );
     assert.deepEqual(await fs.readFile(original.stl), inputBefore);
     const attacks = [
+      "from pathlib import Path\n(Path(__file__).parent / 'cad-result.json').write_text('forged')",
       "import socket\nsocket.create_connection(('192.0.2.1',443),timeout=1)",
       `from pathlib import Path\nPath(${JSON.stringify(original.stl)}).read_bytes()`,
       `from pathlib import Path\nPath(${JSON.stringify(path.join(dir, "outside.txt"))}).write_text('no')`,
@@ -369,6 +370,7 @@ test(
         { timeout: 240000 },
       );
       assert.equal(r.isError, true, JSON.stringify(r));
+      assert.equal(r.structuredContent.code, "cad-failed");
       assert.match(
         r.content[0].text,
         /permitted|denied|reachable|Network|Permission/i,

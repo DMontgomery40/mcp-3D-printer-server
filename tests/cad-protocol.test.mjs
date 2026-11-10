@@ -1,5 +1,5 @@
-import {createServer} from "node:http";
-import {once} from "node:events";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,10 +11,31 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const entry = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 
 async function printerFixture(t) {
-  const server=createServer((_req,res)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({api:'0.1',state:{flags:{}},webcam:{},profiles:{}}));});
-  server.listen(0,'127.0.0.1');await once(server,'listening');
-  t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve)}));
-  return {PRINTER_TYPE:'octoprint',PRINTER_HOST:'127.0.0.1',PRINTER_PORT:String(server.address().port)};
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        api: "0.1",
+        state: { flags: {} },
+        webcam: {},
+        profiles: {},
+      }),
+    );
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(
+    () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(resolve);
+      }),
+  );
+  return {
+    PRINTER_TYPE: "octoprint",
+    PRINTER_HOST: "127.0.0.1",
+    PRINTER_PORT: String(server.address().port),
+  };
 }
 
 test("stdio exposes confined CAD contracts, MCP-owned prompt, scopes and counterpart capability without printer contact", async (t) => {
@@ -28,7 +49,7 @@ test("stdio exposes confined CAD contracts, MCP-owned prompt, scopes and counter
       HOME: dir,
       PATH: process.env.PATH,
       MCP_TRANSPORT: "stdio",
-      ...await printerFixture(t),
+      ...(await printerFixture(t)),
       BAMBU_MODEL: "",
       TEMP_DIR: dir,
       CAD_DATA_DIR: join(dir, "data"),
@@ -89,7 +110,7 @@ test("CAD_ENABLED=0 leaves out every CAD tool, prompt and capability", async (t)
       HOME: dir,
       PATH: process.env.PATH,
       MCP_TRANSPORT: "stdio",
-      ...await printerFixture(t),
+      ...(await printerFixture(t)),
       BAMBU_MODEL: "",
       TEMP_DIR: dir,
       CAD_ENABLED: "0",
@@ -116,4 +137,63 @@ test("CAD_ENABLED=0 leaves out every CAD tool, prompt and capability", async (t)
     (await c.callTool({ name: "cad_status", arguments: {} })).isError,
     true,
   );
+});
+
+test("CAD structured refusals pass the advertised output schema without wording matching", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "cad-codes-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const data = join(dir, "data");
+  const tr = new StdioClientTransport({
+    command: process.execPath,
+    args: [entry],
+    cwd: dir,
+    env: {
+      PATH: "/usr/bin:/bin",
+      HOME: dir,
+      MCP_TRANSPORT: "stdio",
+      BAMBU_MODEL: "",
+      PRINTER_TYPE: "octoprint",
+      PRINTER_HOST: "127.0.0.1",
+      PRINTER_PORT: "1",
+      TEMP_DIR: dir,
+      CAD_DATA_DIR: data,
+    },
+    stderr: "pipe",
+  });
+  tr.stderr?.on("data", () => {});
+  const c = new Client({ name: "cad-codes", version: "1" });
+  t.after(() => c.close());
+  await c.connect(tr);
+  await c.listTools();
+  const result = await c.callTool({
+    name: "cad_setup",
+    arguments: { install: true },
+  });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.code, "cad-uv-missing");
+  assert.equal(result.structuredContent.status, "error");
+  assert.ok(result.structuredContent.message);
+  assert.ok(result.structuredContent.storage.expected_download_bytes > 0);
+  const { writeFile, readdir } = await import("node:fs/promises");
+  await writeFile(
+    join(data, "operation.lock"),
+    JSON.stringify({ pid: process.pid, operation: "setup" }),
+  );
+  const busy = await c.callTool({
+    name: "cad_setup",
+    arguments: { install: true },
+  });
+  assert.equal(busy.structuredContent.code, "cad-setup-busy");
+  const expired = await c.callTool({
+    name: "cad_run",
+    arguments: {
+      script: "P={}\ndef build():return None",
+      output_dir: dir,
+      name: "queued",
+      timeout_ms: 100,
+    },
+  });
+  assert.equal(expired.isError, true);
+  assert.equal(expired.structuredContent.code, "cad-queue-timeout");
+  assert.deepEqual(await readdir(join(data, "queue")), []);
 });

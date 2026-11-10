@@ -21,6 +21,7 @@ import fs from "fs";
 import path from "path";
 import os from "node:os";
 import { CadEngine } from "./cad-engine.js";
+import { CadRefusal } from "./cad/refusal.js";
 import { CAD_TOOLS, cadEnabled } from "./cad/contracts.js";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
 import { BLENDER_SETUP_OUTPUT_SCHEMA, BlenderAddonSetup, FUSION_ADDIN_REPOSITORY, FUSION_SETUP_OUTPUT_SCHEMA, FusionAddinSetup, defaultSetupSystem, parseAddonHandshake, type BlenderAddonHandshake } from "./design-app-setup.js";
@@ -2713,7 +2714,10 @@ class ThreeDPrinterMCPServer {
               .catch(error => { console.error("Failed to send upload progress notification:", error); });
           });
       
-      if (!CAD_ENABLED && name.startsWith("cad_")) return {isError:true, content:[{type:"text",text:"Code-CAD is disabled by CAD_ENABLED=0."}]};
+      if (!CAD_ENABLED && name.startsWith("cad_")) {
+        const failure = await this.cad.failure(new CadRefusal("cad-disabled", "Code-CAD is disabled by CAD_ENABLED=0."), name);
+        return {isError: true, content: [{type: "text", text: failure.message}], structuredContent: failure};
+      }
       // Set default values for common parameters
       const host = String(args?.host || DEFAULT_HOST);
       const port = String(args?.port || DEFAULT_PORT);
@@ -3755,6 +3759,10 @@ class ThreeDPrinterMCPServer {
           ]
         };
       } catch (error: unknown) {
+        if (name.startsWith("cad_")) {
+          const failure = await this.cad.failure(error, name);
+          return {isError: true, content: [{type: "text" as const, text: failure.message}], structuredContent: failure};
+        }
         console.error(`Error calling tool ${name}:`, error);
         
         const errorMessage = error instanceof Error ? error.message : String(error);

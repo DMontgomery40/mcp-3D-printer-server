@@ -110,3 +110,37 @@ The runtime includes the following direct libraries. Transitive dependencies kee
 | Rtree (proximity checks) |1.4.1| MIT |
 
 The OCP wrapper is Apache-2.0; its OpenCascade kernel is LGPL-2.1 with the OCCT exception. Shapely's GEOS is LGPL-2.1. Preserve those notices and exceptions when distributing native components. Sources: [build123d](https://pypi.org/project/build123d/0.13.0/), [NumPy](https://pypi.org/project/numpy/2.5.4/), [SciPy](https://pypi.org/project/scipy/1.18.1/), [trimesh](https://pypi.org/project/trimesh/5.2.0/), [Manifold](https://github.com/elalish/manifold/blob/master/LICENSE), [scikit-image](https://pypi.org/project/scikit-image/0.26.0/), [Pillow](https://pypi.org/project/pillow/13.0.0/), [Shapely/GEOS](https://pypi.org/project/shapely/2.1.2/), [Rtree](https://pypi.org/project/rtree/1.4.1/), [OCCT](https://dev.opencascade.org/resources/licensing). Neither pymeshlab, Open3D nor bpy is installed.
+
+## Sizes and stable failures
+
+`storage.expected_download_bytes` and `expected_installed_bytes` are maintained budget estimates for a fresh pinned installation: currently 350 MiB download and 1.5 GiB installed, including managed Python and retained uv cache. Platform wheels and existing caches change the actual transfer/footprint. After setup, `storage.installed_bytes` reports allocated filesystem bytes of runtime/python/cache, deduplicating hardlinks and not following symlinks. It excludes scan inputs, models and working files. `measured_at` records the measurement; `measurement: "allocated-last-setup"` makes clear that fast status reads the cached value, with no Python/du process or recursive walk. Null means an existing environment has not yet been measured; zero means no environment is present.
+
+All CAD failures use the normal tool refusal envelope: `isError: true`, with `structuredContent: {status:"error", code, message, tool, retryable:false, suggestion, storage}`. The output schema explicitly accepts this failure shape. Display the provided sentence/suggestion and carry the code; never match wording. Known conditions:
+
+| Code | Condition |
+|---|---|
+| `cad-uv-missing` | uv is absent from the MCP's PATH |
+| `cad-data-volume-refused` | macOS storage is external/network/ownership-disabled or cannot be verified |
+| `cad-setup-busy` | setup was not dispatched because another operation is running/queued |
+| `cad-operation-busy` | a fit check was not dispatched because the environment is busy |
+| `cad-queue-timeout` | a run's deadline expired before dispatch |
+| `cad-not-ready` | setup verification is required |
+| `cad-confinement-unavailable` | unsupported execution platform |
+| `cad-disabled` | the family is disabled |
+| `cad-failed` | other argument/build/validation failure; the message carries detail |
+
+## Queue, selection and input storage
+
+One operation executes per data directory. Runs queue using filesystem tickets (including across MCP processes), wait within their own total timeout, support cancellation, and report `queue_wait_ms`. Timeout covers queue, preparation, build and inspection; `seconds` still measures build/inspection separately. Setup and fit checks refuse busy operations. Nothing automatically replays a request. A timeout/cancel before dispatch creates no build; a dispatched run retains its source/parameter checkpoint.
+
+Every run has `cad-result.json`, created before user code and protected by confinement. It moves atomically from pending to completed with the complete returned receipt: final flag, completed timestamp, lineage/source hash, bounds, volume, solid count, checks and render/artifact paths. Failed builds record failed/final:false. `final:true` is explicit selection, not a guarantee of requested fit or geometric validity. After restart, enumerate only immediate `cad-*` run folders and read their `cad-result.json`; select the latest completed final record for the design, inspect valid/checks, and do not rebuild to recover its validation. The lineage identifier is the saved source's SHA-256, unchanged by parameter overrides.
+
+Input snapshots now live in output-root `.cad-inputs/<content-set-hash>/` bundles, outside the writable run folder. A bundle contains exactly the declared files and preserves their basenames for linked assets. Source and cached content are hashed; unchanged bundles are reused, including a saved script's inputs across output directories when those paths remain allowed. A private data-directory index accelerates locating existing bundles. Only the selected bundle is exposed read-only to Python; other bundles and undeclared originals remain unreadable. Changing the selected file set creates a separate bundle so undeclared assets are never exposed. Results report added/reused snapshot bytes and per-alias hashes.
+
+Keep the shared bundles referenced by `.inputs.json` alongside retained designs; deleting one run does not delete shared inputs. Delete an input bundle only when no saved run references it. Removing the runtime leaves those output-root bundles and saved runs intact. The data directory may be explicitly shared between identical CAD builds/pins; readiness fingerprints include the actual compiled helpers, so mismatched builds require verification. Defaults remain package-owned separate directories.
+
+## Openings and scan fit references
+
+Six orthographic views use deterministic bounded depth shading plus boundary/crease/silhouette edges. True through-holes show the background; a window backed by another wall gains depth contrast and edges. Coplanar triangulation diagonals are not drawn. This stays a lightweight preview with approximate painter ordering, not a photoreal or self-intersection proof.
+
+To prepare a fit reference, return `load_scan("scan", source_units="m", up_axis="y")` from build() in mesh mode, declaring all linked scan assets. cad_run exports the prepared reference STL in millimetres/Z-up without changing physical size. If you crop, simplify, fill or otherwise alter the reference, disclose exactly what changed and that the fit result covers only that reference and stated pose. A scan fit check is information; it must never resize an interface defined by measured dimensions. Preserve those measured interfaces and report a scan discrepancy.

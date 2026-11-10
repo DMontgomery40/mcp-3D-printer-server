@@ -52,6 +52,8 @@ test("CAD confinement has no network or home mounts and refuses unsupported host
   const mac = await cadSandbox("darwin", roots);
   assert.equal(mac.command, "/usr/bin/sandbox-exec");
   assert.match(mac.args[1], /deny network/);
+  assert.match(mac.args[1], /\(deny file-read\*\)/);
+  assert.doesNotMatch(mac.args[1], /\(subpath "\/System"\)/);
   assert.match(mac.args[1], /deny process-fork/);
   assert.match(mac.args[1], /deny file-link/);
   assert.match(mac.args[1], /deny mach-lookup/);
