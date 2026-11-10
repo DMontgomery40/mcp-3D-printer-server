@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -7,7 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { BlenderMcpBridge } from "../dist/blender-mcp-bridge.js";
 
 async function setup(t, { delay = 0, abortAfterRead } = {}) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "blender-validation-"));
+  const directory = await trackedMkdtemp(path.join(os.tmpdir(), "blender-validation-"));
   const input = path.join(directory, "input.stl");
   const mesh = Buffer.alloc(84 + 50 * 8192);
   mesh.writeUInt32LE(8192, 80);

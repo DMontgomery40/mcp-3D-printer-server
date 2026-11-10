@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -24,7 +25,7 @@ function safetyStatus({ model = "p1s", nozzle = "0.4", state = "IDLE", ...raw } 
 }
 
 async function fixture(t, { model = "p1s", nozzle = "0.4", material = "PLA", gcode = "M104 S220\nM140 S60\nG1 X10 Y10 Z1\n", raw = false, bed = "Textured PEI Plate" } = {}) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-safety-dispatch-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-safety-dispatch-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, raw ? "job.gcode" : "job.gcode.3mf");
   const content = `; printer_model = Bambu Lab ${model === "a1mini" ? "A1 mini" : model.toUpperCase()}\n; nozzle_diameter = ${nozzle}\n; filament_type = ${material}\n; filament_colour = #FFFFFF\n; curr_bed_type = ${bed}\n${gcode}`;
@@ -433,7 +434,7 @@ test("cancel publishes stop immediately with a string sequence id", async () => 
 // AMS tray choice, ported from bambu-printer-mcp: ams_slots names one tray per
 // used filament and expands to the project-level ams_mapping.
 async function twoFilamentFixture(t, { used = [1], materials = ["PLA", "PETG"] } = {}) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-ams-slots-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-ams-slots-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, "two.3mf");
   const content = `; printer_model = Bambu Lab P1S\n; nozzle_diameter = 0.4\n; filament_type = ${materials.join(";")}\n; filament_colour = #FFFFFF;#000000\n; curr_bed_type = Textured PEI Plate\nM104 S240\nM140 S70\nG1 X10 Y10 Z1\n`;
@@ -490,4 +491,43 @@ test("use_ams:false maps every used filament to the external spool on the wire",
   const publish = events.find(({ action }) => action === "publish").payload.print;
   assert.equal(publish.use_ams, false);
   assert.deepEqual(publish.ams_mapping, [-1, 254, -1, -1, -1]);
+});
+
+// The Nov 6 P1S refusal: no fresh status, no upload and no print command.
+test("counterpart dispatch truth brackets the actual print3mf transport", async (t) => {
+  const { withPrintDispatch, printOutcome } = await import("../../dist/refusal.js");
+  const file = await fixture(t);
+  const { printer, events } = isolatedPrinter();
+  printer.getSafetyStatus = async () => { throw new Error("Timed out waiting for a fresh MQTT safety report"); };
+  await withPrintDispatch(async () => {
+    await assert.rejects(printer.print3mf(host, serial, token, { projectName: "job", filePath: file, bambuModel: "p1s", useAMS: false }), error => {
+      assert.equal(printOutcome(error), "not-sent"); return true;
+    });
+  });
+  assertNoDispatch(events);
+  const after = isolatedPrinter();
+  after.printer.getPrinter = async () => ({ publish: async () => { throw new Error("reply lost"); } });
+  await withPrintDispatch(async () => {
+    await assert.rejects(after.printer.print3mf(host, serial, token, { projectName: "job", filePath: file, bambuModel: "p1s", useAMS: false }), error => {
+      assert.equal(printOutcome(error), "unknown"); return true;
+    });
+  });
+});
+
+test("counterpart dispatch truth brackets the raw G-code transport", async (t) => {
+  const { withPrintDispatch, printOutcome } = await import("../../dist/refusal.js");
+  const file = await fixture(t, { raw: true });
+  for (const phase of ["preflight", "dispatch"]) {
+    const { printer, events } = isolatedPrinter();
+    if (phase === "preflight") printer.getSafetyStatus = async () => { throw new Error("fresh report unavailable"); };
+    else printer.getPrinter = async () => ({ publish: async () => { throw new Error("reply lost"); } });
+    await withPrintDispatch(async () => {
+      await assert.rejects(printer.uploadFile(host, "8883", apiKey, file, "job.gcode", true, { bambuModel: "p1s" }), error => {
+        assert.equal(printOutcome(error), phase === "preflight" ? "not-sent" : "unknown");
+        return true;
+      });
+    });
+    if (phase === "preflight") assertNoDispatch(events);
+    else assert.equal(events.filter(event => event.action === "upload").length, 1);
+  }
 });

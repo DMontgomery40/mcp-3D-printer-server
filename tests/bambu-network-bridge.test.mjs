@@ -1,3 +1,4 @@
+import {trackedMkdtempSync} from './support/temp.mjs';
 // FULU BambuNetwork bridge, ported from bambu-printer-mcp tests/behavior.test.mjs.
 // The bridge runs a real child process: tests/fixtures/fake-fulu-host.mjs, which
 // speaks FULU's framed protocol and reproduces what the real v1.0.0 host and
@@ -19,7 +20,7 @@ import { BAMBU_NETWORK_CERTIFICATES } from "../dist/bambu-network-certs.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_ENTRY = path.join(__dirname, "..", "dist", "index.js");
 // Every server these tests start runs outside the repo (no developer .env) as a Bambu server.
-const SERVER_CWD = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-mcp-cwd-"));
+const SERVER_CWD = trackedMkdtempSync(path.join(os.tmpdir(), "fulu-mcp-cwd-"));
 process.on("exit", () => fs.rmSync(SERVER_CWD, { recursive: true, force: true }));
 const createClient = () => new Client({ name: "bambu-network-bridge-tests", version: "0.0.1" });
 async function closeTransport(transport) { try { await transport.close(); } catch { } }
@@ -58,7 +59,7 @@ const FAKE_FULU_ENV = ["FAKE_FULU_WITH_RECORD_RESULT", "FAKE_FULU_START_PRINT_RE
 const fakeFuluEnvSnapshots = new WeakSet();
 
 async function fakeFuluBridge(t, env = {}, { wrapped = false } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fake-fulu-"));
+  const dir = trackedMkdtempSync(path.join(os.tmpdir(), "fake-fulu-"));
   const logPath = path.join(dir, "host.jsonl");
   let command = `${shellQuoteArg(process.execPath)} ${shellQuoteArg(FAKE_FULU_HOST)}`;
   if (wrapped) {
@@ -113,10 +114,10 @@ child.on("exit", code => process.exit(code ?? 1));
 }
 
 test("the FULU host runs in its Docker image, mounting this server's own config folder, where print snapshots go", async t => {
-  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
+  const tools = trackedMkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
   t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
   const { docker, colima } = fakeContainerTools(tools);
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-container-"));
+  const work = trackedMkdtempSync(path.join(os.tmpdir(), "fulu-container-"));
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   // The VM shares neither /tmp nor /var/folders, so the server's TMPDIR is never mounted.
   const tmp = path.join(work, "tmp"), config = path.join(work, "home", ".config", "mcp-3d-printer-server", "bambu-network");
@@ -165,7 +166,7 @@ test("the FULU host runs in its Docker image, mounting this server's own config 
 });
 
 test("the FULU container mounts a symlinked config folder at the path the host is given, uses the Colima profile's socket, and clears stale snapshots", async t => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-container-paths-"));
+  const work = trackedMkdtempSync(path.join(os.tmpdir(), "fulu-container-paths-"));
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   const real = path.join(work, "real-config"), linked = path.join(work, "linked-config");
   fs.mkdirSync(real);
@@ -193,7 +194,7 @@ test("the FULU container mounts a symlinked config folder at the path the host i
 });
 
 test("concurrent calls on a cold Docker-backed bridge start one container", async t => {
-  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
+  const tools = trackedMkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
   t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
   const { docker } = fakeContainerTools(tools);
   fs.writeFileSync(path.join(tools, "up"), "");
@@ -209,7 +210,7 @@ test("concurrent calls on a cold Docker-backed bridge start one container", asyn
 });
 
 test("stop returns even when a descendant of the bridge's shell keeps its pipes open", async t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-stop-"));
+  const dir = trackedMkdtempSync(path.join(os.tmpdir(), "fulu-stop-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   // A descendant of the shell (as a docker client can be) keeps the bridge's stdout and stderr open after the host
   // has gone, so the shell's "close" never comes. Before, stop waited for it for ever.
@@ -227,11 +228,11 @@ test("stop returns even when a descendant of the bridge's shell keeps its pipes 
 });
 
 test("a relative config folder reaches the containerized host as the absolute path that was mounted", async t => {
-  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
+  const tools = trackedMkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
   t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
   const { docker } = fakeContainerTools(tools);
   fs.writeFileSync(path.join(tools, "up"), "");
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-relative-"));
+  const work = trackedMkdtempSync(path.join(os.tmpdir(), "fulu-relative-"));
   const previous = process.cwd();
   process.chdir(work);
   t.after(() => { process.chdir(previous); fs.rmSync(work, { recursive: true, force: true }); });
@@ -251,7 +252,7 @@ test("a relative config folder reaches the containerized host as the absolute pa
 });
 
 test("the FULU container says plainly when Docker isn't running and no Colima profile is set", async t => {
-  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
+  const tools = trackedMkdtempSync(path.join(os.tmpdir(), "fake-docker-"));
   t.after(() => fs.rmSync(tools, { recursive: true, force: true }));
   const { docker } = fakeContainerTools(tools);
   const { bridge } = await fakeFuluBridge(t, { BAMBU_NETWORK_BRIDGE_COMMAND: undefined, BAMBU_NETWORK_BRIDGE_IMAGE: "bpm-fulu-e2e:runtime",
@@ -683,7 +684,7 @@ test("concurrent LAN prints to different printers run one session at a time on a
 });
 
 test("a LAN printer the plug-in cannot verify stops before any print or disconnect", async (t) => {
-  const emptyCertDir = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-no-printer-cert-"));
+  const emptyCertDir = trackedMkdtempSync(path.join(os.tmpdir(), "fulu-no-printer-cert-"));
   t.after(() => fs.rmSync(emptyCertDir, { recursive: true, force: true }));
   const { bridge, methods } = await fakeFuluBridge(t, { BAMBU_NETWORK_CERT_DIR: emptyCertDir });
   await assert.rejects(
@@ -721,7 +722,7 @@ test("a host without the LAN-session calls still serves cloud and probes, and re
 // real LAN session. It never prints.
 const realFulu = process.env.FULU_HOST_DIR && process.env.FULU_PLUGIN_DIR && process.platform === "linux" && process.arch === "x64";
 test("real FULU host: agent setup and LAN session through the documented cat wrapper", { skip: !realFulu && "set FULU_HOST_DIR and FULU_PLUGIN_DIR on x86-64 Linux" }, async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "real-fulu-"));
+  const dir = trackedMkdtempSync(path.join(os.tmpdir(), "real-fulu-"));
   const wrapper = path.join(dir, "fulu-host-wrapper.sh");
   fs.writeFileSync(wrapper, `#!/bin/sh\n${shellQuoteArg(path.join(process.env.FULU_HOST_DIR, "pjarczak_bambu_linux_host"))} "$@" | cat\n`, { mode: 0o755 });
   const { bridge } = await fakeFuluBridge(t, {

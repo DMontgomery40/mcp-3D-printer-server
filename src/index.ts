@@ -41,7 +41,7 @@ import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { PRINT_QUALITY_PROPERTIES, withPrintQuality } from "./slicer/print-quality.js";
-import { PrinterRefusal } from "./refusal.js";
+import { PrinterRefusal, withPrintDispatch, markPrintCommandSent, printOutcome } from "./refusal.js";
 import { uploadProgressReporter } from "./upload-progress.js";
 import { isBambuProjectSlicer, usesBambuCli } from "./slicer/capabilities.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
@@ -156,7 +156,18 @@ const DEFAULT_TYPE = process.env.PRINTER_TYPE || FALLBACK_PRINTER_TYPE;
 // Resolve an explicit TEMP_DIR (e.g. ./temp) against the server's working directory, as
 // dotenv's own .env lookup is: slicer CLIs receive paths under it, and Bambu Studio fails
 // every 3MF export to a relative --outputdir (bambu-printer-mcp 1.1.44 fixed the same).
-const TEMP_DIR = process.env.TEMP_DIR ? path.resolve(process.env.TEMP_DIR) : fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
+const AUTOMATIC_TEMP_DIR = process.env.TEMP_DIR ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
+const TEMP_DIR = process.env.TEMP_DIR ? path.resolve(process.env.TEMP_DIR) : AUTOMATIC_TEMP_DIR!;
+if (AUTOMATIC_TEMP_DIR) {
+  // Only our own directory is disposable; an explicit TEMP_DIR belongs to the caller.
+  process.once("exit", () => {
+    try {
+      fs.rmSync(AUTOMATIC_TEMP_DIR, { recursive: true, force: true });
+    } catch (error) {
+      console.error("Unable to remove the server's temporary directory:", error);
+    }
+  });
+}
 
 // Slicer configuration
 const CANONICAL_SLICER_TYPES = [
@@ -1330,7 +1341,7 @@ class ThreeDPrinterMCPServer {
           assertActive();
           validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
         },
-        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) assertActive(); },
+        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) { assertActive(); markPrintCommandSent(); } },
         onDispatched: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) retainForDispatchedUpload(); },
       };
       let jobUpdates: BridgeJobUpdate[] = [];
@@ -2694,7 +2705,7 @@ class ThreeDPrinterMCPServer {
 
     // Handle tool calls
     // A designer's settings extracted for this call are removed when it settles.
-    this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withExtractedSettingsCleanup(async () => {
+    this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withPrintDispatch(() => withExtractedSettingsCleanup(async () => {
       const { name, arguments: args } = request.params;
       // counterpart/1: print_3mf reports its FTPS upload as MCP progress (src/upload-progress.ts).
       const progressToken = extra._meta?.progressToken;
@@ -3731,7 +3742,7 @@ class ThreeDPrinterMCPServer {
         
         const errorMessage = error instanceof Error ? error.message : String(error);
         // A printer refusal adds its stable code (src/refusal.ts); the message and suggestion stay as they were.
-        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}) };
+        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}), ...(["print_3mf", "upload_gcode", "process_and_print_stl"].includes(name) ? { printOutcome: printOutcome(error) } : {}) };
         
         return {
           content: [
@@ -3750,7 +3761,7 @@ class ThreeDPrinterMCPServer {
         // Individual notification failures are logged above and never fail a print.
         await progressNotifications;
       }
-    }));
+    })));
   }
 
   // Delegating methods to printer implementations
@@ -4152,13 +4163,17 @@ class ThreeDPrinterMCPServer {
     if (this.httpRuntime) {
       await this.httpRuntime.transport.close();
       await new Promise<void>((resolve, reject) => {
-        this.httpRuntime?.httpServer.close((error) => {
+        const httpServer = this.httpRuntime?.httpServer;
+        httpServer?.close((error) => {
           if (error) {
             reject(error);
             return;
           }
           resolve();
         });
+        // Node 18's close() waits for clients' keep-alive sockets (Node 19+ closes idle ones itself), so a server
+        // with a connected client never finished a SIGTERM/SIGINT shutdown, and its exit cleanup never ran.
+        httpServer?.closeAllConnections();
       });
       this.httpRuntime = undefined;
     } else {

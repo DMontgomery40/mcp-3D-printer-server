@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 // Fusion bridge (PRD §8.9) against a stdio peer that answers like the pinned
 // faust-machines server. A loopback TCP listener stands in for the Fusion360MCP
 // add-in port. No Fusion is launched: no test passes launch: true.
@@ -28,7 +29,7 @@ async function addinPort(t, reply = { status: "success", result: { ok: true, sta
 }
 
 async function start(t, { mode = "normal", configured = true, port } = {}) {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "fusion-mcp-"));
+  const temp = await trackedMkdtemp(path.join(os.tmpdir(), "fusion-mcp-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
   const logPath = path.join(temp, "fusion.log");
   const env = {
@@ -253,7 +254,7 @@ test("a listener that trickles bytes cannot hold the add-in probe past its 2 s d
 });
 
 test("closing stdin without a signal shuts the server and its Fusion MCP child down", async (t) => {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "fusion-eof-"));
+  const temp = await trackedMkdtemp(path.join(os.tmpdir(), "fusion-eof-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
   const logPath = path.join(temp, "fusion.log");
   const child = spawn(process.execPath, [path.join(ROOT, "dist", "index.js")], {

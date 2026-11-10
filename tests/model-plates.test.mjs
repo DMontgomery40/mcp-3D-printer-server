@@ -1,3 +1,4 @@
+import {trackedMkdtempSync} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -11,7 +12,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR
 const MODEL = `<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Title">3D scan platform</metadata><metadata name="Designer">Kass 3D</metadata><resources><object id="1" type="model"><mesh><vertices/><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>`;
 
 async function write3mf(t, entries) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "model-plates-"));
+  const directory = trackedMkdtempSync(path.join(os.tmpdir(), "model-plates-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const zip = new JSZip();
   zip.file("[Content_Types].xml", "<Types/>");

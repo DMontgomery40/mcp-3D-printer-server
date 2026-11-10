@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import net from "node:net";
 import fs from "node:fs/promises";
@@ -66,7 +67,7 @@ async function slowPrinter(t, { stall = false, pauseAt = Infinity, pauseMs = 0 }
 }
 
 async function jobFile(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ftp-upload-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "ftp-upload-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const bytes = Buffer.from(Array.from({ length: SIZE }, (_, i) => (i * 31 + 7) & 255));
   const file = path.join(dir, "job.3mf");

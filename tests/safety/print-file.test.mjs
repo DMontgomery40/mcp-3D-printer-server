@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 // Ported Bambu inspection regressions; transports remain mocked and no physical printer is contacted.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -12,7 +13,7 @@ const load = async () => {
 };
 const header = (model='P1S', material='PLA', nozzle='0.4') => `; printer_model = Bambu Lab ${model}\n; nozzle_diameter = ${nozzle}\n; filament_type = ${material}\n`;
 async function fixture(t, text, entries) {
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bambu-file-safety-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const dir=await trackedMkdtemp(path.join(os.tmpdir(),'bambu-file-safety-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
   const filename=path.join(dir,entries ? 'job.gcode.3mf' : 'job.gcode');let bytes=text;
   if(entries) {const zip=new JSZip();for(const [key,value] of Object.entries(entries)) zip.file(key,typeof value==='string'?value:JSON.stringify(value));bytes=await zip.generateAsync({type:'nodebuffer'});}
   await fs.writeFile(filename,bytes); return filename;
