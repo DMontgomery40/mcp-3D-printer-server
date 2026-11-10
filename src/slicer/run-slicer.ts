@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { SlicerError, tailText } from "./slicer-error.js";
-import { slicerStalled, watchForStall } from "./slicer-launch.js";
+import { stalledSlicerError, watchForStall } from "./slicer-launch.js";
 
 /** Bytes of each stream kept for diagnostics; verbose slicers are never truncated into a failure. */
 const OUTPUT_TAIL_BYTES = 64 * 1024;
@@ -112,7 +112,7 @@ export function runSlicerProcess(options: SlicerRunOptions): Promise<SlicerRunRe
       const stdoutTail = stdout.text();
       const stderrTail = stderr.text();
       if (stalled && !timedOut && !cancelled) {
-        settle(() => reject(slicerStalled(slicerType, stallSeconds)));
+        settle(() => reject(stalledSlicerError(slicerType, stallSeconds)));
         return;
       }
       if (!timedOut && !cancelled && code === 0 && !signal) {

@@ -993,7 +993,7 @@ bambu-printer-mcp serves the same guidance.
 
 ### Performance considerations
 
-- Slicing can take from seconds to several minutes, depending on the model and your CPU. Slicer runs time out after `SLICER_TIMEOUT_MS` (10 minutes by default). A Bambu-compatible slicer that uses no CPU and writes nothing for `SLICER_STALL_SECONDS` (20 by default) is stopped earlier and reported as `slicer-waiting-on-dialog` (structuredContent.code); on macOS each such slice runs with an empty home folder of its own (`CFFIXED_USER_HOME` under `TEMP_DIR`), so the "reopen windows?" question after a slicer crash can't stop it.
+- Slicing can take from seconds to several minutes, depending on the model and your CPU. Slicer runs time out after `SLICER_TIMEOUT_MS` (10 minutes by default). On macOS, a Bambu-compatible slicer that uses no CPU and writes nothing for `SLICER_STALL_SECONDS` (20 by default) is stopped earlier and reported as `slicer-waiting-on-dialog` (structuredContent.code); on macOS each such slice runs with an empty home folder of its own (`CFFIXED_USER_HOME` under `TEMP_DIR`), so the "reopen windows?" question after a slicer crash can't stop it.
 - Large uploads depend on your network and the printer's storage speed.
 - Bambu MQTT connections are reused. If a printer restarts or the network drops, the next call reconnects.
 

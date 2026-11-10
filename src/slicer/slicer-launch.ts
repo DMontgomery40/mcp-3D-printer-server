@@ -28,24 +28,26 @@ const BAMBU_CLI_TYPES = new Set(["bambustudio", "orcaslicer", "orcaslicer-bambul
 export interface SlicerLaunch {
   /** The environment for the slicer process (undefined: inherit this server's). */
   env?: NodeJS.ProcessEnv;
-  /** Whether a slice that stalls is stopped and reported (see watchForStall). */
-  watchStall: boolean;
+  /** Seconds without CPU or output after which the slice is stopped and reported (watchForStall); 0: never. */
+  stallSeconds: number;
   /** Removes this launch's home folder. */
   cleanup(): Promise<void>;
 }
 
 /**
  * The launch for one slice. On macOS a Bambu-compatible CLI gets its own empty home folder (always: an inherited
- * CFFIXED_USER_HOME is replaced, since a home that held a stalled slice may hold the history that stalled it).
+ * CFFIXED_USER_HOME is replaced, since a home that held a stalled slice may hold the history that stalled it), and
+ * is watched for stalls. A new folder each slice, not one kept in the data folder, so no crash history can build up
+ * in it. Elsewhere nothing changes: no AppKit, and a slicer there may run behind a wrapper (AppImage, Flatpak) whose
+ * own CPU says nothing about the slicer's.
  */
 export async function prepareSlicerLaunch(slicerType: string, tempDir: string, platform: NodeJS.Platform = process.platform): Promise<SlicerLaunch> {
-  const bambuCli = BAMBU_CLI_TYPES.has(slicerType);
-  if (!bambuCli || platform !== "darwin") return { watchStall: bambuCli, cleanup: async () => {} };
+  if (!BAMBU_CLI_TYPES.has(slicerType) || platform !== "darwin") return { stallSeconds: 0, cleanup: async () => {} };
   await fs.promises.mkdir(tempDir, { recursive: true });
   const home = await fs.promises.mkdtemp(path.join(tempDir, "slicer-home-"));
   return {
     env: { ...process.env, CFFIXED_USER_HOME: home },
-    watchStall: true,
+    stallSeconds: slicerStallSeconds(),
     cleanup: () => fs.promises.rm(home, { recursive: true, force: true }).catch(() => undefined),
   };
 }
@@ -118,7 +120,8 @@ export function watchForStall(child: ChildProcess, seconds: number, onStall: () 
       output = false;
       lastCpu = cpu;
       idlePolls = busy || !started ? 0 : idlePolls + 1;
-      if (idlePolls >= pollsNeeded) { stop(); onStall(); }
+      // A slicer that exited meanwhile finished; its exit, not a stall, is reported.
+      if (idlePolls >= pollsNeeded && child.exitCode === null && child.signalCode === null) { stop(); onStall(); }
     } finally { polling = false; }
   }, pollMs);
   const stop = () => {
@@ -136,7 +139,7 @@ export function watchForStall(child: ChildProcess, seconds: number, onStall: () 
 const SLICER_NAMES: Record<string, string> = { bambustudio: "Bambu Studio", orcaslicer: "OrcaSlicer", "orcaslicer-bambulab": "OrcaSlicer" };
 
 /** The failure for a slicer stopped by watchForStall. */
-export function slicerStalled(slicerType: string, seconds: number): SlicerStalled {
+export function stalledSlicerError(slicerType: string, seconds: number): SlicerStalled {
   const name = SLICER_NAMES[slicerType] ?? "The slicer";
   return new SlicerStalled(
     `${name} stopped slicing: it used no processor time and wrote nothing for ${seconds} seconds, which is what it does ` +

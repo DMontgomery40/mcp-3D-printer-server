@@ -743,7 +743,7 @@ test("machine settings inside a template or process profile never replace the se
 
 // A slicer that waits on a dialog (no CPU, no output) is stopped after SLICER_STALL_SECONDS and reported with the stable
 // code slicer-waiting-on-dialog, not after SLICER_TIMEOUT_MS, and never as the slicer's verdict on the model.
-test("slice_stl stops a slicer that waits on a dialog and reports slicer-waiting-on-dialog", async (t) => {
+test("slice_stl stops a slicer that waits on a dialog and reports slicer-waiting-on-dialog", { skip: process.platform !== "darwin" && "the stall check runs on macOS only" }, async (t) => {
   const install = await createFakeInstall(t);
   const { call } = await startServer(t, install, { SLICER_STALL_SECONDS: "1" });
   await install.setMode("stall");
@@ -778,6 +778,23 @@ test("slice_stl gives a Bambu-compatible slicer its own home folder on macOS", a
   assert.ok(launch.home.startsWith(path.resolve(tempDir) + path.sep), launch.home);
   assert.deepEqual(await fs.readdir(inherited), []);
   assert.equal(existsSync(launch.home), false, "the home is removed after the slice");
+});
+
+// watchForStall itself, on every platform with ps or /proc: an idle child is reported, a computing one and one that
+// exits are not.
+test("watchForStall reports an idle child, not a computing or finished one", async () => {
+  const { spawn } = await import("node:child_process");
+  const { watchForStall } = await import("../../dist/slicer/slicer-launch.js");
+  const run = (script, ms) => new Promise((resolve) => {
+    const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+    let stalled = false;
+    watchForStall(child, 1, () => { stalled = true; child.kill("SIGKILL"); });
+    const timer = setTimeout(() => child.kill("SIGKILL"), ms);
+    child.on("exit", () => { clearTimeout(timer); resolve(stalled); });
+  });
+  assert.equal(await run('console.log("started"); setInterval(() => {}, 1 << 30)', 10_000), true, "idle after starting");
+  assert.equal(await run("for (const end = Date.now() + 2500; Date.now() < end;) Math.sqrt(Math.random())", 10_000), false, "computing");
+  assert.equal(await run('console.log("done")', 10_000), false, "finished");
 });
 
 test("slicer stall settings and CPU times parse as ps writes them", async () => {

@@ -144,7 +144,7 @@ API_KEY=your_api_key              # OctoPrint, authenticated Moonraker, Repetier
 | `SLICER_PROFILE` | | No | Bambu-compatible slicers: one process profile JSON; the machine preset always comes from the model and nozzle. Generic OrcaSlicer: `machine.json;process.json`, optionally `\|filament.json`. See the [slicing guide](./SLICING.md#profiles) |
 | `FILAMENT_PROFILE` | | No | Filament profile path(s) loaded with `--load-filaments`, `;`-separated in slot order; PrusaSlicer and Slic3r take one `.ini` preset, loaded with a second `--load`. Alias: `SLICER_FILAMENT_PROFILE` |
 | `SLICER_TIMEOUT_MS` | `600000` | No | Slicer process deadline in milliseconds |
-| `SLICER_STALL_SECONDS` | `20` | No | A Bambu-compatible slicer that uses no CPU and writes nothing this long is stopped as waiting on a dialog (`slicer-waiting-on-dialog`); `0` turns it off |
+| `SLICER_STALL_SECONDS` | `20` | No | On macOS, a Bambu-compatible slicer that uses no CPU and writes nothing this long is stopped as waiting on a dialog (`slicer-waiting-on-dialog`); `0` turns it off |
 | `BAMBU_PROFILES_ROOT` | found from `SLICER_PATH` | No | Profile tree containing `BBL/` for the active Bambu-compatible slicer. Set it for AppImages or non-standard installs. It is never replaced by another installation's tree |
 | `BAMBU_SLICER_PROFILE_DIRS` | the slicers' user `system/BBL` directories | No | Directories (separated with your OS path delimiter) searched for custom process and filament parents, never for machine presets. Set it empty to disable the search |
 | `BAMBU_TEMPLATE_DIR` | `~/Sync/bambu/templates` | No | Local template registry for `slice_with_template`, `list_templates`, `save_template`, and `get_slice_settings` |

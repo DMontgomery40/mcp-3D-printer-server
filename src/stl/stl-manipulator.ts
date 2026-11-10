@@ -22,7 +22,7 @@ import {
   type BambuSliceOptions,
 } from '../slicer/bambu-cli.js';
 import { runSlicerProcess } from '../slicer/run-slicer.js';
-import { prepareSlicerLaunch, slicerStallSeconds } from '../slicer/slicer-launch.js';
+import { prepareSlicerLaunch } from '../slicer/slicer-launch.js';
 import { keepSlice, restoreSlice, sliceCacheKey } from '../slicer/slice-cache.js';
 import { SlicerError, asPreparationError } from '../slicer/slicer-error.js';
 import { customGcodesWithPauses, layerTops, machinePauseGcode, pausedLayers, readPlateGcode, readProjectCustomGcodes } from '../slicer/layer-pauses.js';
@@ -1438,7 +1438,7 @@ export class STLManipulator extends EventEmitter {
           isCancelled: () => !this.activeOperations.get(operationId),
           failureReason: cliOutputDir ? (exitCode) => bambuCliFailureReason(exitCode, cliOutputDir) : undefined,
           env: launch?.env,
-          stallSeconds: launch?.watchStall ? slicerStallSeconds() : 0,
+          stallSeconds: launch?.stallSeconds ?? 0,
         });
       } catch (error) {
         // Keep the CLI's own result.json before the output directory is removed.
