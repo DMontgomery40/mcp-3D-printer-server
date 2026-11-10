@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.66] – 2026-11-10
+
+### Fixed
+
+- Allow a full-size Bambu A1 to start a checked job after a stopped job reports `FAILED`, `print_type: idle`, zero print error, empty HMS and a named prior job. Port Rowan McMahon’s [A1 recovery contribution](https://github.com/DMontgomery40/bambu-printer-mcp/pull/133); retain fresh identity/nozzle checks and rejection of incomplete reports, active jobs and other models. Validated with mocked status regressions; A1 firmware evidence comes from the contributor, with no new physical test.
+- Update Axios to 1.21.1 and basic-ftp to 6.2.6, including their upstream redirect-header and directory-download fixes. Keep bambu-node pinned.
+
 ## [1.2.65] – 2026-11-10
 
 ### Fixed
