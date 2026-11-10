@@ -17,6 +17,7 @@ import {
   type GenericPrintInspection,
   type Heater,
 } from "../safety/gcode-thermal.js";
+import { markPrintCommandSent } from "../refusal.js";
 import type { CounterpartProgress, FilamentSlot, PrinterIdentity } from "../counterpart/contract.js";
 
 /** A camera snapshot URL as the firmware configures it, before resolution against the printer host. */
@@ -413,6 +414,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
       peakTemperatures: inspection.peaks,
     };
     if (this.uploadStartsPrint) {
+      markPrintCommandSent();
       const response = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, true);
       // A stop sent while the upload was in flight reached the printer before
       // this upload started the job, so stop again: the cancellation must win.
@@ -436,6 +438,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     const dispatch = await this.readPrinterState(host, port, apiKey);
     this.assertReady(dispatch, "print");
     assertActive();
+    markPrintCommandSent();
     const response = await this.rawStartJob(host, port, apiKey, remoteName);
     this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
     return { ...summary, upload, response };

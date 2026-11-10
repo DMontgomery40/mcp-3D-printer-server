@@ -1,3 +1,5 @@
+import {CAD_CAPABILITY} from "../dist/cad/contracts.js";
+import {trackedMkdtemp} from './support/temp.mjs';
 // counterpart/1 tools over MCP stdio against loopback printer mocks. The SDK
 // client validates structuredContent against each tool's outputSchema, so a
 // passing call proves the declared schema. No printer is contacted.
@@ -42,7 +44,7 @@ async function mock(t, routes) {
 }
 
 async function server(t, env) {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "counterpart-tools-"));
+  const temp = await trackedMkdtemp(path.join(os.tmpdir(), "counterpart-tools-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -95,7 +97,7 @@ test("OctoPrint over MCP: info, progress, filaments and a Classic Webcam snapsho
   assert.equal(info.contract, "counterpart/1");
   assert.equal(info.server.name, "mcp-3d-printer-server");
   assert.deepEqual(info.printer, { kind: "octoprint", host: "127.0.0.1", model: "Prusa i3", name: "Default" });
-  assert.deepEqual(info.capabilities, { progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true,
+  assert.deepEqual(info.capabilities, { cad: CAD_CAPABILITY, progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true,
     slicing: { supports: false, copies: false, orient: false } }, "PrusaSlicer (the default for OctoPrint) takes none of them here");
   const progress = (await call(client, "counterpart_print_progress")).structuredContent;
   assert.equal(progress.state, "printing");
@@ -219,7 +221,7 @@ test("snapshot URLs resolve relative paths and loopback hosts against the printe
 });
 
 test("get_printer_filaments: slots[].profile is the installed slicer profile for Spoolman's material, else the configured filament", async (t) => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "counterpart-profiles-"));
+  const root = await trackedMkdtemp(path.join(os.tmpdir(), "counterpart-profiles-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const write = async (file, value) => {
     await fs.mkdir(path.dirname(path.join(root, file)), { recursive: true });

@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -13,7 +14,7 @@ const sample = path.join(root, "test/sample_cube.stl");
 // Concurrent requests for same-named inputs must never share an output file:
 // process_and_print_stl extends, slices, and prints whatever that path holds.
 test("concurrent STL edits of same-named inputs write separate outputs", async (t) => {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "stl-isolation-"));
+  const temp = await trackedMkdtemp(path.join(os.tmpdir(), "stl-isolation-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
   const client = new Client({ name: "stl-isolation", version: "1" });
   await client.connect(new StdioClientTransport({

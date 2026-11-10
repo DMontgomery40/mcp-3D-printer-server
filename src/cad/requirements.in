@@ -1,0 +1,9 @@
+build123d==0.13.0
+numpy==2.5.4
+scipy==1.18.1
+trimesh==5.2.0
+manifold3d==3.5.4
+scikit-image==0.26.0
+pillow==13.0.0
+shapely==2.1.2
+rtree==1.4.1

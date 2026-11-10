@@ -10,6 +10,36 @@
 
 - On macOS, a Bambu-compatible slicer that uses no CPU and writes nothing for `SLICER_STALL_SECONDS` (default 20; 0 turns it off) is stopped and reported with the stable `structuredContent.code` `slicer-waiting-on-dialog`, instead of after `SLICER_TIMEOUT_MS`. The message says to open the slicer once, answer what it shows and slice again; nothing is sent to the printer. It carries no `slicer_report`, because it is no verdict on the model.
 
+## [1.2.64] – 2026-11-10
+
+### Added
+
+- Report CAD installation estimates/measured bytes and coded refusals; queue runs within their own deadlines, retain protected final-result validation records, reuse content-hash input bundles, and reveal preview openings with depth/feature edges. Clarify scan-reference scope and measured-interface precedence. Validated through confined headless fixtures; no physical fit/print or app update.
+
+- Add optional confined code-CAD parity with bambu-printer-mcp: cad_status/setup/run/check_fit, cad_design and cad/1, pinned CAD/mesh libraries, protected scan inputs and explicit millimetre/Z-up preparation, independent checks and six renders. CAD_ENABLED=0 hides the family; setup installs only on request and requires internal ownership-enabled macOS storage without re-signing. Validated with stubbed printer transports and headless CAD; no physical print or installed Counterpart update.
+
+## [1.2.63] – 2026-11-10
+
+### Added
+
+- `counterpart_setup_fields` says for each printer kind whether `camera_snapshot` reads its camera with only the settings the fields write (`cameraSnapshot`), as bambu-printer-mcp does. It is `false` for every kind here. For Bambu, `camera_snapshot` on this server reads only a `PRINTER_CAMERA_SNAPSHOT_URL`, which no setup field writes; bambu-printer-mcp reads the printer's own camera. For the other kinds a webcam is an add-on found through the printer's own settings once the server runs (`counterpart_printer_info` reports it), not from these fields. A client such as Counterpart can then ask for a camera picture in its setup check only where the MCP says it can, instead of deciding by the printer type's name. Every kind declares it; a client reads it missing as an older server. Checked with the setup-fields tests; no printer contacted.
+
+## [1.2.62] – 2026-11-10
+
+### Fixed
+
+- Report `printOutcome` in `print_3mf`, `upload_gcode` and `process_and_print_stl` errors (`counterpart/1`): `not-sent` before any print command, `unknown` after a possible dispatch, or `rejected` when the printer refuses it. Fresh MQTT report timeouts no longer make clients guess whether printing started. Request-local tracking covers direct MQTT, FULU and all non-Bambu upload/start boundaries without matching error wording. Verified with mocked transports; no physical print started.
+
+## [1.2.61] – 2026-11-10
+
+### Fixed
+
+- Track checked print snapshots from allocation so server shutdown also removes in-flight copies whose operation has not returned. Verified with an exiting child process and mocked native shutdown; no printer contacted.
+
+- Remove test fixture directories at file teardown even after failures or early returns, and run the full Node test suite in a private temporary directory that fails on leftovers. Regression checks cover clean, leaking and failing suites; printer transports are mocked and no printer is contacted.
+- Remove the server-owned temporary output directory on exit while retaining caller-specified `TEMP_DIR` contents, matching the Bambu fork. Checked through local stdio and HTTP server shutdown tests.
+- On Node 18, an HTTP (`streamable-http`) server with a connected client now finishes its SIGTERM/SIGINT shutdown. Node 18's `close()` waits for clients' keep-alive connections (Node 19 and later close idle ones itself), so the server never exited, and a supervisor's later SIGKILL skipped the exit cleanup and left its temporary folder behind. Shutdown now closes the remaining connections. Found by the suite's leftover check in Node 18 CI (five leaked server folders and two timed-out shutdown tests), and checked locally with Node 18.20.8 and 22.
+
 ## [1.2.60] – 2026-11-08
 
 ### Fixed

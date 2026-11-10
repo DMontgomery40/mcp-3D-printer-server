@@ -20,6 +20,9 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import os from "node:os";
+import { CadEngine } from "./cad-engine.js";
+import { CadRefusal } from "./cad/refusal.js";
+import { CAD_TOOLS, cadEnabled } from "./cad/contracts.js";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
 import { BLENDER_SETUP_OUTPUT_SCHEMA, BlenderAddonSetup, FUSION_ADDIN_REPOSITORY, FUSION_SETUP_OUTPUT_SCHEMA, FusionAddinSetup, defaultSetupSystem, parseAddonHandshake, type BlenderAddonHandshake } from "./design-app-setup.js";
 import { resolveFilamentProfile } from "./slicer/filament-profiles.js";
@@ -41,7 +44,7 @@ import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { PRINT_QUALITY_PROPERTIES, withPrintQuality } from "./slicer/print-quality.js";
-import { PrinterRefusal } from "./refusal.js";
+import { PrinterRefusal, withPrintDispatch, markPrintCommandSent, printOutcome } from "./refusal.js";
 import { uploadProgressReporter } from "./upload-progress.js";
 import { isBambuProjectSlicer, usesBambuCli } from "./slicer/capabilities.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
@@ -142,6 +145,7 @@ import { bambuColourNames } from "./printers/bambu-filaments.js";
 
 // Load environment variables from .env file
 dotenv.config();
+const CAD_ENABLED = cadEnabled();
 
 const SERVER_NAME = "mcp-3d-printer-server";
 const SERVER_VERSION: string = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
@@ -156,7 +160,18 @@ const DEFAULT_TYPE = process.env.PRINTER_TYPE || FALLBACK_PRINTER_TYPE;
 // Resolve an explicit TEMP_DIR (e.g. ./temp) against the server's working directory, as
 // dotenv's own .env lookup is: slicer CLIs receive paths under it, and Bambu Studio fails
 // every 3MF export to a relative --outputdir (bambu-printer-mcp 1.1.44 fixed the same).
-const TEMP_DIR = process.env.TEMP_DIR ? path.resolve(process.env.TEMP_DIR) : fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
+const AUTOMATIC_TEMP_DIR = process.env.TEMP_DIR ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "mcp-3d-printer-server-"));
+const TEMP_DIR = process.env.TEMP_DIR ? path.resolve(process.env.TEMP_DIR) : AUTOMATIC_TEMP_DIR!;
+if (AUTOMATIC_TEMP_DIR) {
+  // Only our own directory is disposable; an explicit TEMP_DIR belongs to the caller.
+  process.once("exit", () => {
+    try {
+      fs.rmSync(AUTOMATIC_TEMP_DIR, { recursive: true, force: true });
+    } catch (error) {
+      console.error("Unable to remove the server's temporary directory:", error);
+    }
+  });
+}
 
 // Slicer configuration
 const CANONICAL_SLICER_TYPES = [
@@ -548,6 +563,7 @@ const PRINTER_TARGET_PROPERTIES = {
 
 /** Tools that declare an outputSchema: their errors carry no structuredContent, which clients would validate. */
 const OUTPUT_SCHEMA_TOOLS = new Set([
+  "cad_status", "cad_setup", "cad_run", "cad_check_fit",
   "counterpart_discover_printers", "counterpart_setup_fields", "counterpart_propose_filaments",
   "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
@@ -887,6 +903,7 @@ function credentialSuggestion(): string {
 
 class ThreeDPrinterMCPServer {
   private server: Server;
+  private readonly cad = new CadEngine({outputRoots:[TEMP_DIR,...(process.env.CAD_OUTPUT_DIRS?.split(path.delimiter).filter(Boolean)??[])]});
   private readonly blender = new BlenderMcpBridge();
   private readonly fusion = new FusionMcpBridge();
   // Downloads and installer output are staged in this server's own temporary folder.
@@ -914,7 +931,7 @@ class ThreeDPrinterMCPServer {
           resources: {},
           tools: {}
         },
-        instructions: SERVER_INSTRUCTIONS
+        instructions: SERVER_INSTRUCTIONS + (CAD_ENABLED ? " For headless dimensioned designs and parameter edits, read the cad_design prompt before using cad_run." : "")
       }
     );
 
@@ -1330,7 +1347,7 @@ class ThreeDPrinterMCPServer {
           assertActive();
           validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
         },
-        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) assertActive(); },
+        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) { assertActive(); markPrintCommandSent(); } },
         onDispatched: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) retainForDispatchedUpload(); },
       };
       let jobUpdates: BridgeJobUpdate[] = [];
@@ -1385,7 +1402,7 @@ class ThreeDPrinterMCPServer {
   /** The FDM design guidance as MCP prompts: the client decides when to attach each one. */
   setupPromptHandlers() {
     this.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-      prompts: [...DESIGN_PROMPTS, FDM_SLICING_PROMPT].map(({ name, title, description }) => ({ name, title, description })),
+      prompts: [...DESIGN_PROMPTS.filter(p => CAD_ENABLED || p.name !== "cad_design"), FDM_SLICING_PROMPT].map(({ name, title, description }) => ({ name, title, description })),
     }));
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       if (request.params.name === FDM_SLICING_PROMPT.name) {
@@ -1396,7 +1413,7 @@ class ThreeDPrinterMCPServer {
           messages: [{ role: "user" as const, content: { type: "text" as const, text: slicingGuidance(DEFAULT_SLICER_TYPE, sliceCapabilities(DEFAULT_SLICER_TYPE, bambu)) } }],
         };
       }
-      const prompt = DESIGN_PROMPTS.find(item => item.name === request.params.name);
+      const prompt = DESIGN_PROMPTS.find(item => item.name === request.params.name && (CAD_ENABLED || item.name !== "cad_design"));
       if (!prompt) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${request.params.name}`);
       return {
         description: prompt.description,
@@ -1751,7 +1768,7 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "counterpart_setup_fields",
-            description: "Counterpart contract (counterpart/1): the printers this server drives (each PRINTER_TYPE) and the settings it reads for each, by .env variable name: label, hint, whether required, the fixed values a kind needs (PRINTER_TYPE), the Bambu model choices and the model each serial-number prefix names. Pass serial to get the model it names. Sends nothing to a printer and returns no configured values.",
+            description: "Counterpart contract (counterpart/1): the printers this server drives (each PRINTER_TYPE) and the settings it reads for each, by .env variable name: label, hint, whether required, the fixed values a kind needs (PRINTER_TYPE), the Bambu model choices and the model each serial-number prefix names, and whether camera_snapshot reads the printer's camera with only those settings (cameraSnapshot). Pass serial to get the model it names. Sends nothing to a printer and returns no configured values.",
             inputSchema: {
               type: "object",
               properties: { serial: { type: "string", maxLength: 64, description: "A Bambu serial number: model is the one it names, when known." } },
@@ -2543,6 +2560,7 @@ class ThreeDPrinterMCPServer {
               required: ["stl_path"]
             }
           },
+          ...(CAD_ENABLED ? CAD_TOOLS : []),
           {
             name: "blender_mcp_status",
             description: "Inspect Blender MCP configuration or connect and discover the remote server's tools. Lists tool names and summaries; pass tool_names for the full input schemas of the tools you will call. Connecting does not edit the scene; use get_scene_info through blender_mcp_call to check the Blender addon.",
@@ -2694,7 +2712,7 @@ class ThreeDPrinterMCPServer {
 
     // Handle tool calls
     // A designer's settings extracted for this call are removed when it settles.
-    this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withExtractedSettingsCleanup(async () => {
+    this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withPrintDispatch(() => withExtractedSettingsCleanup(async () => {
       const { name, arguments: args } = request.params;
       // counterpart/1: print_3mf reports its FTPS upload as MCP progress (src/upload-progress.ts).
       const progressToken = extra._meta?.progressToken;
@@ -2707,6 +2725,10 @@ class ThreeDPrinterMCPServer {
               .catch(error => { console.error("Failed to send upload progress notification:", error); });
           });
       
+      if (!CAD_ENABLED && name.startsWith("cad_")) {
+        const failure = await this.cad.failure(new CadRefusal("cad-disabled", "Code-CAD is disabled by CAD_ENABLED=0."), name);
+        return {isError: true, content: [{type: "text", text: failure.message}], structuredContent: failure};
+      }
       // Set default values for common parameters
       const host = String(args?.host || DEFAULT_HOST);
       const port = String(args?.port || DEFAULT_PORT);
@@ -3669,6 +3691,27 @@ class ThreeDPrinterMCPServer {
             return { content: [{ type: "text", text: layFlatResult.path }], structuredContent: layFlatResult };
           }
 
+          case "cad_status":
+            if (args && Object.keys(args).length) throw new Error("cad_status takes no arguments.");
+            return structured(await this.cad.status());
+          case "cad_setup":
+          case "cad_run":
+          case "cad_check_fit": {
+            const started = Date.now();
+            let sequence = 0;
+            const heartbeat = progressToken === undefined ? undefined : setInterval(() => {
+              progressNotifications = progressNotifications.then(() => extra.sendNotification({method: "notifications/progress", params: {
+                progressToken, progress: ++sequence, message: `${name}: working for ${Math.round((Date.now()-started)/1000)} seconds`,
+              }})).catch(() => {});
+            }, 5000);
+            try {
+              result = name === "cad_setup" ? await this.cad.setup(args ?? {}, extra.signal)
+                : name === "cad_run" ? await this.cad.run(args ?? {}, extra.signal)
+                : await this.cad.checkFit(args ?? {}, extra.signal);
+            } finally { if (heartbeat) clearInterval(heartbeat); }
+            return structured(result);
+          }
+
           case "blender_mcp_setup":
             if (args?.update !== undefined && typeof args.update !== "boolean") throw new Error("update must be a boolean.");
             return structured(args?.update === true ? await this.blenderSetup.update(extra.signal) : await this.blenderSetup.check());
@@ -3727,11 +3770,15 @@ class ThreeDPrinterMCPServer {
           ]
         };
       } catch (error: unknown) {
+        if (name.startsWith("cad_")) {
+          const failure = await this.cad.failure(error, name);
+          return {isError: true, content: [{type: "text" as const, text: failure.message}], structuredContent: failure};
+        }
         console.error(`Error calling tool ${name}:`, error);
         
         const errorMessage = error instanceof Error ? error.message : String(error);
         // A printer refusal adds its stable code (src/refusal.ts); the message and suggestion stay as they were.
-        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}) };
+        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}), ...(["print_3mf", "upload_gcode", "process_and_print_stl"].includes(name) ? { printOutcome: printOutcome(error) } : {}) };
         
         return {
           content: [
@@ -3750,7 +3797,7 @@ class ThreeDPrinterMCPServer {
         // Individual notification failures are logged above and never fail a print.
         await progressNotifications;
       }
-    }));
+    })));
   }
 
   // Delegating methods to printer implementations
@@ -4152,13 +4199,17 @@ class ThreeDPrinterMCPServer {
     if (this.httpRuntime) {
       await this.httpRuntime.transport.close();
       await new Promise<void>((resolve, reject) => {
-        this.httpRuntime?.httpServer.close((error) => {
+        const httpServer = this.httpRuntime?.httpServer;
+        httpServer?.close((error) => {
           if (error) {
             reject(error);
             return;
           }
           resolve();
         });
+        // Node 18's close() waits for clients' keep-alive sockets (Node 19+ closes idle ones itself), so a server
+        // with a connected client never finished a SIGTERM/SIGINT shutdown, and its exit cleanup never ran.
+        httpServer?.closeAllConnections();
       });
       this.httpRuntime = undefined;
     } else {

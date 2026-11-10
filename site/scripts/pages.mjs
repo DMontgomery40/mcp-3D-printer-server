@@ -74,6 +74,14 @@ export const PAGES = [
   },
   {
     group: 'Reference',
+    route: 'reference/cad',
+    title: 'Optional code-CAD',
+    description: 'Headless parametric CAD, mesh experiments, confinement, setup and removal.',
+    toolGroup: 'Code-CAD',
+    sources: [{ file: 'README.md', heading: 'Code-CAD' }, { file: 'docs/CAD.md', whole: true }],
+  },
+  {
+    group: 'Reference',
     route: 'reference/features',
     title: 'Features',
     description: 'Everything the server can do, in one list.',

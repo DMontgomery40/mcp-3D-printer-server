@@ -214,7 +214,7 @@ The optional FULU **BambuNetwork bridge** is a separate runtime. With `BAMBU_DEF
 - The `counterpart/1` tools shared with [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp): one progress shape for every firmware (state, job, progress, time left, layers, temperatures, problems), detected printer capabilities, camera snapshots, and the loaded filament (Spoolman on Moonraker)
 - `counterpart_printer_info` reports `capabilities.slicing` (`supports`, `copies`, `orient`) for the slicer route this server uses for that printer (for a Bambu printer on OrcaSlicer, when the call passes its `bambu_model`), so a client can offer those choices without knowing the slicer.
 - `counterpart_discover_printers` finds printers on the local network without contacting them: Bambu Lab printers from their own SSDP announcements (serial, `bambu_model` value, name, firmware), and OctoPrint, Klipper (Moonraker) and PrusaLink hosts from their Bonjour adverts (`dns-sd` on macOS, `avahi-browse` on Linux)
-- `counterpart_setup_fields` lists every `PRINTER_TYPE` this server drives and the `.env` settings it reads for each (field role, variable, label, hint, required, the Bambu model choices and the model each serial prefix names), so a client can offer printer setup without printer tables of its own, and the slicer it would run (type, path, whether it is there, and the Bambu profiles folder) with the `SLICER_TYPE`, `SLICER_PATH` and `BAMBU_PROFILES_ROOT` fields, required only when what they default to is missing
+- `counterpart_setup_fields` lists every `PRINTER_TYPE` this server drives and the `.env` settings it reads for each (field role, variable, label, hint, required, the Bambu model choices and the model each serial prefix names, and `cameraSnapshot`: whether `camera_snapshot` reads the printer's camera with only those settings, `false` for every kind here), so a client can offer printer setup without printer tables of its own, and the slicer it would run (type, path, whether it is there, and the Bambu profiles folder) with the `SLICER_TYPE`, `SLICER_PATH` and `BAMBU_PROFILES_ROOT` fields, required only when what they default to is missing
 - `counterpart_propose_filaments` proposes which loaded spool prints each of a model's colours before slicing: nearest OKLab colour with the asked-for material preferred, one feed per print (the AMS or the external spool), a `verdict` and a person-readable `note` per part ("White isn't loaded. Closest loaded: A2 Sunflower Yellow PLA Basic."), each spool's `label`, `name` and slicer `profile`, and, with the person's `chosen` spools, a check against what is loaded now and the full `mapping` including painted slots
 - `get_printer_filaments` slots carry `label` ("A2", "External", "Spool") and a `name` a person reads (Bambu: Bambu Studio's colour name and the product, "Sunflower Yellow PLA Basic")
 - Errors carry their details in `structuredContent` (`status`, `retryable`, `suggestion`, `message`); a printer refusal on `print_3mf` also carries a stable `code`: `printer-command-rejected`, `printer-not-ready`, or `printer-upload-failed` when the file didn't reach the printer and no print command was sent, so a client can act on the code instead of the wording. A Bambu `print_3mf` call made with a progress token reports its LAN upload as MCP progress: `progress` is bytes sent, `total` the file's bytes, and `_meta["counterpart/stage"]` is `"upload"`, at most once per whole percent.
@@ -802,6 +802,45 @@ Use `slice_stl`, `confirm_temperatures`, and `upload_gcode` separately when you 
 </details>
 
 <details>
+<summary><strong>Optional code-CAD engine</strong></summary>
+
+### Code-CAD
+
+This MCP includes an optional headless design engine built on **build123d**, with trimesh and Manifold for mesh checks. It supports dimensioned parts and script-based captured-mesh work, saving editable Python, named dimensions, STL, and STEP for solid designs without starting Blender or Fusion. Nothing is downloaded until you explicitly call `cad_setup` with `install: true`. Allow about **1.5 GiB** for its isolated Python, packages and download cache; the exact size varies by platform. It needs `uv`, plus macOS Seatbelt or Linux `bubblewrap`; it refuses to run without confinement.
+
+Why include it: a local comparison made a bottle-holder cavity at 65.800 × 28.800 mm, changed its height by exactly 1 mm with one parameter edit in 137 seconds, and exported an articulated unicorn in 657 seconds where two recorded Blender attempts reached 901 seconds without a model. Initial holder worker passes took 238–893 seconds; this is not a speed guarantee. The unicorn still had dimension and pose errors. These few runs do not establish general superiority, reliable articulation or physical print fit. Both holders collided with an oversized raw scan; numerical checks exposed that rather than silently resizing it.
+
+**Don't want it?** Set `CAD_ENABLED=0` in the MCP's environment and restart the MCP. Its CAD tools, prompt and advertised capability disappear; printer tools and the existing Blender/Fusion bridges stay available. To remove a downloaded environment, stop the MCP and move its CAD data folder to Trash (default locations and `CAD_DATA_DIR` are in [the CAD guide](docs/CAD.md)). Your saved model outputs are separate. Leaving it disabled installs nothing and starts no Python.
+
+#### cad_status
+
+Read the pinned version, Python path, platform and last verified readiness. No installation or Python process is started.
+
+#### cad_setup
+
+Check only by default. `{"install":true}` installs a pinned isolated environment in the MCP's data directory and proves a confined small build plus STL/STEP round trip. On macOS it requires an internal disk with file ownership enabled. USB/network data volumes are refused before installation because the experiment found native-import stalls there; nothing is re-signed.
+
+#### cad_run
+
+Read the `cad_design` prompt first. Supply `script` or a saved `script_path`, `output_dir`, and `name`. Scripts declare literal `P = {...}` parameters and a `build()` function returning a build123d shape. One later call with `script_path` and `parameters` changes a dimension and rebuilds. Each run creates a new subfolder and preserves its source/parameter checkpoint, even on failure. The result contains STL/STEP paths, measured geometry, validity checks, six views and a contact sheet.
+
+Explicit `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]` snapshots the files a script may read as `INPUTS["scan"]`. For a mesh-only edit, use `mode: "mesh"` and return `trimesh.Trimesh`: it exports and validates STL plus renders, with `step: null` and a clear reason. For captured meshes, the injected `load_scan` helper takes explicit source units and an up-axis, converts coordinates to millimetres/Z-up, and grounds the mesh without fitting its size. Cleanup choices and labels belong to the caller’s rules; the MCP supplies execution, mesh libraries, checks and renders.
+
+`cad_status` and `cad_setup` expose `storage.expected_download_bytes`, `expected_installed_bytes` and cached measured `installed_bytes`; the first two are fresh-install budget estimates, not remaining transfer sizes. Setup failures carry `structuredContent.code`, `message`, `suggestion` and `retryable`, so clients do not parse wording.
+
+Runs wait for the environment's execution slot up to their own total timeout and return `queue_wait_ms`. Mark the selected result with `final: true`: each run's script-protected `cad-result.json` keeps the flag, full validation and artifact paths for recovery after restart. Check `status`, `valid` and the checks as well as `final`.
+
+Unchanged declared inputs reuse immutable content-hash bundles, with `snapshot_bytes_added` and `snapshot_bytes_reused` in the result. Keep the referenced `.cad-inputs` bundles with saved designs. Previews now use depth cues and feature edges to reveal windows and recesses without a heavy renderer.
+
+#### cad_check_fit
+
+Check a model and reference STL with an explicit rigid transform. Returns interference volume and minimum surface gap, without quietly scaling a scan. Open/nonmanifold meshes are refused. A gap of zero includes intentional floor contact, so choose clearance checks to match the interface you actually want to measure.
+
+See [CAD setup, confinement, script contract and removal](docs/CAD.md) for configuration, examples and limits.
+
+</details>
+
+<details>
 <summary><strong>Advanced Tools</strong></summary>
 
 ### Advanced Tools
@@ -1037,3 +1076,7 @@ Bambu Lab support builds on community protocol research, including [OpenBambuAPI
 This project is listed in the [Glama MCP server directory](https://glama.ai/mcp/servers/7f6v2enbgk). See [CONTRIBUTORS.md](./CONTRIBUTORS.md) for the people whose code, reports, and printer testing shaped it.
 
 </details>
+
+### Print dispatch truth (`counterpart/1`)
+
+An error from `print_3mf`, `upload_gcode` or `process_and_print_stl` carries `structuredContent.printOutcome`: `not-sent` means no print command was handed to a transport (including fresh-report timeouts, preparation failures and upload failures); `unknown` means a command may have reached the printer; `rejected` means the printer refused the command. A file upload alone is not a print command. Clients use this field, never error wording or firmware codes, to distinguish “Not started” from a print that needs checking. Missing or unrecognized values cannot prove nothing was sent. Other structured error fields remain compatible.

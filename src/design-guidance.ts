@@ -1,3 +1,4 @@
+import { CAD_DESIGN_PROMPT } from "./cad/contracts.js";
 /**
  * Manufacturing guidance for agents that design printable models: David Montgomery's FDM design
  * prompt pack (3 November 2026), verbatim. Served as MCP prompts and a resource; the other printer
@@ -175,6 +176,7 @@ export const FDM_CAPABILITY_RESOURCE = { uri: FDM_CAPABILITY_URI, name: "FDM bri
   description: "Planning bands and evidence for bridges and overhangs, for when one is consequential and there is no sufficiently specific measured capability available" };
 
 export const DESIGN_PROMPTS: DesignPrompt[] = [
+  CAD_DESIGN_PROMPT,
   { name: "fdm_design", title: "Design for FDM printing", text: FDM_CORE,
     description: "Persistent instructions for every design or model-editing task: plan how the object prints as part of the design, using the actual printer, filaments and slice." },
   { name: "fdm_multicolor", title: "Multicolour and support materials", text: FDM_MULTICOLOR,

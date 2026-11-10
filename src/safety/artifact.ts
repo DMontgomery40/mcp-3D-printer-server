@@ -10,9 +10,9 @@ const generations = new Map<string, number>();
 export function cancelPendingPrinterOperations(_host: string, serial: string): void {
   generations.set(serial, (generations.get(serial) ?? 0) + 1);
 }
-const retained = new Set<string>();
+const ownedSnapshots = new Set<string>();
 process.once("exit", () => {
-  for (const directory of retained) {
+  for (const directory of ownedSnapshots) {
     try { rmSync(directory, { recursive: true, force: true }); } catch { /* OS temp cleanup remains available. */ }
   }
 });
@@ -35,6 +35,8 @@ export async function withPrinterOperation<T>(_host: string, serial: string, ope
  */
 export async function withPrintSnapshot<T>(source: string, operation: (snapshot: string, retainForDispatchedUpload: () => void) => Promise<T>, root = os.tmpdir()): Promise<T> {
   const directory = await fs.mkdtemp(path.join(root, "bambu-print-"));
+  // Register before any operation can exit without unwinding its finally.
+  ownedSnapshots.add(directory);
   const snapshot = path.join(directory, path.basename(source));
   let retainUntilExit = false;
   try {
@@ -43,8 +45,10 @@ export async function withPrintSnapshot<T>(source: string, operation: (snapshot:
     return await operation(snapshot, () => { retainUntilExit = true; });
   } finally {
     // Native bridge APIs may return before their asynchronous upload completes.
-    if (retainUntilExit) retained.add(directory);
-    else await fs.rm(directory, { recursive: true, force: true });
+    if (!retainUntilExit) {
+      await fs.rm(directory, { recursive: true, force: true });
+      ownedSnapshots.delete(directory);
+    }
   }
 }
 

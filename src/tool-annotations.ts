@@ -22,6 +22,10 @@ const write = (destructiveHint: boolean, idempotentHint: boolean, openWorldHint:
   ({ readOnlyHint: false, destructiveHint, idempotentHint, openWorldHint });
 
 export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
+  cad_status: read(false),
+  cad_setup: write(true, true, true),
+  cad_run: write(false, false, false),
+  cad_check_fit: read(false),
   // Printer reads.
   get_printer_status: read(true),
   list_printer_files: read(true),

@@ -37,6 +37,11 @@ export type SetupKind = {
   env: Record<string, string>;
   /** The kind this server runs when a .env sets none of these values (no PRINTER_TYPE). */
   default?: boolean;
+  /**
+   * Whether camera_snapshot reads this kind's camera with only the settings these fields write, so a client's setup
+   * check can ask for a picture as well as the status. Every kind declares it; a client reads it missing as an older server.
+   */
+  cameraSnapshot: boolean;
   fields: SetupField[];
 };
 /** The slicer this server runs, as it resolves it now, and the settings that choose it (for every printer). */
@@ -101,8 +106,11 @@ const secret = (label: string, hint: string, required: boolean): SetupField => (
 export function genericSetupFields(options: { server: { name: string; version: string }; models: readonly string[]; serial?: string; slicer?: SlicerSetup; defaultKind?: string }): SetupFields {
   const fromSerial = { prefixLength: 3, models: serialModelValues(options.models) };
   const model = options.serial ? fromSerial.models[options.serial.trim().slice(0, 3).toUpperCase()] : undefined;
+  // cameraSnapshot: false for every kind. Bambu: camera_snapshot here reads only a PRINTER_CAMERA_SNAPSHOT_URL, which no
+  // field writes (bambu-printer-mcp reads the printer's own camera). The others: a webcam is an add-on found through the
+  // printer's own settings once the server runs (counterpart_printer_info probes it), not from these fields.
   const kind = (kind: SetupKind["kind"], label: string, fields: SetupField[]): SetupKind =>
-    ({ kind, label, env: { MCP_TRANSPORT: "stdio", PRINTER_TYPE: kind }, fields, ...(kind === options.defaultKind ? { default: true } : {}) });
+    ({ kind, label, env: { MCP_TRANSPORT: "stdio", PRINTER_TYPE: kind }, cameraSnapshot: false, fields, ...(kind === options.defaultKind ? { default: true } : {}) });
   return {
     contract: COUNTERPART_CONTRACT,
     server: options.server,
@@ -144,8 +152,10 @@ export const SETUP_FIELDS_OUTPUT_SCHEMA = {
     kinds: { type: "array", items: { type: "object", properties: {
       kind: { type: "string", enum: [...PRINTER_KINDS] }, label: { type: "string" },
       default: { type: "boolean", description: "The kind this server runs when a .env sets none of its fixed values (no PRINTER_TYPE)." },
-      env: { type: "object", additionalProperties: { type: "string" } }, fields: { type: "array", items: field },
-    }, required: ["kind", "label", "env", "fields"] } },
+      env: { type: "object", additionalProperties: { type: "string" } },
+      cameraSnapshot: { type: "boolean", description: "Whether camera_snapshot reads this kind's camera with only the settings these fields write, so a setup check can ask for a picture too." },
+      fields: { type: "array", items: field },
+    }, required: ["kind", "label", "env", "cameraSnapshot", "fields"] } },
     model: { type: "string" },
     slicer: { type: "object", properties: {
       type: { type: "string" }, path: { type: "string" }, found: { type: "boolean" }, profilesRoot: { type: "string" }, profilesFound: { type: "boolean" },

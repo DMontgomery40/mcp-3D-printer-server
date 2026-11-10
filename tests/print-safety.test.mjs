@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -17,7 +18,7 @@ const serial = "01PTESTSAFETY";
 // Every server runs from an empty directory with every printer variable set
 // explicitly, so a developer .env (which may name a real printer) is never read.
 async function server(t, env = {}, { preload, elicitation } = {}) {
-  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "print-safety-cwd-"));
+  const cwd = await trackedMkdtemp(path.join(os.tmpdir(), "print-safety-cwd-"));
   t.after(() => fs.rm(cwd, { recursive: true, force: true }));
   const client = new Client({ name: "print-safety-test", version: "1" }, elicitation ? { capabilities: { elicitation: { form: {} } } } : undefined);
   if (elicitation) client.setRequestHandler(ElicitRequestSchema, elicitation);
@@ -36,7 +37,7 @@ async function server(t, env = {}, { preload, elicitation } = {}) {
 
 /** Replaces every Bambu transport boundary in the server process and records attempts. */
 async function bambuBoundaries(t, { status = {}, slice, afterPublish } = {}) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-boundaries-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-boundaries-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const eventsPath = path.join(dir, "events.jsonl");
   const preload = path.join(dir, "boundaries.mjs");
@@ -87,7 +88,7 @@ async function bambuBoundaries(t, { status = {}, slice, afterPublish } = {}) {
 }
 
 async function bambuProject(t, { gcode = "M104 S220\nM140 S60\nG1 X10 Y10 Z1\n", plateEntry = "Metadata/plate_1.gcode", name = "job.3mf" } = {}) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-project-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-project-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, name);
   const zip = new JSZip();
@@ -129,7 +130,7 @@ test("all raw Bambu print entrypoints require a valid model before upload or MQT
 });
 
 test("inline upload filenames cannot overwrite or delete files outside the scratch directory", async (t) => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "printer-upload-safety-"));
+  const directory = await trackedMkdtemp(path.join(os.tmpdir(), "printer-upload-safety-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const sentinel = path.join(directory, "keep.gcode");
   await fs.writeFile(sentinel, "user content");
@@ -329,7 +330,7 @@ test("generic remote start on an adapter without a download route is refused bef
 
 test("process_and_print_stl on a generic printer refuses the audit G-code before upload", async (t) => {
   const mock = await octoPrintMock(t);
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "generic-process-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "generic-process-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   for (const [name, gcode, args, expectation] of [
     ["audit S220/S400/R450", "; filament_type = PLA\nM104 S220\nM104 S400\nM109 R450\nG1 X1 Y1 E1\n", { extruder_temp: 220 }, /Print safety line 3/],
@@ -366,7 +367,7 @@ test("process_and_print_stl refuses an expected-temperature mismatch before uplo
     await t.test(name, async (t) => {
       const sliced = await bambuProject(t, { gcode });
       const { preload, events } = await bambuBoundaries(t, { slice: sliced });
-      const temp = await fs.mkdtemp(path.join(os.tmpdir(), "process-print-"));
+      const temp = await trackedMkdtemp(path.join(os.tmpdir(), "process-print-"));
       t.after(() => fs.rm(temp, { recursive: true, force: true }));
       const client = await server(t, { ...bambuEnv, TEMP_DIR: temp }, { preload, elicitation: accept });
       const result = await client.callTool({ name: "process_and_print_stl", arguments: {
@@ -393,7 +394,7 @@ test("credential rejections and safety refusals get actionable, non-retry advice
   assert.equal(refused.structuredContent?.retryable, false);
   assert.match(refused.structuredContent?.suggestion ?? "", /safety check stopped this/i);
   // An FTPS 530 from list_printer_files names the access code instead of "retry".
-  const ftpDenied = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "ftp-denied-")), "deny.mjs");
+  const ftpDenied = path.join(await trackedMkdtemp(path.join(os.tmpdir(), "ftp-denied-")), "deny.mjs");
   await fs.writeFile(ftpDenied, `
     import { BambuImplementation } from ${JSON.stringify(pathToFileURL(path.join(root, "dist/printers/bambu.js")).href)};
     BambuImplementation.prototype.getFiles = async () => { throw new Error("530 Login incorrect."); };
@@ -452,7 +453,7 @@ test("a stop during the dispatch check is reported as cancelled, never as starte
 test("process_and_print_stl slices Bambu jobs for the requested nozzle and plate", async (t) => {
   const sliced = await bambuProject(t, { gcode: "M104 S220\nM109 R220\nM140 S60\n" });
   const { preload, events } = await bambuBoundaries(t, { slice: sliced });
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "process-nozzle-"));
+  const temp = await trackedMkdtemp(path.join(os.tmpdir(), "process-nozzle-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
   const client = await server(t, { ...bambuEnv, TEMP_DIR: temp, SLICER_TYPE: "bambustudio" }, { preload, elicitation: accept });
   await client.callTool({ name: "process_and_print_stl", arguments: {
