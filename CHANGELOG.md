@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Serves the resource `guidance://fdm/fit-by-function`. It tells a design agent to choose each fit by what the interface has to do, never one clearance for every interface. For each interface, it keeps three things apart: the object's measured size and its uncertainty, the print correction, and the fit. It sets the band each function tolerates against how sure the size is, and points to crush ribs, a split with a pinch screw, a flexure or a snap where a part must grip or a size is uncertain. It explains why filament prints fit the way they do: undersize holes, first-layer flare, holes on their side, engagement length and creep. It gives cited starting clearances for a 0.4 mm nozzle as starting points to be corrected by the person's result, and asks for each interface's function, fit and reasoning in the result. The server's `instructions` say to read it whenever a part meets a real object or another part. Checked with the design-guidance tests; no printer contacted.
+
 ## [1.2.63] – 2026-11-10
 
 ### Added

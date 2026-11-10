@@ -174,6 +174,126 @@ export const FDM_CAPABILITY_URI = "guidance://fdm/capability-guidance";
 export const FDM_CAPABILITY_RESOURCE = { uri: FDM_CAPABILITY_URI, name: "FDM bridge and overhang guidance", mimeType: "text/markdown",
   description: "Planning bands and evidence for bridges and overhangs, for when one is consequential and there is no sufficiently specific measured capability available" };
 
+/** How to choose each fit by what the interface has to do on a filament printer (Nov 10: 0.5 mm a side was right for a
+ * drop-in bottle holder and would ruin a mic clamp). Sources are cited inline; the bands and the slot span are app priors. */
+export const FDM_FIT_GUIDANCE = `# Choosing a fit by function on a filament printer
+
+Read this whenever a printed part meets a real object or another part. It covers how to choose each fit and why it prints the way it does. The ranges here are starting points tied to a function, a feature size and a 0.4 mm nozzle. The person's result ("did it fit?") corrects them. There is no single fit number.
+
+## Three things, kept apart per interface
+
+1. **The object's true size**, how it was measured (calipers, a published dimension, a scan, a photo estimate), and how sure that size is.
+2. **The print correction** for this printer, material and orientation. Pockets and holes print undersize, and walls stepped by layers differ from walls drawn in one layer.
+3. **The design fit**, which comes only from what the interface has to do.
+
+If the three fold into one number, a result like "0.5 mm per side and it was loose" teaches nothing reusable. Say which of the three the result corrects.
+
+## Say what each interface has to do
+
+Name the function in plain words, and infer it first from the object and how the part mounts. A wall holder that opens upward is a drop-in. A mount on a pole must not turn. A person will not say "grips". When the function is unclear and the answer changes the design, ask about behaviour: should it stay in when turned upside down, lift out with one hand, ever turn?
+
+| Function | Band it tolerates (app prior) | What usually works |
+| --- | --- | --- |
+| Rests in, or drops in and lifts out | Forgiving: a few tenths of a millimetre either way | Plain clearance, a lead-in at the mouth |
+| Slides | Moderate | Clearance plus enough engagement length that it does not rock |
+| Locates without rattle | Tight | Small clearance with a chamfer or taper, or a flexure that takes up the slack |
+| Grips so it does not slip or turn | Very tight: a few hundredths | Crush ribs, a split with a pinch screw, or a flexure. Never a bare number |
+| Clamps closed with a screw | The clamp's travel | A split with a screw, sized so the screw's range covers the size's uncertainty |
+| Snaps over | The snap's deflection | A snap whose arm flexes within its layers |
+| Presses in to stay | Very tight, and it creeps | Crush ribs or a screw. A pure press is for light or short-lived loads |
+
+The bands are deliberate priors for this app, not values from a cited source. When the size's uncertainty is wider than the function's band (for example, a scan or photo estimate for a grip), do not answer with a better number. Choose a mechanism that absorbs the difference, or ask for the one caliper measurement that settles it.
+
+## Why filament prints fit the way they do
+
+- **Holes print undersize.** Protolabs Network: "FDM often prints undersized vertical-axis holes." Each new layer is pressed onto the ones below. "The amount of undersize depends on the printer, slicing software, hole size and material." [F1] HydraRaptor gives two more causes. A hole drawn as a polygon has sides inside the circle, "shrinking it by cos(π / n)". And filament dragged round a corner "likes to take a short-cut", which its author judged the dominant effect on his machines. [F6] Small holes suffer most, relative to their size. The slicer can correct holes and outer contours separately (OrcaSlicer's X-Y hole and contour compensation) and can rebuild round holes as polyholes. [F5] Check what the active profile applies before adding your own allowance, so it is not applied twice.
+- **First layers flare.** The first layer spreads into an "elephant's foot" that "can impact the ability to assemble FDM parts". Protolabs Network suggests a 45° chamfer or radius on edges that touch the build plate. [F1] OrcaSlicer's elephant-foot compensation shrinks the first layers, and only when the object sits directly on the plate. [F5] A pocket's mouth or a rim that prints on the plate needs either the chamfer or that setting.
+- **A hole lying on its side differs from one standing upright.** A vertical-axis hole is drawn as a circle in every layer and carries only the undersize above. A horizontal-axis hole cuts across the layers. Its top is an overhang that ends in a bridge: Protolabs Network notes that bridges "most often occur in horizontal-axis holes". [F1] So it sags, comes out short from top to bottom, and is stepped on its sides. For a round fit on its side, give the hole a teardrop or flat roof and keep the bearing faces at the sides, or turn the part. Any overhang guidance applies to that roof.
+- **Engagement length matters.** A longer engagement keeps a slide from rocking and spreads a grip. A short one concentrates the load on a few layers and lets a part tilt within its clearance. This is design reasoning, not a sourced value.
+- **Plastic creeps under a constant load.** Dogan (2022) found that printed polymers, PLA among them, "undergo significant changes in their dimensions under continuous loading conditions", and that material type, temperature and load level all mattered. [F9] A pure press fit or a constant clamp therefore loosens over weeks, and faster when warm. Where a part must hold for months, prefer a screw you can re-tighten or a snap that carries load only during assembly.
+- **How the object yields matters too.** A squeezable bottle, a rigid pole and a rubber-sleeved cable want different fits. A soft object can take some interference. A rigid one makes the print take all of it.
+
+## Mechanisms that absorb uncertainty
+
+- **Crush ribs.** Small ribs inside a bore deform as the part is pressed in, so the part touches only the ribs. Hackaday calls them "far easier (and more forgiving)" than a full-bore press, and notes that "a 0.1 mm difference can have a noticeable effect" on a plain fit. [F7] In molding practice, three or more ribs along the hole deform at their narrow tips "without creating a lot of stress on the part". [F8] A crushed rib does not recover, so use ribs for parts assembled once, with light loads.
+- **A split with a pinch screw.** A slot through one side of the bore with a screw across it. The screw's travel covers a range of sizes, and a screw can be re-tightened after creep. Use it for a pole, a tube or a handle whose size is a scan or photo estimate, and say the range it holds.
+- **A flexure.** A thin arm or a sprung finger presses on the object. Use it to locate without rattle or to hold a soft object, where an exact size is unknown.
+- **A snap.** Protolabs Network gives these rules for 3D-printed snaps:
+  - Taper the beam toward the tip, because a constant-thickness beam strains most at the root.
+  - Make the root fillet at least 0.5 times the base thickness, and the beam at least 5 mm wide.
+  - Avoid cantilevers built vertically in the Z direction.
+  - Deflect the snap only during assembly, not in service.
+  - Leave 0.5 mm of tolerance for FDM snap-fit connectors. The page does not say whether that is per side. [F2]
+
+  In short, a snap arm flexes within its layers, never across them.
+
+## Starting clearances for a plain fit
+
+The sources disagree, and none gives the nozzle, material or whether a value is per side:
+- Prusa says an Original Prusa "will be accurate to at least 0.2 mm". Its first value for movable parts is "at least 0.3 mm", and it says there is no universal value. [F3]
+- The University of Florida makerspace's rule of thumb for parts printed separately on Prusa MK4 and XL printers is:
+  - 0.30–0.40 mm for loose parts such as covers;
+  - 0.20–0.25 mm for standard sliding fits (tabs, rails, enclosures);
+  - 0.15–0.20 mm for snug or alignment fits, "very dependent on surface qualities". [F4]
+
+Read these as gaps between facing surfaces on a 0.4 mm nozzle, and treat that reading as an assumption. Use them only where a plain clearance is the right mechanism: loose or sliding fits, and locating fits with a chamfer. A larger feature, a hole across the layers or an uncorrected first layer needs more. For a grip or a press, these numbers are not the answer. Use a mechanism above.
+
+## Getting in and staying
+
+- Size a pocket to the widest section the object passes through on the way in, not to its bounding box or the scan's average.
+- Make the pocket's corner radii at least the object's own.
+- Put a lead-in chamfer at the mouth. Prusa notes that a chamfer on edges that slot together saves effort when assembling. [F3]
+- Over a span of more than about 150 mm, make wall-screw holes slots so the part can be placed despite measuring error. This is an app prior, not a sourced value.
+
+## Report each interface
+
+In the result, give each interface its function, the size used and its source and uncertainty, the print correction assumed, and the fit chosen (a clearance or interference per side, or the mechanism and the range of sizes it holds), with why. When the person reports how it fitted, change the value their result corrects, and say which one.
+
+## Sources
+
+[F1] Protolabs Network (Hubs), How to design parts for FDM 3D printing:
+
+https://www.hubs.com/knowledge-base/how-design-parts-fdm-3d-printing/
+
+[F2] Protolabs Network (Hubs), How do you design snap-fit joints for 3D printing?:
+
+https://www.hubs.com/knowledge-base/how-design-snap-fit-joints-3d-printing/
+
+[F3] Prusa Knowledge Base, Modeling with 3D printing in mind:
+
+https://help.prusa3d.com/article/modeling-with-3d-printing-in-mind_164135
+
+[F4] Marston Makerspace, University of Florida, Designing for 3D Printing Tolerances on the MK4 and XL:
+
+https://makerspace.uflib.ufl.edu/services/3dprocess/recommended-software-for-3d-printing/designing-for-3d-printing-tolerances-on-the-mk4-and-xl/
+
+[F5] OrcaSlicer wiki, Precision (X-Y hole and contour compensation, elephant foot compensation, polyholes):
+
+https://www.orcaslicer.com/wiki/print_settings/quality/quality_settings_precision
+
+[F6] nophead, HydraRaptor: Polyholes (5 February 2011):
+
+https://hydraraptor.blogspot.com/2011/02/polyholes.html
+
+[F7] Donald Papp, Hackaday, Adding Crush Ribs To 3D Printed Parts For A Better Press Fit (15 October 2020):
+
+https://hackaday.com/2020/10/15/adding-crush-ribs-to-3d-printed-parts-for-a-better-press-fit/
+
+[F8] Protolabs, Crush Rib Design Guidelines for Injection Molding:
+
+https://www.protolabs.com/resources/design-tips/adding-crush-ribs-to-molded-parts/
+
+[F9] O. Dogan, Short-term Creep Behaviour of Different Polymers Used in Additive Manufacturing under Different Thermal and Loading Conditions, Strojniški vestnik – Journal of Mechanical Engineering 68 (7–8), 2022, 451–460, doi:10.5545/sv-jme.2022.191 (abstract):
+
+https://ojs30.sv-jme.eu/index.php/sv-jme/article/view/191
+
+All sources inspected 10 November 2026.`;
+
+export const FDM_FIT_URI = "guidance://fdm/fit-by-function";
+
+export const FDM_FIT_RESOURCE = { uri: FDM_FIT_URI, name: "FDM fit by function", mimeType: "text/markdown",
+  description: "How to choose each fit where a printed part meets a real object or another part: by what the interface has to do, with why filament prints fit the way they do, mechanisms that absorb size uncertainty, and cited starting points" };
+
 export const DESIGN_PROMPTS: DesignPrompt[] = [
   { name: "fdm_design", title: "Design for FDM printing", text: FDM_CORE,
     description: "Persistent instructions for every design or model-editing task: plan how the object prints as part of the design, using the actual printer, filaments and slice." },
@@ -214,4 +334,4 @@ export function slicingGuidance(slicerType: string, capabilities: { supports: bo
 export const FDM_SLICING_PROMPT = { name: "fdm_slicing", title: "How this MCP slices",
   description: "Add to every design or model-editing task: how this server's slicer orients a model and generates supports, and how to check a choice with a checkpoint slice." };
 
-export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt and the fdm_slicing prompt. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split or joint could help, and fdm_after_slice as a separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang is consequential and there is no sufficiently specific measured capability available.";
+export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt and the fdm_slicing prompt. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split or joint could help, and fdm_after_slice as a separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang is consequential and there is no sufficiently specific measured capability available. Read " + FDM_FIT_URI + " whenever a part meets a real object or another part, to choose each fit by what that interface has to do.";
