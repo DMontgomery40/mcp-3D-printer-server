@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {execFileSync} from 'node:child_process';
@@ -6,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import JSZip from 'jszip';
 test('3MF parser diagnostics never contaminate stdio protocol output',async t=>{
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bambu-parser-stdio-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const dir=await trackedMkdtemp(path.join(os.tmpdir(),'bambu-parser-stdio-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
   const file=path.join(dir,'fixture.3mf');const zip=new JSZip();
   zip.file('3D/3dmodel.model','<model unit="millimeter"><resources/><build/></model>');
   zip.file('Metadata/project_settings.config',JSON.stringify({filament_type:['PLA']}));
@@ -17,7 +18,7 @@ test('3MF parser diagnostics never contaminate stdio protocol output',async t=>{
 });
 
 test('slicer execution diagnostics never contaminate stdio protocol output',async t=>{
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bambu-slicer-stdio-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const dir=await trackedMkdtemp(path.join(os.tmpdir(),'bambu-slicer-stdio-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
   const executable=path.join(dir,'slicer');
   await fs.writeFile(executable,`#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.writeFileSync(args[args.indexOf('--output')+1],'G1 X0\\n');console.log('slicer diagnostic');\n`,{mode:0o755});
   const module=new URL('../dist/stl/stl-manipulator.js',import.meta.url).href;

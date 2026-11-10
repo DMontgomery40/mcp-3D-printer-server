@@ -1,6 +1,7 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm, access } from 'node:fs/promises';
+import { writeFile, readFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +14,7 @@ const entry = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 const preload = fileURLToPath(new URL('./fixtures/inspection-no-network.mjs', import.meta.url));
 const header = (material = 'PLA') => `; printer_model = Bambu Lab P1S\n; nozzle_diameter = 0.4\n; filament_type = ${material}\n; curr_bed_type = Textured PEI Plate\n`;
 async function server(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'offline-mcp-inspection-'));
+  const dir = await trackedMkdtemp(join(tmpdir(), 'offline-mcp-inspection-'));
   const networkLog = join(dir, 'network.log');
   const transport = new StdioClientTransport({ command: process.execPath, args: ['--import', preload, entry], cwd: dir, stderr: 'pipe',
     env: { HOME: dir, MCP_TRANSPORT: 'stdio', BAMBU_MODEL: '', BAMBU_PRINTER_MODEL: '',

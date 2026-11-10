@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from '../support/temp.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -25,7 +26,7 @@ function safetyStatus({ model = "p1s", nozzle = "0.4", state = "IDLE", ...raw } 
 }
 
 async function fixture(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-controls-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-controls-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, "job.3mf");
   const content = "; printer_model = Bambu Lab P1S\n; nozzle_diameter = 0.4\n; filament_type = PLA\n; filament_colour = #FFFFFF\n; curr_bed_type = Textured PEI Plate\nM104 S220\nM140 S60\nG1 X10 Y10 Z1\n";
@@ -135,7 +136,7 @@ function restarted(job, resumeStateDir) {
 }
 
 async function recordFolder(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bambu-resume-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "bambu-resume-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   return dir;
 }

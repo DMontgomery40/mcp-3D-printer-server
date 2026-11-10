@@ -1,3 +1,4 @@
+import {trackedMkdtempSync} from './support/temp.mjs';
 // The Bambu print route over MCP: counterpart_print_route (ported from
 // bambu-printer-mcp tests/counterpart.test.mjs) and print_3mf through FULU's
 // authenticated LAN session, with tests/fixtures/fake-fulu-host.mjs as the
@@ -18,7 +19,7 @@ const FAKE_FULU_HOST = path.join(__dirname, "fixtures", "fake-fulu-host.mjs");
 const shellQuoteArg = (value) => `'${String(value).replace(/'/g, "'\\''")}'`;
 
 async function server(t, env = {}, { files = {}, preload } = {}) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bambu-route-mcp-"));
+  const directory = trackedMkdtempSync(path.join(os.tmpdir(), "bambu-route-mcp-"));
   for (const [name, { text, mode }] of Object.entries(files)) fs.writeFileSync(path.join(directory, name), text, { mode });
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -114,7 +115,7 @@ async function twoFilamentProject(directory, plates = 1) {
 // ams_slots names the used filament's tray; a project-level ams_mapping with a tray for the unused filament 1 is sent
 // as Bambu Studio sends it, -1 there (SelectMachine.cpp:1463-1500).
 for (const plateIndex of [0, 1]) for (const ams of [{ ams_slots: [3] }, { ams_mapping: [1, 3] }]) test(`print_3mf on FULU's LAN route sends the checked job for plate ${plateIndex + 1} with Bambu Studio's AMS fields (${Object.keys(ams)[0]}), never plain MQTT`, { timeout: 120_000 }, async (t) => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-print-"));
+  const work = trackedMkdtempSync(path.join(os.tmpdir(), "fulu-print-"));
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   const log = path.join(work, "host.jsonl");
   const preload = `import { BambuImplementation } from ${JSON.stringify(new URL("../dist/printers/bambu.js", import.meta.url).href)};
@@ -157,7 +158,7 @@ for (const plateIndex of [0, 1]) for (const ams of [{ ams_slots: [3] }, { ams_ma
 });
 
 test("print_3mf on FULU's route still refuses a tray of the wrong material before the bridge starts", async (t) => {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), "fulu-refuse-"));
+  const work = trackedMkdtempSync(path.join(os.tmpdir(), "fulu-refuse-"));
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   const log = path.join(work, "host.jsonl");
   const preload = `import { BambuImplementation } from ${JSON.stringify(new URL("../dist/printers/bambu.js", import.meta.url).href)};

@@ -1,3 +1,4 @@
+import {trackedMkdtemp, trackedMkdtempSync} from '../support/temp.mjs';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -18,7 +19,7 @@ const SAMPLE_STL = path.join(REPO_ROOT, "test", "sample_cube.stl");
 /* --- Synthetic profile tree helpers -------------------------------------- */
 
 async function makeSyntheticTree() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "flatten-test-"));
+  const root = await trackedMkdtemp(path.join(os.tmpdir(), "flatten-test-"));
   const bbl = path.join(root, "BBL");
   for (const sub of ["machine", "process", "filament"]) {
     await fs.mkdir(path.join(bbl, sub), { recursive: true });
@@ -54,7 +55,7 @@ test("flattenForCli rejects non-BBL vendor explicitly", async () => {
       processLeaf: "y",
       filamentLeaves: ["z"],
       profilesRoot: root,
-      tempDir: os.tmpdir(),
+      tempDir: trackedMkdtempSync(path.join(os.tmpdir(), "flat-output-")),
       vendor: "Voron",
     }),
     /only BBL vendor is supported/i
@@ -62,14 +63,14 @@ test("flattenForCli rejects non-BBL vendor explicitly", async () => {
 });
 
 test("flattenForCli errors clearly when profilesRoot is wrong", async () => {
-  const empty = await fs.mkdtemp(path.join(os.tmpdir(), "empty-"));
+  const empty = await trackedMkdtemp(path.join(os.tmpdir(), "empty-"));
   await assert.rejects(
     flattenForCli({
       machineLeaf: "x",
       processLeaf: "y",
       filamentLeaves: ["z"],
       profilesRoot: empty,
-      tempDir: os.tmpdir(),
+      tempDir: trackedMkdtempSync(path.join(os.tmpdir(), "flat-output-")),
     }),
     /does not contain "BBL\/machine"/
   );
@@ -81,7 +82,7 @@ test("STLManipulator flattening uses the active slicer_path profile root", async
     return;
   }
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "active-slicer-root-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "active-slicer-root-"));
   const activeApp = path.join(tempDir, "ActiveBambuStudio.app");
   const activeProfilesRoot = path.join(activeApp, "Contents", "Resources", "profiles");
   const activeBbl = path.join(activeProfilesRoot, "BBL");
@@ -233,7 +234,7 @@ test("inherits chain: child wins on key collision, root parent fills the rest", 
     filament_type: ["PLA"],
   });
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "flat-out-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "flat-out-"));
   const result = await flattenForCli({
     machineLeaf: "Bambu Lab TEST 0.4 nozzle",
     processLeaf: "0.20mm @TEST",
@@ -283,7 +284,7 @@ test("inherits cycle is detected and reported", async () => {
       processLeaf: "p",
       filamentLeaves: ["f"],
       profilesRoot: root,
-      tempDir: os.tmpdir(),
+      tempDir: trackedMkdtempSync(path.join(os.tmpdir(), "flat-output-")),
     }),
     /inheritance cycle detected/i
   );
@@ -305,7 +306,7 @@ test("missing parent name produces a useful error", async () => {
       processLeaf: "p",
       filamentLeaves: ["f"],
       profilesRoot: root,
-      tempDir: os.tmpdir(),
+      tempDir: trackedMkdtempSync(path.join(os.tmpdir(), "flat-output-")),
     }),
     /Profile "ghost_parent" not found/
   );
@@ -355,7 +356,7 @@ test("include templates are applied per inherits level, under the profile's own 
   await writeProfile(bbl, "process", { name: "0.20mm @TEST", inherits: null, layer_height: 0.2 });
   await writeProfile(bbl, "filament", { name: "PLA @TEST", inherits: null, filament_type: ["PLA"] });
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "flat-include-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "flat-include-"));
   const flatten = async (machineLeaf) => {
     const result = await flattenForCli({
       machineLeaf,
@@ -398,7 +399,7 @@ test("missing include template is an error, not a silent fallback", async () => 
       processLeaf: "0.20mm @TEST",
       filamentLeaves: ["PLA @TEST"],
       profilesRoot: root,
-      tempDir: await fs.mkdtemp(path.join(os.tmpdir(), "flat-include-missing-")),
+      tempDir: await trackedMkdtemp(path.join(os.tmpdir(), "flat-include-missing-")),
     }),
     /includes "TEST 0\.4 template machine_start_gcode"/
   );
@@ -419,7 +420,7 @@ test("end-to-end against real BBL tree: P2S 0.4 nozzle gets its own G-code templ
     return;
   }
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "flat-p2s-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "flat-p2s-"));
   const result = await flattenForCli({
     machineLeaf: "Bambu Lab P2S 0.4 nozzle",
     processLeaf: "0.20mm Standard @BBL P2S",
@@ -450,7 +451,7 @@ test("nozzleVolumeType override produces matching-length array", async () => {
   await writeProfile(bbl, "process", { name: "p", inherits: null });
   await writeProfile(bbl, "filament", { name: "f", inherits: null });
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "flat-out-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "flat-out-"));
   const result = await flattenForCli({
     machineLeaf: "Bambu Lab TESTDUAL 0.4 nozzle",
     processLeaf: "p",
@@ -481,7 +482,7 @@ test("bedType override stamps the flattened process profile", async () => {
   });
   await writeProfile(bbl, "filament", { name: "PETG @TEST", inherits: null });
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "flat-bed-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "flat-bed-"));
   const result = await flattenForCli({
     machineLeaf: "Bambu Lab TEST 0.4 nozzle",
     processLeaf: "0.20mm @TEST",
@@ -517,7 +518,7 @@ test("machine-model bed metadata is copied onto flattened machine profile", asyn
   await writeProfile(bbl, "process", { name: "0.20mm @TEST", inherits: null });
   await writeProfile(bbl, "filament", { name: "PETG @TEST", inherits: null });
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "flat-bed-meta-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "flat-bed-meta-"));
   const result = await flattenForCli({
     machineLeaf: "Bambu Lab TEST 0.4 nozzle",
     processLeaf: "0.20mm @TEST",
@@ -551,7 +552,7 @@ test("mismatched nozzle_volume_type entries throw (hardware invariant)", async (
       processLeaf: "p",
       filamentLeaves: ["f"],
       profilesRoot: root,
-      tempDir: os.tmpdir(),
+      tempDir: trackedMkdtempSync(path.join(os.tmpdir(), "flat-output-")),
     }),
     /must all match.*hardware invariant/i
   );
@@ -567,7 +568,7 @@ test("end-to-end against real BBL tree: H2S 0.4 nozzle flattens to a populated p
     return;
   }
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "flat-h2s-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "flat-h2s-"));
   let result;
   try {
     result = await flattenForCli({
@@ -624,7 +625,7 @@ test("end-to-end: H2D matches GUI-sliced ground-truth shape for nozzle_volume_ty
     return;
   }
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "flat-h2d-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "flat-h2d-"));
   const result = await flattenForCli({
     machineLeaf: "Bambu Lab H2D 0.4 nozzle",
     processLeaf: "0.20mm Standard @BBL H2D",

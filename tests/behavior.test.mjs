@@ -1,3 +1,4 @@
+import {trackedMkdtemp} from './support/temp.mjs';
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -252,7 +253,7 @@ function assertPrinterControlSchemas(listToolsResult) {
 }
 
 async function createFakeBambuProjectSlicer(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-orca-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "fake-fulu-orca-"));
   const executableDir = path.join(dir, "FakeOrca.app", "Contents", "MacOS");
   const bblDir = path.join(dir, "FakeOrca.app", "Contents", "Resources", "profiles", "BBL");
   await fs.mkdir(executableDir, { recursive: true });
@@ -314,7 +315,7 @@ fs.copyFileSync(${JSON.stringify(slicedFixture)}, path.join(args[outputDirIndex 
 }
 
 async function createFakeOrcaSlicer(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-orcaslicer-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "fake-orcaslicer-"));
   const executable = path.join(dir, "fake-orcaslicer.mjs");
 
   await fs.writeFile(
@@ -356,7 +357,7 @@ fs.writeFileSync(path.join(args[outputDirIndex + 1], "plate_1.gcode"), "; fake o
 }
 
 async function createFakeFuluBundle(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-bundle-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "fake-fulu-bundle-"));
   const pluginDir = path.join(dir, "OrcaSlicer.app", "Contents", "MacOS");
   const runtimeDir = path.join(dir, "runtime");
   const slicerPath = path.join(pluginDir, "OrcaSlicer");
@@ -403,7 +404,7 @@ async function createFakeFuluBundle(t) {
 }
 
 async function createFakeFuluBridge(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-bridge-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "fake-fulu-bridge-"));
   const executable = path.join(dir, "fake-fulu-bridge.mjs");
 
   await fs.writeFile(
@@ -619,7 +620,7 @@ test("FULU Orca slicer aliases export Bambu project 3MF with model preset", asyn
 
 test("OrcaSlicer slice_stl uses outputdir, filament profile, and plate output rename", async (t) => {
   const { dir, executable } = await createFakeOrcaSlicer(t);
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "orca-slice-output-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "orca-slice-output-"));
   const machineProfile = path.join(dir, "machine.json");
   const processProfile = path.join(dir, "process.json");
   const filamentProfile = path.join(dir, "nylon.json");
@@ -858,7 +859,7 @@ test("FULU Linux host: plug-in library paths, exit 101 and file-open failures ar
 });
 
 test("FULU setup suggests platform-specific bridge commands only where they apply", async (t) => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-fulu-linux-"));
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "fake-fulu-linux-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const slicerPath = path.join(dir, "orca-slicer");
   await fs.writeFile(slicerPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -1101,7 +1102,7 @@ test("bridge probes reject every per-call executable path selector by default", 
 });
 
 test("slicer_path cannot select an executable without explicit opt-in", async (t) => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "slicer-selector-gate-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "slicer-selector-gate-"));
   const executable = path.join(tempDir, "unexpected-slicer");
   const markerPath = path.join(tempDir, "executed");
   await fs.writeFile(
@@ -1186,7 +1187,7 @@ test("empty slicer_path preserves env fallback without enabling executable argum
 });
 
 test("print_3mf ignores slicer_path when the archive already contains gcode", async (t) => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ready-3mf-selector-"));
+  const tempDir = await trackedMkdtemp(path.join(os.tmpdir(), "ready-3mf-selector-"));
   const threeMFPath = path.join(tempDir, "ready.gcode.3mf");
   const executable = path.join(tempDir, "unexpected-slicer");
   const markerPath = path.join(tempDir, "executed");

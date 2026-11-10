@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.61] – 2026-11-10
+
+### Fixed
+
+- Track checked print snapshots from allocation so server shutdown also removes in-flight copies whose operation has not returned. Verified with an exiting child process and mocked native shutdown; no printer contacted.
+
+- Remove test fixture directories at file teardown even after failures or early returns, and run the full Node test suite in a private temporary directory that fails on leftovers. Regression checks cover clean, leaking and failing suites; printer transports are mocked and no printer is contacted.
+- Remove the server-owned temporary output directory on exit while retaining caller-specified `TEMP_DIR` contents, matching the Bambu fork. Checked through local stdio and HTTP server shutdown tests.
+- On Node 18, an HTTP (`streamable-http`) server with a connected client now finishes its SIGTERM/SIGINT shutdown. Node 18's `close()` waits for clients' keep-alive connections (Node 19 and later close idle ones itself), so the server never exited, and a supervisor's later SIGKILL skipped the exit cleanup and left its temporary folder behind. Shutdown now closes the remaining connections. Found by the suite's leftover check in Node 18 CI (five leaked server folders and two timed-out shutdown tests), and checked locally with Node 18.20.8 and 22.
+
 ## [1.2.60] – 2026-11-08
 
 ### Fixed
