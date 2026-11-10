@@ -41,7 +41,7 @@ import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { PRINT_QUALITY_PROPERTIES, withPrintQuality } from "./slicer/print-quality.js";
-import { PrinterRefusal } from "./refusal.js";
+import { PrinterRefusal, withPrintDispatch, markPrintCommandSent, printOutcome } from "./refusal.js";
 import { uploadProgressReporter } from "./upload-progress.js";
 import { isBambuProjectSlicer, usesBambuCli } from "./slicer/capabilities.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
@@ -1341,7 +1341,7 @@ class ThreeDPrinterMCPServer {
           assertActive();
           validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
         },
-        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) assertActive(); },
+        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) { assertActive(); markPrintCommandSent(); } },
         onDispatched: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) retainForDispatchedUpload(); },
       };
       let jobUpdates: BridgeJobUpdate[] = [];
@@ -2705,7 +2705,7 @@ class ThreeDPrinterMCPServer {
 
     // Handle tool calls
     // A designer's settings extracted for this call are removed when it settles.
-    this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withExtractedSettingsCleanup(async () => {
+    this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withPrintDispatch(() => withExtractedSettingsCleanup(async () => {
       const { name, arguments: args } = request.params;
       // counterpart/1: print_3mf reports its FTPS upload as MCP progress (src/upload-progress.ts).
       const progressToken = extra._meta?.progressToken;
@@ -3742,7 +3742,7 @@ class ThreeDPrinterMCPServer {
         
         const errorMessage = error instanceof Error ? error.message : String(error);
         // A printer refusal adds its stable code (src/refusal.ts); the message and suggestion stay as they were.
-        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}) };
+        const structuredError = { ...this.toStructuredToolError(name, errorMessage, error), ...(error instanceof PrinterRefusal ? { code: error.code } : {}), ...(["print_3mf", "upload_gcode", "process_and_print_stl"].includes(name) ? { printOutcome: printOutcome(error) } : {}) };
         
         return {
           content: [
@@ -3761,7 +3761,7 @@ class ThreeDPrinterMCPServer {
         // Individual notification failures are logged above and never fail a print.
         await progressNotifications;
       }
-    }));
+    })));
   }
 
   // Delegating methods to printer implementations

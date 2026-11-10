@@ -1,7 +1,7 @@
 {
     "name": "mcp-3d-printer-server",
     "mcpName": "io.github.DMontgomery40/mcp-3d-printer-server",
-    "version": "1.2.61",
+    "version": "1.2.62",
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "main": "dist/index.js",
     "repository": "https://github.com/DMontgomery40/mcp-3D-printer-server",
@@ -12,7 +12,7 @@
         "start:http": "MCP_TRANSPORT=streamable-http node dist/index.js",
         "dev": "nodemon src/index.ts --exec \"npm run build && npm start\"",
         "build": "tsc",
-        "test": "npm run build && node dist/test/stl-manipulator-test.js && node scripts/test-with-temp-guard.mjs --import ./tests/support/isolate-resume-records.mjs tests/*.test.mjs tests/slicer/*.test.mjs tests/safety/*.test.mjs",
+        "test": "npm run build && node dist/test/stl-manipulator-test.js && node --test --import ./tests/support/isolate-resume-records.mjs tests/*.test.mjs tests/slicer/*.test.mjs tests/safety/*.test.mjs",
         "inspect": "npm run build && npx @modelcontextprotocol/inspector dist/index.js",
         "prepack": "npm run build",
         "test:package": "node scripts/test-package.mjs",

@@ -492,3 +492,42 @@ test("use_ams:false maps every used filament to the external spool on the wire",
   assert.equal(publish.use_ams, false);
   assert.deepEqual(publish.ams_mapping, [-1, 254, -1, -1, -1]);
 });
+
+// The Nov 6 P1S refusal: no fresh status, no upload and no print command.
+test("counterpart dispatch truth brackets the actual print3mf transport", async (t) => {
+  const { withPrintDispatch, printOutcome } = await import("../../dist/refusal.js");
+  const file = await fixture(t);
+  const { printer, events } = isolatedPrinter();
+  printer.getSafetyStatus = async () => { throw new Error("Timed out waiting for a fresh MQTT safety report"); };
+  await withPrintDispatch(async () => {
+    await assert.rejects(printer.print3mf(host, serial, token, { projectName: "job", filePath: file, bambuModel: "p1s", useAMS: false }), error => {
+      assert.equal(printOutcome(error), "not-sent"); return true;
+    });
+  });
+  assertNoDispatch(events);
+  const after = isolatedPrinter();
+  after.printer.getPrinter = async () => ({ publish: async () => { throw new Error("reply lost"); } });
+  await withPrintDispatch(async () => {
+    await assert.rejects(after.printer.print3mf(host, serial, token, { projectName: "job", filePath: file, bambuModel: "p1s", useAMS: false }), error => {
+      assert.equal(printOutcome(error), "unknown"); return true;
+    });
+  });
+});
+
+test("counterpart dispatch truth brackets the raw G-code transport", async (t) => {
+  const { withPrintDispatch, printOutcome } = await import("../../dist/refusal.js");
+  const file = await fixture(t, { raw: true });
+  for (const phase of ["preflight", "dispatch"]) {
+    const { printer, events } = isolatedPrinter();
+    if (phase === "preflight") printer.getSafetyStatus = async () => { throw new Error("fresh report unavailable"); };
+    else printer.getPrinter = async () => ({ publish: async () => { throw new Error("reply lost"); } });
+    await withPrintDispatch(async () => {
+      await assert.rejects(printer.uploadFile(host, "8883", apiKey, file, "job.gcode", true, { bambuModel: "p1s" }), error => {
+        assert.equal(printOutcome(error), phase === "preflight" ? "not-sent" : "unknown");
+        return true;
+      });
+    });
+    if (phase === "preflight") assertNoDispatch(events);
+    else assert.equal(events.filter(event => event.action === "upload").length, 1);
+  }
+});
