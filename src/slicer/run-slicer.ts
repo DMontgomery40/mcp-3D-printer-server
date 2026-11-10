@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { SlicerError, tailText } from "./slicer-error.js";
+import { stalledSlicerError, watchForStall } from "./slicer-launch.js";
 
 /** Bytes of each stream kept for diagnostics; verbose slicers are never truncated into a failure. */
 const OUTPUT_TAIL_BYTES = 64 * 1024;
@@ -13,6 +14,10 @@ export interface SlicerRunOptions {
   isCancelled?: () => boolean;
   /** The slicer's own reason for a nonzero exit, read before its output directory is removed. */
   failureReason?: (exitCode: number | null) => string | undefined;
+  /** The slicer's environment (src/slicer/slicer-launch.ts); this server's when omitted. */
+  env?: NodeJS.ProcessEnv;
+  /** Stop and report the slicer after this many seconds without CPU or output (0 or omitted: never). */
+  stallSeconds?: number;
 }
 
 export interface SlicerRunResult {
@@ -53,21 +58,23 @@ function describeOutput(stdoutTail: string, stderrTail: string): string {
  * cancellation rejects with a SlicerError that includes the evidence.
  */
 export function runSlicerProcess(options: SlicerRunOptions): Promise<SlicerRunResult> {
-  const { command, args, timeoutMs, slicerType, isCancelled, failureReason } = options;
+  const { command, args, timeoutMs, slicerType, isCancelled, failureReason, env, stallSeconds = 0 } = options;
   return new Promise((resolve, reject) => {
     const stdout = new TailBuffer();
     const stderr = new TailBuffer();
     let settled = false;
     let timedOut = false;
     let cancelled = false;
+    let stalled = false;
 
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], ...(env ? { env } : {}) });
     child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
 
     const cleanup = () => {
       clearTimeout(timeoutHandle);
       clearInterval(cancelHandle);
+      stopStallWatch();
     };
     const settle = (callback: () => void) => {
       if (settled) return;
@@ -86,6 +93,12 @@ export function runSlicerProcess(options: SlicerRunOptions): Promise<SlicerRunRe
         try { child.kill("SIGKILL"); } catch { /* reported through close/error */ }
       }
     }, 500);
+    // A slicer waiting on a dialog (no CPU, no output) is stopped and reported as such, not at the long timeout.
+    const stopStallWatch = watchForStall(child, stallSeconds, () => {
+      stalled = true;
+      console.error(`${slicerType} used no CPU and wrote nothing for ${stallSeconds} s; stopping it as waiting on a dialog.`);
+      try { child.kill("SIGKILL"); } catch { /* reported through close/error */ }
+    });
 
     child.on("error", (error) => {
       settle(() => reject(new SlicerError(
@@ -98,6 +111,11 @@ export function runSlicerProcess(options: SlicerRunOptions): Promise<SlicerRunRe
     child.on("close", (code, signal) => {
       const stdoutTail = stdout.text();
       const stderrTail = stderr.text();
+      // A slicer that finished cleanly as it was stopped finished; only a stopped one is reported as stalled.
+      if (stalled && !timedOut && !cancelled && (code !== 0 || signal)) {
+        settle(() => reject(stalledSlicerError(slicerType, stallSeconds)));
+        return;
+      }
       if (!timedOut && !cancelled && code === 0 && !signal) {
         settle(() => resolve({ stdoutTail, stderrTail }));
         return;

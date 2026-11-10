@@ -22,6 +22,7 @@ import {
   type BambuSliceOptions,
 } from '../slicer/bambu-cli.js';
 import { runSlicerProcess } from '../slicer/run-slicer.js';
+import { prepareSlicerLaunch } from '../slicer/slicer-launch.js';
 import { keepSlice, restoreSlice, sliceCacheKey } from '../slicer/slice-cache.js';
 import { SlicerError, asPreparationError } from '../slicer/slicer-error.js';
 import { customGcodesWithPauses, layerTops, machinePauseGcode, pausedLayers, readPlateGcode, readProjectCustomGcodes } from '../slicer/layer-pauses.js';
@@ -1425,6 +1426,9 @@ export class STLManipulator extends EventEmitter {
       }
 
       const cliOutputDir = bambuOutputDir;
+      // A Bambu-compatible CLI runs in a home folder of its own (macOS), and one that waits on a dialog is stopped
+      // and reported instead of waiting for the timeout (src/slicer/slicer-launch.ts).
+      const launch = restored ? undefined : await prepareSlicerLaunch(slicerType, path.resolve(this.tempDir));
       if (!restored) try {
         await runSlicerProcess({
           command: slicerPath,
@@ -1433,12 +1437,16 @@ export class STLManipulator extends EventEmitter {
           slicerType,
           isCancelled: () => !this.activeOperations.get(operationId),
           failureReason: cliOutputDir ? (exitCode) => bambuCliFailureReason(exitCode, cliOutputDir) : undefined,
+          env: launch?.env,
+          stallSeconds: launch?.stallSeconds ?? 0,
         });
       } catch (error) {
         // Keep the CLI's own result.json before the output directory is removed.
         const failedResult = cliOutputDir ? readCliResult(cliOutputDir) : undefined;
         if (failedResult && error instanceof SlicerError) throw new SlicerError(error.phase, error.detail, error.details, failedResult);
         throw error;
+      } finally {
+        await launch?.cleanup();
       }
       const slicerResult = cliOutputDir ? readCliResult(cliOutputDir) : undefined;
       if (cliOutputDir && !slicerResult) {

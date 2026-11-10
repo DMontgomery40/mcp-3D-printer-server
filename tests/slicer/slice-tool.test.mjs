@@ -88,6 +88,11 @@ if (machine.from === "system" || machine.include || !machine.printer_settings_id
   process.exit(239);
 }
 const out = path.join(args[args.indexOf("--outputdir") + 1], args[args.indexOf("--export-3mf") + 1]);
+fs.writeFileSync(${JSON.stringify(path.join(root, "launch.json"))}, JSON.stringify({ home: process.env.CFFIXED_USER_HOME ?? null, homeExists: !!process.env.CFFIXED_USER_HOME && fs.existsSync(process.env.CFFIXED_USER_HOME) }));
+// "stall": Bambu Studio behind AppKit's modal "reopen windows?" alert logs once and then waits at 0% CPU.
+if (mode === "stall") { console.log("[trace]   Initializing StaticPrintConfigs"); setInterval(() => {}, 1 << 30); return; }
+// "busy": computes silently for 2.5 s, then writes its output.
+if (mode === "busy") for (const end = Date.now() + 2500; Date.now() < end;) Math.sqrt(Math.random());
 if (mode === "exit239") { console.log("[error] plate 1: Nothing to be sliced"); console.error("fatal: slicing failed"); process.exit(239); }
 if (mode === "segv") process.kill(process.pid, "SIGSEGV");
 // Linux CLIs record handled errors in result.json; the process exits with the code's low byte.
@@ -735,6 +740,74 @@ test("machine settings inside a template or process profile never replace the se
     }
   }
   assert.deepEqual(JSON.parse(await fs.readFile(standaloneProcess, "utf8")).machine_start_gcode, "; FOREIGN STANDALONE", "the caller's file is not modified");
+});
+
+// A slicer that waits on a dialog (no CPU, no output) is stopped after SLICER_STALL_SECONDS and reported with the stable
+// code slicer-waiting-on-dialog, not after SLICER_TIMEOUT_MS, and never as the slicer's verdict on the model.
+test("slice_stl stops a slicer that waits on a dialog and reports slicer-waiting-on-dialog", { skip: process.platform !== "darwin" && "the stall check runs on macOS only" }, async (t) => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install, { SLICER_STALL_SECONDS: "1" });
+  await install.setMode("stall");
+  const started = Date.now();
+  const stalled = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s" });
+  assert.equal(stalled.isError, true);
+  assert.equal(stalled.structuredContent.code, "slicer-waiting-on-dialog");
+  assert.equal(stalled.structuredContent.slicer_report, undefined, "a stalled slicer gave no verdict on the model");
+  assert.match(text(stalled), /nothing was sent to the printer/i);
+  assert.ok(Date.now() - started < 15_000, `reported in ${Date.now() - started} ms`);
+  // Computing without writing is not a stall.
+  await install.setMode("busy");
+  const busy = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s" });
+  assert.equal(busy.isError, undefined, text(busy));
+});
+
+// On macOS each Bambu-compatible slice runs with a fresh, empty CFFIXED_USER_HOME of its own under TEMP_DIR (replacing
+// one the server inherited), removed after the slice, so AppKit can't find crash history that raises its alert.
+test("slice_stl gives a Bambu-compatible slicer its own home folder on macOS", async (t) => {
+  const install = await createFakeInstall(t);
+  const inherited = path.join(install.root, "inherited-home");
+  await fs.mkdir(inherited);
+  const { call, tempDir } = await startServer(t, install, { CFFIXED_USER_HOME: inherited });
+  const result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s" });
+  assert.equal(result.isError, undefined, text(result));
+  const launch = JSON.parse(await fs.readFile(path.join(install.root, "launch.json"), "utf8"));
+  if (process.platform !== "darwin") {
+    assert.equal(launch.home, inherited, "only macOS slicers get a home of their own");
+    return;
+  }
+  assert.ok(launch.homeExists, "the slicer's home existed while it ran");
+  assert.ok(launch.home.startsWith(path.resolve(tempDir) + path.sep), launch.home);
+  assert.deepEqual(await fs.readdir(inherited), []);
+  assert.equal(existsSync(launch.home), false, "the home is removed after the slice");
+});
+
+// watchForStall itself, on every platform with ps or /proc: an idle child is reported, a computing one and one that
+// exits are not.
+test("watchForStall reports an idle child, not a computing or finished one", { skip: process.platform === "win32" && "no CPU time to read on Windows" }, async () => {
+  const { spawn } = await import("node:child_process");
+  const { watchForStall } = await import("../../dist/slicer/slicer-launch.js");
+  const run = (script, ms) => new Promise((resolve) => {
+    const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+    let stalled = false;
+    watchForStall(child, 1, () => { stalled = true; child.kill("SIGKILL"); });
+    const timer = setTimeout(() => child.kill("SIGKILL"), ms);
+    child.on("exit", () => { clearTimeout(timer); resolve(stalled); });
+  });
+  assert.equal(await run('console.log("started"); setInterval(() => {}, 1 << 30)', 10_000), true, "idle after starting");
+  assert.equal(await run("for (const end = Date.now() + 2500; Date.now() < end;) Math.sqrt(Math.random())", 10_000), false, "computing");
+  assert.equal(await run('console.log("done")', 10_000), false, "finished");
+});
+
+test("slicer stall settings and CPU times parse as ps writes them", async () => {
+  const { parseCpuTime, slicerStallSeconds } = await import("../../dist/slicer/slicer-launch.js");
+  assert.equal(parseCpuTime("   0:03.11\n"), 3.11);
+  assert.equal(parseCpuTime("61:02.50"), 3662.5);
+  assert.equal(parseCpuTime("00:01:02"), 62);
+  assert.equal(parseCpuTime("2-01:00:00"), 2 * 86400 + 3600);
+  assert.equal(parseCpuTime(""), undefined);
+  assert.equal(slicerStallSeconds(undefined), 20);
+  assert.equal(slicerStallSeconds("0"), 0);
+  assert.equal(slicerStallSeconds("-1"), 20);
 });
 
 test("PrusaSlicer, Slic3r, and Cura keep their G-code paths and report failures", async (t) => {

@@ -47,6 +47,7 @@ async function bambuBoundaries(t, { status = {}, slice, afterPublish } = {}) {
     import { BambuImplementation } from ${href("dist/printers/bambu.js")};
     import { STLManipulator } from ${href("dist/stl/stl-manipulator.js")};
     import { SlicerError } from ${href("dist/slicer/slicer-error.js")};
+    import { SlicerStalled } from ${href("dist/refusal.js")};
     const log = (event) => fs.appendFileSync(${JSON.stringify(eventsPath)}, JSON.stringify(event) + "\\n");
     BambuImplementation.prototype.ftpUpload = async (_host, _token, file, remote) => log({ action: "upload", remote, bytes: fs.readFileSync(file).toString("base64") });
     BambuImplementation.prototype.ftpDownload = async () => { throw new Error("Remote artifact unavailable for inspection"); };
@@ -78,6 +79,7 @@ async function bambuBoundaries(t, { status = {}, slice, afterPublish } = {}) {
       log({ action: "slice", input, bambuOptions: rest[6] ?? null });
       ${slice === "fail" ? 'throw new Error("Simulated slicer failure");'
         : slice === "slicer-error" ? 'throw new SlicerError("execution", "BambuStudio exited with code 206", { slicerType: "bambustudio", exitCode: 206 });'
+        : slice === "stalled" ? 'throw new SlicerStalled("Bambu Studio stopped slicing; nothing was sent to the printer.");'
         : `return ${JSON.stringify(slice ?? "")} || input;`}
     };
   `);
@@ -258,6 +260,24 @@ test("print_3mf auto-slice failures keep slicer advice instead of printer-connec
   assert.equal(result.structuredContent?.retryable, false);
   assert.match(result.structuredContent?.suggestion ?? "", /slicer process failed/i);
   assert.doesNotMatch(result.structuredContent?.suggestion ?? "", /connectivity|credentials/i);
+  assert.deepEqual((await events()).filter(({ action }) => action !== "slice"), [], "nothing may reach the printer");
+});
+
+// A slicer that waits on a dialog during print_3mf's auto-slice stopped before anything reached the printer, so the
+// error must say structuredContent.printOutcome "not-sent" (mcp-3D-printer-server #87): Counterpart reads that field,
+// never the slicer-waiting-on-dialog code (#93). Skipped until printOutcome is on main; whichever of #87 and #93 merges
+// second makes it run, and it must pass then.
+const { printOutcome: printOutcomeOnMain } = await import(pathToFileURL(path.join(root, "dist/refusal.js")).href);
+test("print_3mf reports a slicer that waits on a dialog as not sent", {
+  skip: typeof printOutcomeOnMain !== "function" && "structuredContent.printOutcome is not on main yet (mcp-3D-printer-server #87)",
+}, async (t) => {
+  const file = await bambuProject(t, { plateEntry: null });
+  const { preload, events } = await bambuBoundaries(t, { slice: "stalled" });
+  const client = await server(t, bambuEnv, { preload, elicitation: accept });
+  const result = await client.callTool({ name: "print_3mf", arguments: { three_mf_path: file } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent?.code, "slicer-waiting-on-dialog");
+  assert.equal(result.structuredContent?.printOutcome, "not-sent", JSON.stringify(result.structuredContent));
   assert.deepEqual((await events()).filter(({ action }) => action !== "slice"), [], "nothing may reach the printer");
 });
 

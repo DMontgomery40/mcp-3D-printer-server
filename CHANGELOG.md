@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.65] – 2026-11-10
+
+### Fixed
+
+- Bambu Studio no longer hangs until `SLICER_TIMEOUT_MS` on a Mac where it once crashed. OrcaSlicer and FULU's OrcaSlicer-bambulab launch the same way and get the same change. The CLI opens a hidden window to draw plate thumbnails, which starts AppKit. When the person's crash history (`~/Library/Application Support/CrashReporter/BambuStudio_<hardware UUID>.plist`) dates a crash inside the app's last window restoration, AppKit raises its modal "reopen windows?" alert. The slicer then waits at 0% CPU, and every slice waited with it; stopping it never answered the alert. On macOS each Bambu-compatible slice now runs with a fresh, empty `CFFIXED_USER_HOME` of its own under `TEMP_DIR`, removed afterwards, so AppKit finds no crash history. The CLI reads its profiles from its own bundle or from the files this server passes, and sets no data folder without `--datadir` (Bambu Studio 02.08.02.61 `src/BambuStudio.cpp`), so slices are unchanged. With Bambu Studio 02.08.02.61 on macOS 27.2, `plate_1.gcode` was byte-identical between current main launched in a fresh private home and this build, for the same model (57m 47s, 40.78 g). Real-home launches were not compared (they can raise the alert). That the private home changes nothing else rests on the source above and on what was observed: AppKit created only `Library/Application Support/CrashReporter` in it, while preferences (cfprefsd ignores `CFFIXED_USER_HOME`), `HOME`, `TMPDIR` and the saved window state stay the person's own. A home seeded with that crash history hung current main at 0% CPU in `NSAlert runModal` and sliced on this build in 1.6 s. OrcaSlicer's results were not compared: the installed OrcaSlicer 2.4.0-dev crashed on every slice, before and after. Linux and Windows launches are unchanged.
+- `npm test` runs the suite through `scripts/test-with-temp-guard.mjs` again, as 1.2.61 introduced it, so a suite that leaves temporary directories behind fails. A merge of the version files in 1.2.62 put back the old `test` script, so 1.2.62 to 1.2.64 shipped without the guard in the test script. The published code was unaffected: the package doesn't run its test script, and the guard was never part of the package. Test infrastructure only; checked by running `npm test` through the guard.
+
+### Added
+
+- On macOS, a Bambu-compatible slicer that uses no CPU and writes nothing for `SLICER_STALL_SECONDS` (default 20; 0 turns it off) is stopped and reported with the stable `structuredContent.code` `slicer-waiting-on-dialog`, instead of after `SLICER_TIMEOUT_MS`. The message says to open the slicer once, answer what it shows and slice again; nothing is sent to the printer. It carries no `slicer_report`, because it is no verdict on the model.
+
 ## [1.2.64] – 2026-11-10
 
 ### Added
