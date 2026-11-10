@@ -98,7 +98,13 @@
         "src/studio-print-options.ts",
         "dist/upload-progress.js",
         "dist/upload-progress.d.ts",
-        "src/upload-progress.ts"
+        "src/upload-progress.ts",
+        "dist/cad-engine.js",
+        "dist/cad-engine.d.ts",
+        "dist/cad",
+        "src/cad-engine.ts",
+        "src/cad",
+        "docs/CAD.md"
     ],
     "keywords": [
         "mcp",
