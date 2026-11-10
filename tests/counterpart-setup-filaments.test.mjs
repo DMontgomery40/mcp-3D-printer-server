@@ -138,6 +138,8 @@ test("setup fields: every PRINTER_TYPE with the .env names this server reads, an
   assert.equal(result.model, "p1s");
   assert.deepEqual(result.kinds.map(kind => kind.kind), ["bambu", "octoprint", "klipper", "prusa", "creality", "duet", "repetier"]);
   for (const kind of result.kinds) assert.equal(kind.env.PRINTER_TYPE, kind.kind, `${kind.kind} sets PRINTER_TYPE`);
+  // No setup check asks this server for a picture: no field writes a camera it reads (a webcam is found once it runs).
+  assert.deepEqual(result.kinds.map(kind => kind.cameraSnapshot), result.kinds.map(() => false));
   assert.deepEqual(genericSetupFields({ server: { name: "m", version: "9" }, models, defaultKind: "octoprint" }).kinds.filter(kind => kind.default).map(kind => kind.kind), ["octoprint"],
     "the kind this server runs with no PRINTER_TYPE is declared, so a client can recognise such a .env");
   const bambu = result.kinds[0];

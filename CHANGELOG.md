@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.63] – 2026-11-10
+
+### Added
+
+- `counterpart_setup_fields` says for each printer kind whether `camera_snapshot` reads its camera with only the settings the fields write (`cameraSnapshot`), as bambu-printer-mcp does. It is `false` for every kind here. For Bambu, `camera_snapshot` on this server reads only a `PRINTER_CAMERA_SNAPSHOT_URL`, which no setup field writes; bambu-printer-mcp reads the printer's own camera. For the other kinds a webcam is an add-on found through the printer's own settings once the server runs (`counterpart_printer_info` reports it), not from these fields. A client such as Counterpart can then ask for a camera picture in its setup check only where the MCP says it can, instead of deciding by the printer type's name. Every kind declares it; a client reads it missing as an older server. Checked with the setup-fields tests; no printer contacted.
+
 ## [1.2.62] – 2026-11-10
 
 ### Fixed
