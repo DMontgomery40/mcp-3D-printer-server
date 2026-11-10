@@ -143,11 +143,11 @@ export function isCancelledX2DJob(raw: Record<string, any>, model: string): bool
     finiteNumber(raw.print_error) === 0 && finiteNumber(raw.fail_reason) === 0x0300400c &&
     [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
 }
-/** Bambu Studio 2.8.2.61 marks FAILED as finished. Limit P1S recovery to
+/** Bambu Studio 2.8.2.61 marks FAILED as finished. Limit P1S/A1 recovery to
  * a named prior job explicitly reporting idle, no print error and no HMS.
  * Dispatch rechecks the observed job identity. */
-export function isFinishedP1SJob(raw: Record<string, any>, model: string): boolean {
-  return normalizeModel(model) === "p1s" && raw.gcode_state === "FAILED" && raw.print_type === "idle" &&
+export function isFinishedIdleJob(raw: Record<string, any>, model: string): boolean {
+  return ["p1s", "a1"].includes(normalizeModel(model) ?? "") && raw.gcode_state === "FAILED" && raw.print_type === "idle" &&
     finiteNumber(raw.print_error) === 0 && Array.isArray(raw.hms) && raw.hms.length === 0 &&
     [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
 }
@@ -341,7 +341,7 @@ export function isPauseNotice(raw: Record<string, any>, requireIdle: boolean): b
 }
 function validateErrors(raw: Record<string,any>, requireIdle: boolean, serial: string, model: string) {
   const state = typeof raw.gcode_state === "string" ? raw.gcode_state.toUpperCase() : "UNKNOWN";
-  const terminal = isCancelledX2DJob(raw, model) || isFinishedP1SJob(raw, model);
+  const terminal = isCancelledX2DJob(raw, model) || isFinishedIdleJob(raw, model);
   if (requireIdle && !["IDLE","FINISH"].includes(state) && !terminal) throw new PrinterRefusal("printer-not-ready", `Printer state ${state} is not safely idle.`);
   if (!requireIdle && !["IDLE","FINISH","RUNNING","PAUSE"].includes(state) && !terminal) throw new Error(`Printer state ${state} is unknown or failed.`);
   if (finiteNumber(raw.print_error) !== 0 && !isPauseNotice(raw, requireIdle)) throw new Error("Printer reports a print error or did not report its error state.");
