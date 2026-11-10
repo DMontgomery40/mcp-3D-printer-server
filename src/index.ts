@@ -4163,13 +4163,17 @@ class ThreeDPrinterMCPServer {
     if (this.httpRuntime) {
       await this.httpRuntime.transport.close();
       await new Promise<void>((resolve, reject) => {
-        this.httpRuntime?.httpServer.close((error) => {
+        const httpServer = this.httpRuntime?.httpServer;
+        httpServer?.close((error) => {
           if (error) {
             reject(error);
             return;
           }
           resolve();
         });
+        // Node 18's close() waits for clients' keep-alive sockets (Node 19+ closes idle ones itself), so a server
+        // with a connected client never finished a SIGTERM/SIGINT shutdown, and its exit cleanup never ran.
+        httpServer?.closeAllConnections();
       });
       this.httpRuntime = undefined;
     } else {
