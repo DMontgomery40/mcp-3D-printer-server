@@ -210,7 +210,9 @@ test("Blender validates large binary STLs in bounded memory and checks the final
   fs.writeSync(fd, header);
   fs.ftruncateSync(fd, bytes); // Sparse, finite triangles: no large test allocation.
   fs.closeSync(fd);
-  const request = { stl_path: input, operations: ["decimate:0.5"] };
+  // This is a 256 MiB geometry/heap test, not a deadline test. Allow CPU contention
+  // without changing its mesh size, heap ceiling, or final-triangle assertions.
+  const request = { stl_path: input, operations: ["decimate:0.5"], timeout_ms: 10000 };
   const preview = await peer.call("blender_mcp_edit_model", request);
   assert.equal(preview.isError, undefined, errorText(preview));
   const invalid = Buffer.alloc(4);

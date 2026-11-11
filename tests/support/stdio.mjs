@@ -3,6 +3,15 @@
 import {StdioClientTransport as SDKTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 
 export class StdioClientTransport extends SDKTransport {
+  constructor(server) {
+    // The SDK's default allowlist omits temp variables. Keep servers under the guard
+    // even when a fixture deliberately supplies a minimal environment.
+    super({...server, env: {
+      TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP,
+      ...server.env,
+    }});
+  }
+
   async start() {
     const onclose = this.onclose;
     let closed;

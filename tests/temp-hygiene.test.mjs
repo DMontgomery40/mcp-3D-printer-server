@@ -57,12 +57,13 @@ test('stdio teardown waits for actual process close, including repeated closes',
   const transport = new StdioClientTransport({command: process.execPath, args: ['-e', `
     process.stdin.resume();
     process.on('SIGTERM', () => setTimeout(() => process.exit(0), 80));
-    console.log(JSON.stringify({jsonrpc:'2.0',method:'ready'}));
+    console.log(JSON.stringify({jsonrpc:'2.0',method:'ready',params:{tmp:require('node:os').tmpdir()}}));
   `], stderr: 'pipe'});
   const ready = new Promise(resolve => { transport.onmessage = resolve; });
   t.after(() => transport.close());
   await transport.start();
-  await ready;
+  const notification = await ready;
+  assert.equal(notification.params.tmp, tmpdir(), 'minimal-env servers must stay inside guarded TMPDIR');
   const pid = transport.pid;
   t.mock.method(SDKTransport.prototype, 'close', async function () { process.kill(pid, 'SIGTERM'); });
   const first = transport.close();

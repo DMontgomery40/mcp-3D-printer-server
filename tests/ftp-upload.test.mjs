@@ -77,29 +77,29 @@ async function jobFile(t) {
 
 test("uploadFile waits out a printer pausing mid-file longer than the command timeout, then restores it", async t => {
   // 2026-11-06: an 18.4 MB plate stopped at 13.3 MB for over the 15 s command timeout.
-  const { client, received } = await slowPrinter(t, { pauseAt: SIZE * 0.7, pauseMs: TIMEOUT_MS * 2 });
   const { file, bytes } = await jobFile(t);
+  const { client, received } = await slowPrinter(t, { pauseAt: SIZE * 0.7, pauseMs: TIMEOUT_MS * 2 });
   await uploadFile(client, file, "/cache/job.3mf", { stallMs: TIMEOUT_MS * 4 });
   assert.ok(received[0].equals(bytes), "the printer receives the exact bytes");
   assert.equal(client.ftp.timeout, TIMEOUT_MS, "other commands keep the command timeout");
 });
 
 test("with only the command timeout, the same mid-file pause is reported as a stall", async t => {
-  const { client } = await slowPrinter(t, { pauseAt: SIZE * 0.7, pauseMs: TIMEOUT_MS * 2 });
   const { file } = await jobFile(t);
+  const { client } = await slowPrinter(t, { pauseAt: SIZE * 0.7, pauseMs: TIMEOUT_MS * 2 });
   await assert.rejects(uploadFile(client, file, "/cache/job.3mf", { stallMs: 0 }), /Timeout \(data socket\)/);
   assert.equal(client.ftp.timeout, TIMEOUT_MS);
 });
 
 test("uploadFile still times out when the printer stops taking data", async t => {
-  const { client } = await slowPrinter(t, { stall: true });
   const { file } = await jobFile(t);
+  const { client } = await slowPrinter(t, { stall: true });
   await assert.rejects(uploadFile(client, file, "/cache/job.3mf", { stallMs: TIMEOUT_MS * 2 }), /Timeout \(data socket\)/);
 });
 
 test("uploadFile reports the bytes the data connection has sent, ending at the file's size", async t => {
-  const { client } = await slowPrinter(t);
   const { file, bytes } = await jobFile(t);
+  const { client } = await slowPrinter(t);
   const seen = [];
   await uploadFile(client, file, "/cache/job.3mf", { onProgress: (sent, total) => seen.push([sent, total]) });
   assert.deepEqual(seen[0], [0, bytes.length]);
