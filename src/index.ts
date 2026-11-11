@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import {FLIGHT_RECORD_PROPERTIES,FLIGHT_RECORD_DESCRIPTION,FLIGHT_RECORD_OUTPUT_SCHEMA,flightReadOptions} from "./counterpart/flight-tools.js";
 
 // Must stay first: Node.js 18 needs the global crypto before any SDK transport code runs.
 import "./ensure-web-crypto.js";
+import {FLIGHT_RECORD_PROPERTIES,FLIGHT_RECORD_DESCRIPTION,FLIGHT_RECORD_OUTPUT_SCHEMA,flightReadOptions,flightRecordResult} from "./counterpart/flight-tools.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -1348,7 +1348,7 @@ class ThreeDPrinterMCPServer {
           assertActive();
           validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
         },
-        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) { assertActive(); markPrintCommandSent(); } },
+        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) { assertActive(); bambu.recordFlightDispatch(devIp,devId,remoteFileName,requirements,resumeFile); markPrintCommandSent(); } },
         onDispatched: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) retainForDispatchedUpload(); },
       };
       let jobUpdates: BridgeJobUpdate[] = [];
@@ -2794,7 +2794,7 @@ class ThreeDPrinterMCPServer {
             return structured(await this.counterpart.printerInfo(target));
 
           case "counterpart_print_record":
-            return structured(this.counterpart.printRecord(target,flightReadOptions(args)));
+            return flightRecordResult(this.counterpart.printRecord(target,flightReadOptions(args)));
 
           case "counterpart_print_progress":
             return structured(await this.counterpart.printProgress(target));

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -310,5 +311,142 @@ test("contradictory calibrated heights remain unknown and missing saved images c
   assert.equal(
     store.read("p", { measurements: measured([4, 24, 48]) }).physical.status,
     "unknown",
+  );
+});
+
+test("a matching initial IDLE report cannot freeze the real active and FINISH sequence", (t) => {
+  const { store } = setup(t);
+  store.begin("p", dispatch);
+  for (const state of ["IDLE", "RUNNING", "FINISH"])
+    store.observe("p", report(1, { gcode_state: state }));
+  assert.deepEqual(
+    store.read("p").record.reports.map((r) => r.changes.gcode_state),
+    ["IDLE", "RUNNING", "FINISH"],
+  );
+});
+test("camera acquisition crossing a layer or terminal transition cannot retain the old layer binding", async (t) => {
+  for (const state of ["RUNNING", "FINISH"]) {
+    const { store } = setup(t);
+    store.begin("p", {
+      ...dispatch,
+      expected: {
+        heightMm: 80,
+        layers: [
+          { layer: 1, zMm: 4 },
+          { layer: 2, zMm: 8 },
+        ],
+      },
+    });
+    store.observe("p", report(1));
+    let resolve;
+    const acquired = new Promise((r) => (resolve = r));
+    const work = store.sample("p", () => acquired);
+    store.observe("p", report(2, { gcode_state: state }));
+    resolve({ base64: Buffer.from([255, 216, 255, 217]).toString("base64") });
+    await work;
+    assert.equal(store.read("p").record.frames[0].status, "unavailable");
+  }
+});
+test("two recorder instances sharing retention cannot resurrect the other instance cached pruned job", (t) => {
+  const { store, dir } = setup(t, { maxJobs: 1 });
+  store.begin("old", dispatch);
+  const second = new FlightRecords({ dir, maxJobs: 1 });
+  second.begin("new", { ...dispatch, jobName: "new" });
+  store.observe("old", report(1));
+  assert.equal(
+    fs.readdirSync(dir).filter((f) => f.endsWith(".json")).length,
+    1,
+  );
+  assert.equal(store.read("old").status, "unavailable");
+});
+test("raw hexadecimal diagnostic codes survive without losing HMS/error/fail_reason evidence", (t) => {
+  const { store } = setup(t);
+  store.begin("p", dispatch);
+  store.observe(
+    "p",
+    report(1, {
+      print_error: "0x03008011",
+      fail_reason: "0300400C",
+      hms: [{ attr: "0x07000000", code: "0x00030001" }],
+    }),
+  );
+  const raw = store.read("p").record.latest;
+  assert.equal(raw.print_error, "0x03008011");
+  assert.equal(raw.fail_reason, "0300400C");
+  assert.equal(raw.hms[0].attr, "0x07000000");
+  assert.equal(raw.hms[0].code, "0x00030001");
+});
+
+test("expected geometry preserves explicit sliced layer numbers across an empty extrusion layer", () => {
+  const g = geometryFromGcode(
+    "M83\n; Z_HEIGHT: 0.2\n; layer num/total_layer_count: 1/3\nG1 X1 Y1\nG1 X2 Y2 E1\n; Z_HEIGHT: 0.4\n; layer num/total_layer_count: 2/3\nG1 X3 Y3\n; Z_HEIGHT: 0.6\n; layer num/total_layer_count: 3/3\nG1 X4 Y4 E1",
+  );
+  assert.deepEqual(
+    g.layers.map((l) => [l.layer, l.zMm]),
+    [
+      [1, 0.2],
+      [3, 0.6],
+    ],
+  );
+});
+
+test("a second live MCP recorder cannot overwrite newer observations from the dispatch owner", (t) => {
+  const { store, dir } = setup(t);
+  store.begin("p", dispatch);
+  store.observe("p", report(1));
+  const other = new FlightRecords({ dir });
+  other.read("p");
+  store.observe("p", report(2, { print_error: 123 }));
+  other.observe("p", report(1));
+  const persisted = new FlightRecords({ dir }).read("p");
+  assert.equal(persisted.record.latest.layer_num, 2);
+  assert.equal(persisted.record.latest.print_error, 123);
+});
+
+test("fresh observations continue the durable sequence after the dispatch process exits", (t) => {
+  const { dir } = setup(t);
+  const moduleUrl = new URL(
+    "../dist/counterpart/flight-record.js",
+    import.meta.url,
+  ).href;
+  const code = `import {FlightRecords} from ${JSON.stringify(moduleUrl)};const s=new FlightRecords({dir:${JSON.stringify(dir)}});s.begin('p',${JSON.stringify(dispatch)});s.observe('p',${JSON.stringify(report(1, { print_error: 123 }))});`;
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", code],
+    { encoding: "utf8" },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const resumed = new FlightRecords({ dir });
+  resumed.observe("p", report(2, { print_error: 0 }));
+  const record = resumed.read("p").record;
+  assert.equal(record.reports.length, 2);
+  assert.equal(record.reports[0].changes.print_error, 123);
+  assert.equal(record.latest.layer_num, 2);
+});
+
+test("the read-only index discovers older job IDs without knowing their UUIDs", (t) => {
+  const { store } = setup(t);
+  const first = store.begin("p", { ...dispatch, jobName: "older" });
+  store.begin("p", { ...dispatch, jobName: "newer" });
+  const view = store.read("p", { listJobs: true });
+  assert.equal(view.jobs.length, 2);
+  assert.ok(view.jobs.some((j) => j.id === first));
+  assert.equal(store.read("p", { jobId: first }).record.id, first);
+  assert.ok(view.jobs.every((j) => j.sha256 === hash));
+});
+
+test("corrupt older records cannot prevent the total retained-job cap", (t) => {
+  const { store, dir } = setup(t, { maxJobs: 1 });
+  store.begin("p", dispatch);
+  const old = path.join(
+    dir,
+    fs.readdirSync(dir).find((name) => name.endsWith(".json")),
+  );
+  fs.writeFileSync(old, "{corrupt");
+  fs.utimesSync(old, 0, 0);
+  store.begin("p", { ...dispatch, jobName: "next" });
+  assert.equal(
+    fs.readdirSync(dir).filter((name) => name.endsWith(".json")).length,
+    1,
   );
 });

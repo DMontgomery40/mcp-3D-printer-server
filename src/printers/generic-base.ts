@@ -409,6 +409,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
   ): Promise<any> {
     const inspection = await inspectGcodeFile(snapshot, { material: options.material });
     assertExpectedPeaks(options.expectedPeaks, { nozzle: inspection.peaks.nozzle, bed: inspection.peaks.bed });
+    const flight={sha256:inspection.sha256,jobName:remoteName,materials:inspection.materials,expected:await geometryFromFile(snapshot)};
     const initial = await this.readPrinterState(host, port, apiKey);
     this.assertReady(initial, "print");
     assertActive();
@@ -426,6 +427,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
       peakTemperatures: inspection.peaks,
     };
     if (this.uploadStartsPrint) {
+      this.flightRecords.begin(this.operationKey(host,port),flight);
       markPrintCommandSent();
       const response = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, true);
       // A stop sent while the upload was in flight reached the printer before
@@ -440,7 +442,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
         throw new Error(`${this.printerLabel} stored ${remoteName} but reports that it did not start printing it.`);
       }
       this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
-    this.flightRecords.begin(this.operationKey(host,port),{sha256:inspection.sha256,jobName:remoteName,materials:inspection.materials,expected:await geometryFromFile(snapshot)});
+      this.flightRecords.accept(this.operationKey(host,port),remoteName);
       return { ...summary, response };
     }
     const upload = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, false);
@@ -451,10 +453,11 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     const dispatch = await this.readPrinterState(host, port, apiKey);
     this.assertReady(dispatch, "print");
     assertActive();
+    this.flightRecords.begin(this.operationKey(host,port),flight);
     markPrintCommandSent();
     const response = await this.rawStartJob(host, port, apiKey, remoteName);
     this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
-    this.flightRecords.begin(this.operationKey(host,port),{sha256:inspection.sha256,jobName:remoteName,materials:inspection.materials,expected:await geometryFromFile(snapshot)});
+    this.flightRecords.accept(this.operationKey(host,port),remoteName);
     return { ...summary, upload, response };
   }
 }

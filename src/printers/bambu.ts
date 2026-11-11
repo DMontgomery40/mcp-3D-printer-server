@@ -402,12 +402,20 @@ export class BambuImplementation extends PrinterImplementation {
    * put the file on the printer at a path this server has not verified: a
    * resume then re-reads it if it can and otherwise asks a person.
    */
+  /** Record the authorized attempt before a lost reply can hide a potentially running job. */
+  recordFlightDispatch(host:string,serial:string,remotePath:string,requirements:PrinterStateRequirements,file:CheckedFile):void {
+    this.flightRecords.begin(flightKey(host,serial),{sha256:file.sha256,jobName:remotePath,mapping:requirements.amsMapping,materials:file.materials,plate:file.plate,expected:file.expected});
+  }
+
   recordCheckedJob(host: string, serial: string, remotePath: string, requirements: PrinterStateRequirements, file: CheckedFile, uploadedHere = true): void {
     if (!/^[a-f0-9]{64}$/.test(file?.sha256 ?? "")) throw new Error("A started job needs the SHA-256 of its inspected bytes.");
     this.checkedJobs.set(`${host}\n${serial}`, {
       ...structuredClone(file), remotePath, requirements: structuredClone(requirements), seenRunning: false, uploadedHere,
     });
-    this.flightRecords.begin(flightKey(host,serial),{sha256:file.sha256,jobName:remotePath,mapping:requirements.amsMapping,materials:file.materials,plate:file.plate,expected:file.expected});
+    if(!this.flightRecords.accept(flightKey(host,serial),remotePath)){
+      this.recordFlightDispatch(host,serial,remotePath,requirements,file);
+      this.flightRecords.accept(flightKey(host,serial),remotePath);
+    }
   }
 
   /** Retire a record that never started (the dispatch was refused or failed). */
@@ -657,6 +665,7 @@ export class BambuImplementation extends PrinterImplementation {
     };
 
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
+    this.recordFlightDispatch(host,serial,remoteProjectPath,requirements,resumeFile);
     markPrintCommandSent();
     await printer.publish(projectFileCmd);
     this.recordCheckedJob(host, serial, remoteProjectPath, requirements, resumeFile);
@@ -1127,6 +1136,7 @@ export class BambuImplementation extends PrinterImplementation {
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
+    this.recordFlightDispatch(host,serial,remotePath,requirements,resumeFile);
     markPrintCommandSent();
     await publishBambuCommand(printer, "print", "gcode_file", { param: remotePath });
     this.recordCheckedJob(host, serial, remotePath, requirements, resumeFile);

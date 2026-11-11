@@ -141,11 +141,13 @@ test("public counterpart_print_record retrieves a persisted record without any n
   assert.equal(tool.annotations.openWorldHint, false);
   const response = await client.callTool({
     name: "counterpart_print_record",
-    arguments: {},
+    arguments: { list_jobs: true },
   });
   assert.equal(response.isError, undefined, JSON.stringify(response));
   assert.equal(response.structuredContent.record.dispatch.sha256, hash);
   assert.equal(response.structuredContent.physical.status, "unknown");
+  assert.equal(response.structuredContent.jobs.length, 1);
+  assert.equal(response.structuredContent.jobs[0].sha256, hash);
   assert.equal(
     fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim() : "",
     "",
@@ -210,4 +212,85 @@ test("generic dispatch and existing progress reads preserve adapter problems wit
   );
   assert.ok(!JSON.stringify(view).includes("private-host-and-secret"));
   assert.equal(view.record.expected.heightMm, 1);
+});
+
+test("generic lost start response leaves an unconfirmed durable dispatched artifact record", async (t) => {
+  const { KlipperImplementation } = await import("../dist/printers/klipper.js");
+  const dir = fixture(t),
+    implementation = new KlipperImplementation({});
+  Object.defineProperty(implementation, "flightRecords", {
+    value: new FlightRecords({ dir: path.join(dir, "records") }),
+  });
+  implementation.readPrinterState = async () => ({
+    state: "ready",
+    ready: true,
+  });
+  implementation.rawUploadFile = async () => ({
+    result: { item: { path: "lost.gcode", root: "gcodes" } },
+  });
+  implementation.rawStartJob = async () => {
+    throw Error("reply lost after send");
+  };
+  const input = path.join(dir, "lost.gcode");
+  fs.writeFileSync(input, "; filament_type = PLA\nM104 S210\nG1 X1 Y1 E1");
+  await assert.rejects(
+    implementation.uploadFile(
+      "fixture",
+      "7125",
+      "unused",
+      input,
+      "lost.gcode",
+      true,
+      { material: "PLA" },
+    ),
+    /reply lost/,
+  );
+  const persisted = new FlightRecords({ dir: path.join(dir, "records") }).read(
+    implementation.flightRecordKey("fixture", "7125"),
+  );
+  assert.equal(persisted.status, "recorded");
+  assert.equal(persisted.record.dispatch.outcome, "unconfirmed");
+  assert.match(persisted.record.dispatch.sha256, /^[a-f0-9]{64}$/);
+});
+
+test("dispatch authorization keeps durable hash/mapping if the transport response is lost; acceptance reuses the record", (t) => {
+  const dir = fixture(t),
+    bambu = new BambuImplementation({});
+  Object.defineProperty(bambu, "flightRecords", {
+    value: new FlightRecords({ dir }),
+  });
+  const requirements = {
+    model: "p1s",
+    nozzleDiameters: [0.4],
+    materials: ["PLA"],
+    useAMS: true,
+    amsMapping: [0],
+  };
+  bambu.recordFlightDispatch(
+    "fixture",
+    "01PFIXTURE",
+    "checked-lost.3mf",
+    requirements,
+    file,
+  );
+  const pending = new FlightRecords({ dir }).read(
+    flightKey("fixture", "01PFIXTURE"),
+  );
+  assert.equal(pending.record.dispatch.sha256, hash);
+  assert.equal(pending.record.dispatch.outcome, "unconfirmed");
+  bambu.observeReport("fixture", "01PFIXTURE", {
+    subtask_name: "checked-lost",
+    gcode_state: "RUNNING",
+    layer_num: 1,
+  });
+  bambu.recordCheckedJob(
+    "fixture",
+    "01PFIXTURE",
+    "checked-lost.3mf",
+    requirements,
+    file,
+  );
+  const accepted = bambu.flightRecords.read(flightKey("fixture", "01PFIXTURE"));
+  assert.equal(accepted.record.id, pending.record.id);
+  assert.equal(accepted.record.reports.length, 1);
 });
