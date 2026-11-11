@@ -93,6 +93,30 @@ Inside build(), use `load_scan("scan", source_units="m", up_axis="y")` for a dec
 
 Snapshots preserve distinct original filenames so flat OBJ/MTL/texture references can resolve among declared files. Declare every referenced asset; undeclared absolute files and network resources remain blocked. Duplicate original filenames are refused instead of overwriting an input. For subdirectory references, construct the resolver from the declared INPUTS explicitly. Mesh visuals remain available during script work; STL output carries geometry only.
 
+## Captured scan touch-up
+
+`scan_touchup(scan, colour=..., normal=..., edge_mm=0.4)` is available inside build() beside `load_scan`. It takes load_scan's textured mesh (Object Capture's OBJ with its UVs) and the aliases of its declared colour and normal map PNGs (the app's capture converter writes `mesh_basecolor_0.png`, `mesh_normal_0.png` and `mesh_occlusion_0.png` beside `mesh.obj`):
+
+```python
+P = {"card": [3], "eyes": [18, 22], "eye_d": 5.2, "eye_proud": 1.8, "mustache": 19, "mustache_d": 2.2, "seat_mm": 3.0}
+
+def build():
+    t = scan_touchup(load_scan("scan", source_units="m", up_axis="y", ground=False), colour="colour", normal="normal")
+    t.flatten(P["card"], shape="curved", name="Card")
+    for region in P["eyes"]:
+        t.bead(region, P["eye_d"], P["eye_proud"], name="Eye")
+    t.cord(P["mustache"], P["mustache_d"], name="Mustache")
+    t.seat(P["seat_mm"])
+    return t.mesh(relief_gain=1.0)
+```
+
+- Construction cleans and refines: loose pieces under 2% of the largest piece's area go, needle-like spikes are pulled back to their neighbours, holes are closed, and triangles are split until the mean edge is near `edge_mm` (at most 240,000 triangles). New points follow the vertex normals' curved surface, so original vertices never move and the body is not shrunk.
+- `t.regions()` clusters the colour map's L\*a\*b\* values (lightness at half weight), splits clusters into connected pieces and numbers them largest first; 0 is the body. It prints the list to `build.log` and saves `regions.png` (four views, ids written on the regions) in the run folder. Ids are deterministic for the same scan and settings: run regions once, read them, then name them.
+- `flatten` fits a plane or a gentle quadric to the regions and the patches they enclose (printed ink), fading over `feather_mm` inside the rim and capped at `max_move_mm`. `bead` seats a sphere on a round region (its own size by default, 35% proud). `cord` lays a round tube, tapered at its ends, along the region's own centre line (manifold3d hulls of consecutive spheres), so a stitched line stays one curved cord.
+- `t.mesh(relief_gain=1.0)` integrates the tangent-space normal map (OpenGL convention, as Object Capture writes it) with a screened Poisson solve and displaces the surface by the height it measured, away from flattened and placed regions and the seat band. Colour never makes relief. On the crochet potato capture the map held 0.02 mm rms; amplifying it produced crumpled noise rather than stitches, so the default stays at the measured height.
+- `t.texture_relief(height_mm, regions=None, finest_mm=0.4, longest_mm=3.0)` is opt-in, for a textile the photos show in relief that the scan missed. It band-passes the colour texture's luminance at stitch scale (UV-island-normalised blurs, so seams don't bleed and baked shading drops out), normalises it over the textile, and displaces lit loops out and shadowed gaps in by about `height_mm` peak to peak. It skips flattened, beaded and corded regions (fading over 1 mm) and the seat band. It is listed as assumed. Never use it on hard objects, printed graphics or labels. On the potato, 1.0 mm read as crochet next to the photos; 0.6 mm was faint.
+- Speed on that capture (5,426 → 173,568 triangles, a card, two beads, a cord and a seat): about 21 s for the whole cad_run including the engine's checks and six renders.
+
 ## Library licences
 
 The runtime includes the following direct libraries. Transitive dependencies keep their own wheel notices; this is not a claim that every bundled component has the same licence.

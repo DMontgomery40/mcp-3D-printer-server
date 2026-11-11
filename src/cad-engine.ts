@@ -330,6 +330,7 @@ export class CadEngine {
       "requirements.lock",
       "worker.py",
       "geometry.py",
+      "scan_touchup.py",
       "process.ts",
       "storage.ts",
       "serial.ts",
