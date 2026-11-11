@@ -207,6 +207,9 @@ ${r.readonly
       (file) => !(r.inputs ?? []).includes(file),
     ))
       args.push("--ro-bind", file, file);
+    // bubblewrap makes the folders above each bind on its own root tmpfs; left writable (bubblewrap 0.11), a script
+    // could create files beside the job folder (never on the host) and setup's forbidden-write proof fails
+    args.push("--remount-ro", "/");
     args.push("--chdir", r.job);
     return { command: "bwrap", args };
   }

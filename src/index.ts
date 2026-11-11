@@ -23,6 +23,8 @@ import os from "node:os";
 import { CadEngine } from "./cad-engine.js";
 import { CadRefusal } from "./cad/refusal.js";
 import { CAD_TOOLS, cadEnabled } from "./cad/contracts.js";
+import { cadExamplesTool } from "./cad/examples.js";
+import { DESIGN_GUIDANCE_TOOL, designGuidance } from "./design-guidance.js";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
 import { BLENDER_SETUP_OUTPUT_SCHEMA, BlenderAddonSetup, FUSION_ADDIN_REPOSITORY, FUSION_SETUP_OUTPUT_SCHEMA, FusionAddinSetup, defaultSetupSystem, parseAddonHandshake, type BlenderAddonHandshake } from "./design-app-setup.js";
 import { resolveFilamentProfile } from "./slicer/filament-profiles.js";
@@ -563,7 +565,7 @@ const PRINTER_TARGET_PROPERTIES = {
 
 /** Tools that declare an outputSchema: their errors carry no structuredContent, which clients would validate. */
 const OUTPUT_SCHEMA_TOOLS = new Set([
-  "cad_status", "cad_setup", "cad_run", "cad_check_fit",
+  "cad_status", "cad_setup", "cad_run", "cad_check_fit", "cad_examples",
   "counterpart_discover_printers", "counterpart_setup_fields", "counterpart_propose_filaments",
   "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
@@ -2564,6 +2566,7 @@ class ThreeDPrinterMCPServer {
               required: ["stl_path"]
             }
           },
+          DESIGN_GUIDANCE_TOOL,
           ...(CAD_ENABLED ? CAD_TOOLS : []),
           {
             name: "blender_mcp_status",
@@ -3694,6 +3697,12 @@ class ThreeDPrinterMCPServer {
             // The text stays the STL path clients read; structuredContent says whether it was laid flat.
             return { content: [{ type: "text", text: layFlatResult.path }], structuredContent: layFlatResult };
           }
+
+          case "design_guidance":
+            return structured(designGuidance(args ?? {}));
+
+          case "cad_examples":
+            return structured(cadExamplesTool(args ?? {}));
 
           case "cad_status":
             if (args && Object.keys(args).length) throw new Error("cad_status takes no arguments.");

@@ -1,4 +1,5 @@
 import { CAD_REFUSAL_CODES } from "./refusal.js";
+import { cadExampleLines } from "./examples.js";
 /** cad/1 is an optional engine owned by the printer MCP. Readiness comes from cad_status, not the capability. */
 export function cadEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return !["0", "false", "off"].includes(
@@ -11,6 +12,7 @@ export const CAD_CAPABILITY = {
   setup: "cad_setup",
   run: "cad_run",
   checkFit: "cad_check_fit",
+  examples: "cad_examples",
   prompt: "cad_design",
 } as const;
 const storage = {
@@ -110,7 +112,7 @@ export const CAD_TOOLS = [
   {
     name: "cad_run",
     description:
-      "Build parametric CAD headlessly in OS confinement. Read cad_design first: declare literal P = {...} and build() returning a build123d Shape. Supply script OR script_path; parameters overrides saved named values in one call before derived dimensions. Calls wait for the environment’s exclusive execution slot up to their own deadline and report queue_wait_ms. Each call creates a private immutable subfolder under allowed output_dir, never overwriting previous artifacts. The saved .py and .parameters.json are the recovery checkpoint even after cancellation. Returns independently measured geometry, STL/STEP, six renders and a contact sheet; valid geometry is not a physical-fit or motion proof.",
+      "Build parametric CAD headlessly in OS confinement. Read cad_design first: declare literal P = {...} and build() returning a build123d Shape. Supply script OR script_path; parameters overrides saved named values in one call before derived dimensions. Calls wait for the environment’s exclusive execution slot up to their own deadline and report queue_wait_ms. Each call creates a private immutable subfolder under allowed output_dir, never overwriting previous artifacts. The saved .py and .parameters.json are the recovery checkpoint even after cancellation. Returns independently measured geometry, STL/STEP, six orthographic renders, a perspective view and a contact sheet; valid geometry is not a physical-fit or motion proof.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -233,6 +235,48 @@ export const CAD_TOOLS = [
     ),
   },
   {
+    name: "cad_examples",
+    description:
+      "The code engine's cookbook: worked build123d designs from simple to complex, each modelled on the best bought version of the thing, with its concept, published sizes and script. Without arguments, lists them (name, title, the pattern each shows, the product it is modelled on). With name, returns that example's record and full script to adapt. Read-only; starts no process.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        name: {
+          type: "string",
+          description: "An example's name from the list; omit to list them.",
+        },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: output(
+      {
+        examples: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              title: { type: "string" },
+              pattern: { type: "string" },
+              modelled_on: { type: "string" },
+            },
+            required: ["name", "title", "pattern"],
+          },
+        },
+        usage: { type: "string" },
+        name: { type: "string" },
+        title: { type: "string" },
+        pattern: { type: "string" },
+        modelled_on: { type: "string" },
+        published_sizes: { type: "string" },
+        concept: { type: "string" },
+        what_makes_this_good: { type: "string" },
+        script: { type: "string" },
+      },
+      [],
+    ),
+  },
+  {
     name: "cad_check_fit",
     description:
       "Check two allowed watertight manifold STL meshes in millimetres. Applies only the explicit rigid transform to reference: XYZ rotation in degrees about the origin, then translation. Never silently scales a scan. Reports Boolean interference volume and minimum surface gap (zero on contact/intersection), plus a clearance verdict; intentional support contact also has zero gap. Fails rather than guessing for open meshes or excessive triangle workload.",
@@ -307,13 +351,17 @@ export const CAD_DESIGN_PROMPT = {
   description:
     "MCP-owned rules for headless build123d designs and one-call parameter revisions.",
   text: `Use code-CAD for dimensioned functional designs and parameter edits. Build in millimetres with build123d 0.13.0; the MCP owns the Python environment, execution, export, validation and rendering. Check cad_status and use cad_setup with install: true when needed. No Blender, Fusion, network or printer access is available to your script.
-Declare exactly one top-level P = {...} dictionary of JSON-compatible literal named parameters. Put every functional dimension in P; derive geometry from P. Define build() to return a build123d Shape or Compound of disjoint solid parts. Do not put construction or exports in a __main__ block: cad_run calls build() and exports the result. Imports, functions and derived P entries are fine. Parameters are applied to the literal defaults before derived expressions execute. For solid designs without inputs, the script and parameters file alone reconstruct it. For input-dependent designs, declare inputs as an array of {name, path} files: cad_run snapshots only those allowed files, exposes INPUTS[alias] to your script, and saves an inputs manifest. Retain the snapshots too for recovery; subsequent script_path edits reuse them unless inputs is explicitly supplied. No other personal files are readable. For a mesh-only experiment use mode: "mesh" and return a trimesh.Trimesh from build(); it exports and checks STL plus six renders, with step: null and an explicit reason. It does not manufacture a fake parametric STEP or promise scan-cleanup capability.
+Form first: build the product's shape, not a profile pushed up. Before any geometry, write the concept in a few lines: the bought product you are following, its mechanism, the load path, the print orientation and why. build123d has loft (through sections of different shape), sweep (a section along a path or a Helix), revolve, fillet, chamfer, offset and shell as well as extrude; use the one the product's surface calls for: lofted where a hand closes round it, revolved where it turns, swept where it runs like a bent rod or a thread, filleted where two surfaces meet under load. Extrude a flat profile only for something that really is a plate or a lever, or for a print-in-place mechanism or spring that must lie in the layers, and say that reason in the result. Choose the print orientation after the form: split a part, turn it or accept a modest support before flattening its design.
+Worked examples: cad_examples lists this engine's cookbook (each modelled on a bought product, with its concept, published sizes and script) and returns one script by name. When the request works like one of these, read that example first and adapt its pattern, never its sizes:
+${cadExampleLines()}
+What the cookbook taught about this engine: return several bodies as Compound([a, b]); bodies that touch or overlap come back invalid, so leave a real gap (0.2 mm or more) or union them, and check that solid_count equals the bodies you intend (for a print-in-place mechanism that count is the first evidence nothing fused). fillet() often fails on the edges of an outline unioned from many curves, where chamfer() succeeds: fillet simple bodies before the booleans that complicate them. Do not round a sketch by growing and shrinking it with offset(): the solid looks right and its STEP comes back with no solids (the step_solids check fails). A whole Sphere() exports open at its poles: trim them (Sphere(r) & Box(2 * r, 2 * r, 2 * r - 0.1)). One fillet of the same radius over every edge of a box can export open: fillet in two passes with different radii. A model with moving parts takes a pose parameter: the assembled pose to judge it, the print plate to make it.
+Declare exactly one top-level P = {...} dictionary of JSON-compatible literal named parameters. Put every functional dimension in P; derive geometry from P. Define build() to return a build123d Shape or Compound of disjoint solid parts. Do not put construction or exports in a __main__ block: cad_run calls build() and exports the result. Imports, functions and derived P entries are fine. Parameters are applied to the literal defaults before derived expressions execute. For solid designs without inputs, the script and parameters file alone reconstruct it. For input-dependent designs, declare inputs as an array of {name, path} files: cad_run snapshots only those allowed files, exposes INPUTS[alias] to your script, and saves an inputs manifest. Retain the snapshots too for recovery; subsequent script_path edits reuse them unless inputs is explicitly supplied. No other personal files are readable. For a mesh-only experiment use mode: "mesh" and return a trimesh.Trimesh from build(); it exports and checks STL plus the same renders, with step: null and an explicit reason. It does not manufacture a fake parametric STEP or promise scan-cleanup capability.
 Call cad_run with script, output_dir and a plain name. It saves <name>.py and <name>.parameters.json before running, then exports <name>.stl and <name>.step in a fresh subfolder. For an edit, one cad_run with script_path pointing to the earlier .py, parameters containing just the changed dimension, output_dir and name regenerates it without resending the script. Existing parameter values are retained; unknown names and type changes are refused. A killed run can be retried from its checkpoint in a new workspace; mutations are never replayed automatically.
 Captured mesh preparation: load_scan(name, source_units="m" or "mm", up_axis="x"|"-x"|"y"|"-y"|"z"|"-z", ground=True) is provided to build(). Name must be a declared input. Declare source units and the object's usage-up axis explicitly: the helper converts metres to millimetres, applies a rigid up-axis rotation and translates the lowest Z to zero; it never guesses scale or fits to calipers. Geometry/texture references must be declared inputs too; snapshots preserve distinct original filenames. Exports must be millimetres, Z up, in the orientation the object is used.
 Fit reference workflow: return load_scan("scan", source_units="m", up_axis="y") from build() in mode: "mesh" to export an unchanged, prepared reference STL for cad_check_fit. Declare every linked OBJ/MTL/texture asset. If you crop, simplify, fill, or otherwise alter this reference, report exactly what you excluded/changed and that the fit check proves only that reduced reference in the stated pose. A fit check against a scan is information; it must never resize or override an interface specified by measured dimensions. Keep those measured interfaces and report the discrepancy.
 Result selection and edits: set final: true only on the result you select. cad-result.json in each immediate run folder is protected from script writes and retains final, completed_at, lineage_id (source hash), full checks and artifact paths; clients can discover the latest completed final record after restart without rebuilding. Final is a selection marker, not a replacement for valid/checks. Queued calls may expire with cad-queue-timeout before dispatch; do not automatically replay. Unchanged declared files reuse a read-only content-addressed bundle under output_dir/.cad-inputs, preserving filenames and restricting reads to that bundle. Keep this shared cache with the saved runs.
 Mesh cleanup workflow: return a trimesh.Trimesh in mode: "mesh". Load the prepared mesh, fit needed geometry with NumPy/SciPy, rebuild regular sections/features with build123d or manifold3d CrossSection/extrusion/revolve, and combine meshes with manifold3d booleans. scikit-image supplies marching cubes for voxel/SDF work; Shapely supplies planar operations; Pillow supplies image/texture reads. Keep numeric choices in P and regenerate from declared inputs. Validate closure, winding, manifold status, dimensions and all six views using cad_run. What to regularise, infer, preserve or label comes from the caller's cleanup rules, not this engine prompt.
-The result includes paths, millimetre bounds/size, mesh and STEP volumes, solid count, watertight/manifold/winding/STEP checks, six orthographic renders (front, back, left, right, top, bottom) and contact sheet. Inspect all six; revise visible defects. A valid mesh or nominal parameter does not prove the requested dimension: measure the actual exported interfaces. Use cad_check_fit on a model and reference STL with an explicit rigid transform; report raw-scan interference and minimum gap. Calipers are authoritative but disagreement with a scan is unresolved measurement evidence, not permission to silently rescale it. Check assembly/insertion paths and actual articulated poses, not sums of local joint limits or reference points alone. Printing, clearance under load, supports and motion need separate evidence.
+The result includes paths, millimetre bounds/size, mesh and STEP volumes, solid count, watertight/manifold/winding/STEP checks, six orthographic renders (front, back, left, right, top, bottom), a perspective view from the front right and above, and a contact sheet with the perspective view large beside the six. Judge the form from the perspective view first: would a person recognise the product and want it? Then inspect all six; revise visible defects. A valid mesh or nominal parameter does not prove the requested dimension: measure the actual exported interfaces. Use cad_check_fit on a model and reference STL with an explicit rigid transform; report raw-scan interference and minimum gap. Calipers are authoritative but disagreement with a scan is unresolved measurement evidence, not permission to silently rescale it. Check assembly/insertion paths and actual articulated poses, not sums of local joint limits or reference points alone. Printing, clearance under load, supports and motion need separate evidence.
 Fit, flexure and thread parameters: put each interface's nominal size, its source (measured, published, or assumed), the print correction, and the design fit in P as separate named values, so a fit report revises one number without resending the script. Model every dimension you claim: a parameter the geometry never uses (a wallet or case width that no cut or wall reads) is a defect; use it or remove it. Shape flexures so their bending lies in the layer plane of the exported print orientation, with the stroke, preload, and hard-stop gap as P values; build the stopped pose as well as the rest pose when checking. Model printed threads as explicit coarse geometry with the same pitch on both sides and clearance as a radial P offset; never scale a screw to clear its hole.
-Check insertion and articulated poses with cad_check_fit against each object state that matters (the bare product, the product in its case, and the case with its attachment as its own reference envelope), including the widest section on the way in. Report interference and minimum gap per state. In your summary, attach each "fits", "holds", and "prints without supports" claim to the check or slice number that shows it; a valid flag alone shows none of them. Apply fdm_design and fdm_slicing too, with fdm_fit and fdm_flexures when they apply; never invoke a printer as part of constructing CAD.`,
+Check insertion and articulated poses with cad_check_fit against each object state that matters (the bare product, the product in its case, and the case with its attachment as its own reference envelope), including the widest section on the way in. Report interference and minimum gap per state. In your summary, attach each "fits", "holds", and "prints without supports" claim to the check or slice number that shows it; a valid flag alone shows none of them. Apply fdm_design and fdm_slicing too. When a part meets a real object apply fdm_fit, and when it flexes, grips, snaps or springs apply fdm_flexures: if they were not attached, read them with the design_guidance tool before choosing that fit or spring. Never invoke a printer as part of constructing CAD.`,
 };

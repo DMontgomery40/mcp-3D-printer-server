@@ -65,7 +65,9 @@ test(
     assert.match(original.stl, /part\.v1\.stl$/);
     assert.deepEqual(original.size_mm, [10, 20, 30]);
     assert.equal(original.solid_count, 1);
-    assert.equal(Object.keys(original.renders).length, 7);
+    // six orthographic views, the perspective view and the contact sheet
+    assert.equal(Object.keys(original.renders).length, 8);
+    assert.match(original.renders.perspective, /perspective\.png$/);
     const asym = await call("cad_run", {
       script:
         "from build123d import Box,Pos\nP={}\ndef build():\n return Box(10,20,30)+Pos(4,9,14)*Box(6,6,6)",
@@ -75,7 +77,7 @@ test(
     });
     const centres = {};
     for (const [name, file] of Object.entries(asym.renders)) {
-      if (name === "contact") continue;
+      if (name === "contact" || name === "perspective") continue;
       const { data: pix, info } = await sharp(file)
         .removeAlpha()
         .raw()
@@ -371,10 +373,16 @@ test(
       );
       assert.equal(r.isError, true, JSON.stringify(r));
       assert.equal(r.structuredContent.code, "cad-failed");
-      assert.match(
-        r.content[0].text,
-        /permitted|denied|reachable|Network|Permission/i,
-      );
+      // On Linux the sandbox has its own empty /tmp: a write beside a job folder under the host's /tmp lands
+      // there and vanishes with the sandbox, so it raises nothing. The host file's absence below is the proof.
+      const privateTmp =
+        process.platform === "linux" && i === 3 && dir.startsWith("/tmp/");
+      if (!privateTmp)
+        assert.match(
+          r.content[0].text,
+          // macOS's sandbox denies; Linux's mount tree is read-only where it is bound and lacks everything else
+          /permitted|denied|reachable|Network|Permission|Read-only file system|No such file or directory/i,
+        );
     }
     assert.equal(
       await fs.stat(path.join(dir, "outside.txt")).then(

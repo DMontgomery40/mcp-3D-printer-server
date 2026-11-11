@@ -822,7 +822,7 @@ Check only by default. `{"install":true}` installs a pinned isolated environment
 
 #### cad_run
 
-Read the `cad_design` prompt first. Supply `script` or a saved `script_path`, `output_dir`, and `name`. Scripts declare literal `P = {...}` parameters and a `build()` function returning a build123d shape. One later call with `script_path` and `parameters` changes a dimension and rebuilds. Each run creates a new subfolder and preserves its source/parameter checkpoint, even on failure. The result contains STL/STEP paths, measured geometry, validity checks, six views and a contact sheet.
+Read the `cad_design` prompt first. Supply `script` or a saved `script_path`, `output_dir`, and `name`. Scripts declare literal `P = {...}` parameters and a `build()` function returning a build123d shape. One later call with `script_path` and `parameters` changes a dimension and rebuilds. Each run creates a new subfolder and preserves its source/parameter checkpoint, even on failure. The result contains STL/STEP paths, measured geometry, validity checks, six orthographic views, a perspective view and a contact sheet with the perspective view large beside the six.
 
 Explicit `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]` snapshots the files a script may read as `INPUTS["scan"]`. For a mesh-only edit, use `mode: "mesh"` and return `trimesh.Trimesh`: it exports and validates STL plus renders, with `step: null` and a clear reason. For captured meshes, the injected `load_scan` helper takes explicit source units and an up-axis, converts coordinates to millimetres/Z-up, and grounds the mesh without fitting its size. Cleanup choices and labels belong to the caller’s rules; the MCP supplies execution, mesh libraries, checks and renders.
 
@@ -831,6 +831,10 @@ Explicit `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]` snapshots the
 Runs wait for the environment's execution slot up to their own total timeout and return `queue_wait_ms`. Mark the selected result with `final: true`: each run's script-protected `cad-result.json` keeps the flag, full validation and artifact paths for recovery after restart. Check `status`, `valid` and the checks as well as `final`.
 
 Unchanged declared inputs reuse immutable content-hash bundles, with `snapshot_bytes_added` and `snapshot_bytes_reused` in the result. Keep the referenced `.cad-inputs` bundles with saved designs. Previews now use depth cues and feature edges to reveal windows and recesses without a heavy renderer.
+
+#### cad_examples
+
+The code engine's cookbook: twelve worked build123d designs from simple to complex (cable clip, wall hook, knurled knob, phone stand, swept headphone hook, lofted tool handle, threaded jar, bag clip, hinged box, bistable clicker, chainmail, trigger capo), each modelled on the best bought version of the thing, with its concept, the published sizes it used and its script. Without arguments it lists them with the pattern each shows; with `name` it returns one record and script. The `cad_design` prompt names every example in one line, so a design worker reads the one that works like its request and adapts the pattern. Read-only; needs no CAD runtime. The scripts are in `src/cad/examples/`.
 
 #### cad_check_fit
 
@@ -987,6 +991,7 @@ The server carries manufacturing judgment for agents that design or edit a model
 - `fdm_slicing`: for every design or model-editing task, next to `fdm_design`: how this server's configured slicer (`SLICER_TYPE`) orients a model and generates supports, and how to check a choice with a checkpoint `slice_stl`. Its text follows the slicer: Bambu Studio's auto-orient and `enable_support`, or plainly that a slicer here doesn't orient or take support settings.
 - `guidance://fdm/capability-guidance` (resource): planning bands and sources for bridges and overhangs, for when one is consequential and there is no sufficiently specific measured capability for the printer, material and profile.
 - `guidance://fdm/fit-by-function` (resource): the same text as the `fdm_fit` prompt, in resource form for clients that read resources.
+- `design_guidance` (tool): the same on-demand texts by name (`fdm_fit`, `fdm_flexures`, `fdm_assembly`, `fdm_multicolor`, `fdm_after_slice`, `fdm_capability`), for a design worker that is given tools but not prompts or resources. `fdm_design` and `cad_design` tell such a worker to read `fdm_fit` and `fdm_flexures` this way when they apply. Read-only.
 
 bambu-printer-mcp serves the same guidance.
 

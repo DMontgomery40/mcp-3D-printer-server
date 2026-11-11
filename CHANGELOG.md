@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `cad_examples`: the code engine's cookbook, twelve worked build123d designs from a cable clip to a trigger capo, each modelled on a bought product with its concept, the published sizes it used and its script. It lists them, or returns one by name. `cad_design` names each in one line (about 2 KB for the twelve), so a design worker reads the script that works like its request instead of every script riding in the prompt. Every example builds valid through `cad_run` on Linux (Ubuntu 26.04); none has been printed.
+- `cad_run` returns a perspective view (`renders.perspective`): three-quarter, from the front right and above, depth-buffered, smooth-shaded across facets that meet within 40 degrees, outlined at steps and creases. The contact sheet shows it large beside the six orthographic views (2668 x 1602). It adds about 0.4 to 1.1 s to a run.
+- `design_guidance`: the on-demand guidance (`fdm_fit`, `fdm_flexures`, `fdm_assembly`, `fdm_multicolor`, `fdm_after_slice`, `fdm_capability`) as a read-only tool, for a design worker that is given tools but not prompts or resources.
+- `cad_run` checks that a solid result's STEP holds at least one solid body (`checks.step_solids`). A sketch rounded by growing and shrinking it with `offset()` built a solid whose STEP came back as bare shells with `valid: true` and `solid_count: 0`.
+
+### Changed
+
+- `cad_design` puts form first: write the concept (the bought product, its mechanism, the load path, the print orientation) before geometry; build the product's shape with loft, sweep, revolve and fillet rather than a profile pushed up; extrude a flat profile only for a real plate or lever or an in-plane mechanism, and say that reason. It names the cookbook's patterns, records what the cookbook taught about the engine (several bodies as `Compound([a, b])` with a real gap, chamfer where a fillet fails, no grow-and-shrink rounding), and says to judge the form from the perspective view first.
+- `fdm_design` asks for the concept in writing before any geometry and gives the product's form the same standing as its function: curves where hands and objects touch, no reduction to a flat profile or a box with holes, a flat in-plane layout only for the element that needs it. It tells a worker without attached prompts to read `fdm_fit` and `fdm_flexures` with `design_guidance` when they apply.
+
+### Fixed
+
+- `cad_setup` on Linux with bubblewrap 0.11 (Ubuntu 26.04) failed with "CAD confinement did not reject write": bubblewrap makes the folders above each bind on its own root tmpfs, which was writable inside the sandbox (never on the host). The sandbox's root is now remounted read-only, and the forbidden-write proof accepts a read-only-filesystem refusal.
+
 ## [1.2.70] – 2026-11-11
 
 ### Changed

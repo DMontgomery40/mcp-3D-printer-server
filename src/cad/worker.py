@@ -2,6 +2,7 @@
 Inspection is a fresh process: user stdout, globals and check claims are never receipts.
 """
 import ast
+import errno
 import json
 import math
 import os
@@ -140,6 +141,9 @@ def main():
                 else: os.listdir(target)
             except (PermissionError, FileNotFoundError):
                 pass
+            except OSError as e:
+                # A read-only sandbox root refuses the write with EROFS: that is a rejection too.
+                if e.errno != errno.EROFS: raise
             else:
                 raise RuntimeError('CAD confinement did not reject ' + operation)
         sock = socket.socket()
