@@ -164,23 +164,26 @@ def perspective(m, size=1600, azimuth=35.0, elevation=26.0):
     c1 = np.clip(np.floor(np.where(np.isfinite(hi), hi, -1) - 0.5), -1, size - 1).astype(np.int64)
     cols = np.maximum(c1 - c0 + 1, 0)
     cols[~np.isfinite(lo)] = 0
-    k = np.repeat(np.arange(len(t)), cols)
-    px = c0[k] + (np.arange(len(k)) - np.repeat(np.cumsum(cols) - cols, cols))
-    tri, py = t[k], row[k]
-    dx, dy = px + 0.5 - x[tri, 0], py + 0.5 - y[tri, 0]
+    k = np.repeat(np.arange(len(t), dtype=np.int32), cols)
+    px = (c0[k] + (np.arange(len(k)) - np.repeat(np.cumsum(cols) - cols, cols))).astype(np.int32)
+    tri, py = t[k].astype(np.int32), row[k].astype(np.int32)
+    del k
+    dx, dy = (px + 0.5 - x[tri, 0]).astype(np.float32), (py + 0.5 - y[tri, 0]).astype(np.float32)
     wv = w0[tri] + wx[tri] * dx + wy[tri] * dy
-    pix = py * size + px
+    pix = py.astype(np.int64) * size + px
+    del px, py
     zbuf = np.zeros(size * size)
     np.maximum.at(zbuf, pix, wv)
     win = wv >= zbuf[pix]
-    tid = np.full(size * size, -1, dtype=np.int64)
+    tid = np.full(size * size, -1, dtype=np.int32)
     tid[pix[win]] = tri[win]
-    shade = np.zeros(size * size)
+    shade = np.zeros(size * size, dtype=np.float32)
     shade[pix[win]] = np.clip(l0[tri[win]] + lx[tri[win]] * dx[win] + ly[tri[win]] * dy[win], 0, 1)
+    del tri, dx, dy, wv, pix, win
     tid, zbuf, shade = tid.reshape(size, size), zbuf.reshape(size, size), shade.reshape(size, size)
     solid = tid >= 0
     ti = np.where(solid, tid, 0)
-    gx, gy, nrm = wx[ti], wy[ti], Nf[ti]
+    gx, gy, nrm = wx[ti], wy[ti], Nf[ti].astype(np.float32)
     edge = np.zeros((size, size), bool)
     for sy, sx in ((0, 1), (1, 0), (0, -1), (-1, 0)):
         other = np.roll(solid, (-sy, -sx), axis=(0, 1))
@@ -195,7 +198,8 @@ def perspective(m, size=1600, azimuth=35.0, elevation=26.0):
         crease = np.einsum('ijk,ijk->ij', nrm, nj) < math.cos(math.radians(35))
         edge |= solid & inside & ((~other) | (other & (wj < zbuf) & step) | (other & crease & (sx + sy > 0)))
     edge |= np.roll(edge, 1, axis=0) & solid | np.roll(edge, 1, axis=1) & solid   # two pixels wide before scaling down
-    rgb = np.empty((size, size, 3))
+    del gx, gy, nrm, ti
+    rgb = np.empty((size, size, 3), dtype=np.float32)
     ramp = np.linspace(0, 1, size)[:, None]
     for c, (base, dark, top, bottom) in enumerate(((79, 22, 247, 240), (166, 46, 247, 240), (186, 52, 244, 238))):
         rgb[:, :, c] = np.where(solid, base * shade + dark * (1 - shade), top + (bottom - top) * ramp)

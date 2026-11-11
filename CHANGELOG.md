@@ -5,7 +5,7 @@
 ### Added
 
 - `cad_examples`: the code engine's cookbook, twelve worked build123d designs from a cable clip to a trigger capo, each modelled on a bought product with its concept, the published sizes it used and its script. It lists them, or returns one by name. `cad_design` names each in one line (about 2 KB for the twelve), so a design worker reads the script that works like its request instead of every script riding in the prompt. Every example builds valid through `cad_run` on Linux (Ubuntu 26.04); none has been printed.
-- `cad_run` returns a perspective view (`renders.perspective`): three-quarter, from the front right and above, depth-buffered, smooth-shaded across facets that meet within 40 degrees, outlined at steps and creases. The contact sheet shows it large beside the six orthographic views (2668 x 1602). It adds about 0.4 to 1.1 s to a run.
+- `cad_run` returns a perspective view (`renders.perspective`): three-quarter, from the front right and above, depth-buffered, smooth-shaded across facets that meet within 40 degrees, outlined at steps and creases. The contact sheet shows it large beside the six orthographic views (2668 x 1602). It adds about 0.3 to 1 s to a run and holds the inspection process to about 0.6 GB at its peak.
 - `design_guidance`: the on-demand guidance (`fdm_fit`, `fdm_flexures`, `fdm_assembly`, `fdm_multicolor`, `fdm_after_slice`, `fdm_capability`) as a read-only tool, for a design worker that is given tools but not prompts or resources.
 - `cad_run` checks that a solid result's STEP holds at least one solid body (`checks.step_solids`). A sketch rounded by growing and shrinking it with `offset()` built a solid whose STEP came back as bare shells with `valid: true` and `solid_count: 0`.
 

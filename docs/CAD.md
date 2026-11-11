@@ -66,7 +66,7 @@ The earlier parameter file is merged, preserving other choices. The source and e
 
 ## Worked examples
 
-`cad_examples` lists the engine's cookbook and returns one script by name; `cad_design` names each in a line. Every example is modelled on a bought product, cites the published sizes it used, states its concept (what it is for, the mechanism, the load path, the print orientation and why) and comes back `valid` from `cad_run` with the number of bodies its concept names. The scripts live in `src/cad/examples/`; `tests/cad-examples.test.mjs` checks each record and, with `CAD_E2E_DATA_DIR` set, builds every one through `cad_run`. They are patterns to adapt, not sizes to reuse.
+`cad_examples` lists the engine's cookbook and returns one script by name; `cad_design` names each in a line. Every example is modelled on a bought product, cites the published sizes it used, states its concept (what it is for, the mechanism, the load path, the print orientation and why) and comes back `valid` from `cad_run` with the number of bodies its concept names. The scripts live in `src/cad/examples/`; `tests/cad-examples.test.mjs` checks each record and, with `CAD_COOKBOOK_DATA_DIR` naming an installed runtime, builds every one through `cad_run` (about 80 s; run it on its own, since it holds the engine's one execution slot). They are patterns to adapt, not sizes to reuse.
 
 On Linux the sandbox's own root is mounted read-only (`--remount-ro /`), so only the run's job folder and `/tmp` take writes; bubblewrap 0.11 otherwise leaves the folders above each bind writable inside the sandbox, and setup's forbidden-write proof fails.
 

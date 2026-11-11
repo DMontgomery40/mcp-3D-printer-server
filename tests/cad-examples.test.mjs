@@ -10,7 +10,9 @@ import { cadExamples, cadExampleLines, cadExamplesTool, CAD_EXAMPLE_ORDER } from
 import { CAD_DESIGN_PROMPT } from "../dist/cad/contracts.js";
 import { designGuidance, FDM_FIT_GUIDANCE, FDM_FLEXURES, FDM_CORE } from "../dist/design-guidance.js";
 
-const data = process.env.CAD_E2E_DATA_DIR;
+// Its own switch, not CAD_E2E_DATA_DIR: the twelve builds hold the engine's one execution slot for about 80 s,
+// which would starve cad-real.test.mjs's deadline checks if both ran against the same runtime at once.
+const data = process.env.CAD_COOKBOOK_DATA_DIR;
 const entry = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 
 test("every cookbook example carries its whole record and a script the engine accepts in form", () => {
@@ -85,7 +87,7 @@ test("stdio lists cad_examples and design_guidance as read-only tools and serves
 });
 
 test("every cookbook example builds valid through cad_run, with the bodies its concept names",
-  { skip: !data && "set CAD_E2E_DATA_DIR to an installed, verified CAD runtime", timeout: 900000 },
+  { skip: !data && "set CAD_COOKBOOK_DATA_DIR to an installed, verified CAD runtime (run it on its own)", timeout: 900000 },
   async (t) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cad-cookbook-"));
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
