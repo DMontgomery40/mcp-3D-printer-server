@@ -45,8 +45,12 @@ def inspect(request):
 
 
 # Starting print-in-place gap between separate bodies: Prusa's first value for movable parts is "at least 0.3 mm"
-# (design guidance, fdm_fit [F3]). A script sets its own with a literal P["print_in_place_clearance_mm"].
+# (design guidance, fdm_fit [F3]). A script sets its own with a literal P["print_in_place_clearance_mm"], and says
+# its bodies are shown assembled (not printed in place) with P["print_in_place"] = False.
 PIP_CLEARANCE_MM = 0.3
+BED_TOLERANCE_MM = 0.05
+SCREEN_ANGLE = 0.1      # tessellation angular deflection (radians) for the gap screen
+EXACT_CAP = 32          # exact B-rep distance calls per result
 
 
 def clearance_setting(request):
@@ -54,21 +58,25 @@ def clearance_setting(request):
         params = json.loads(Path(request['parameters']).read_text()) if request.get('parameters') else {}
     except (OSError, ValueError):
         params = {}
-    value = params.get('print_in_place_clearance_mm') if isinstance(params, dict) else None
+    params = params if isinstance(params, dict) else {}
+    value = params.get('print_in_place_clearance_mm')
+    in_place = params.get('print_in_place', True) is not False
     if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 10:
-        return float(value), 'P["print_in_place_clearance_mm"]'
-    return PIP_CLEARANCE_MM, 'default: Prusa\'s "at least 0.3 mm" for movable parts (fdm_fit)'
+        return float(value), 'P["print_in_place_clearance_mm"]', in_place
+    return PIP_CLEARANCE_MM, 'default: Prusa\'s "at least 0.3 mm" for movable parts (fdm_fit)', in_place
 
 
 def bodies(step, request, budget_s=20.0):
-    """Every pair of solids in the exported STEP: true closest approach (screened on tessellations, measured on the
-    B-rep), overlap, and whether each labelled body the script returned is still one solid. Council 2026-11-11 (scan-to-make #734): chainmail links
-    fused at 48 interfaces, a pawl grazing its wheel while a severed bar kept the solid count right, discs starting in
-    mid-air, all with valid: true."""
+    """Every pair of solids in the exported STEP: closest approach (screened on tessellations, measured exactly on the
+    B-rep for every pair the screen cannot clear), overlap, whether each labelled body the script returned is still one
+    solid, and whether each solid stands on the print plate (Z = 0) or on a solid that does. Council 2026-11-11
+    (scan-to-make #734): chainmail links fused at 48 interfaces, a pawl grazing its wheel while a severed bar kept the
+    solid count right, discs starting in mid-air, all with valid: true."""
     import time
     from build123d import Compound
-    clearance, source = clearance_setting(request)
+    clearance, source, in_place = clearance_setting(request)
     started = time.monotonic()
+    over = lambda: time.monotonic() - started > budget_s
     # Declared bodies: the top-level children of a returned Compound, named by their labels.
     declared, names = [], []
     children = list(step.children) if isinstance(step, Compound) else []
@@ -84,69 +92,99 @@ def bodies(step, request, budget_s=20.0):
         solids = list(step.solids())
         names = [f'solid {k + 1}' for k in range(len(solids))]
     boxes = [s.bounding_box() for s in solids]
-    near = max(0.5, clearance + 0.2)
-    def where(s):
-        b = s.bounding_box()
-        return [round((b.min.X + b.max.X) / 2, 3), round((b.min.Y + b.max.Y) / 2, 3), round(b.min.Z, 3)]
-    # Screen every near pair on tessellations (Manifold min_gap, chord error <= 0.01 mm), then measure each pair that
-    # comes within the clearance + 0.02 mm, and the closest, exactly on the B-rep (OCC BRepExtrema) for the reported gap.
+    r3 = lambda v: [round(v[0], 3), round(v[1], 3), round(v[2], 3)]
+    mid = lambda pa, pb: r3(((pa.X + pb.X) / 2, (pa.Y + pb.Y) / 2, (pa.Z + pb.Z) / 2))
+    # The screen's error on a curved face is its chord sag, at most R a^2 / 8 per surface for angular deflection a; R is
+    # bounded by half the pair's larger box diagonal. Every pair the screen reads within the clearance + 0.2 mm + that
+    # sag is measured exactly on the B-rep.
+    sag = lambda i: (boxes[i].diagonal / 2) * SCREEN_ANGLE ** 2 / 8
+    window = lambda i, j: clearance + 0.2 + sag(i) + sag(j)
     def solid_manifold(s):
-        v, f = s.tessellate(0.01, 0.1)
+        v, f = s.tessellate(0.01, SCREEN_ANGLE)
         t = trimesh.Trimesh(np.array([[p.X, p.Y, p.Z] for p in v], dtype=float), np.array(f, dtype=np.int64), process=True)
         t.merge_vertices()
         return manifold(t)
     meshes = [None] * len(solids)
-    fused, close, closest, measured, skipped, screen = [], [], None, 0, 0, None
+    rows, unmeasured, errors, exact_calls, screened_only = [], [], [], 0, 0
+    near_pairs = []   # (i, j, gap) for every pair within its window: what rests on what
     for i in range(len(solids)):
         for j in range(i + 1, len(solids)):
             a, b = boxes[i], boxes[j]
             gap = math.sqrt(sum(max(0.0, lo2 - hi1, lo1 - hi2) ** 2 for lo1, hi1, lo2, hi2 in
                                 ((a.min.X, a.max.X, b.min.X, b.max.X), (a.min.Y, a.max.Y, b.min.Y, b.max.Y), (a.min.Z, a.max.Z, b.min.Z, b.max.Z))))
-            if gap >= near: continue
-            if time.monotonic() - started > budget_s:
-                skipped += 1
+            w = window(i, j)
+            if gap >= w: continue
+            if over():
+                unmeasured.append((names[i], names[j], 'time budget'))
                 continue
-            measured += 1
-            for k in (i, j):
-                if meshes[k] is None: meshes[k] = solid_manifold(solids[k])
-            if meshes[i].status() == mf.Error.NoError and meshes[j].status() == mf.Error.NoError:
-                d = meshes[i].min_gap(meshes[j], near)
-            else:   # a tessellation that does not close: measure this pair on the B-rep alone
-                d = solids[i].distance_to(solids[j])
-            holds = lambda x, y: all(getattr(x.min, c) <= getattr(y.min, c) and getattr(y.max, c) <= getattr(x.max, c) for c in 'XYZ')
-            if d > 1e-6 and (holds(a, b) or holds(b, a)) and getattr(solids[i] & solids[j], 'volume', 0.0) > 1e-6:
-                d = 0.0   # one wholly inside the other: the surfaces never meet
-            if d >= near: continue
-            if screen is None or d < screen[0]: screen = (d, i, j)
-            if d < clearance + 0.02:
-                if len(fused) + len(close) < 16:
-                    exact, pa, pb = solids[i].distance_to_with_closest_points(solids[j])
-                    d = 0.0 if d == 0.0 else exact
-                    at = [round((pa.X + pb.X) / 2, 3), round((pa.Y + pb.Y) / 2, 3), round((pa.Z + pb.Z) / 2, 3)]
-                else:   # past 16 flagged pairs: the screened gap, located at the middle of where the boxes meet
-                    at = [round((max(getattr(a.min, c), getattr(b.min, c)) + min(getattr(a.max, c), getattr(b.max, c))) / 2, 3) for c in 'XYZ']
-                row = {'a': names[i], 'b': names[j], 'gap_mm': round(d, 4), 'at': at}
-                if closest is None or d < closest['gap_mm']: closest = row
-                if d <= 1e-6: fused.append(row)
-                elif d < clearance - 1e-9: close.append(row)
-    if closest is None and screen is not None:
-        d0, i, j = screen
-        exact, pa, pb = solids[i].distance_to_with_closest_points(solids[j])
-        closest = {'a': names[i], 'b': names[j], 'gap_mm': round(exact, 4), 'at': [round((pa.X + pb.X) / 2, 3), round((pa.Y + pb.Y) / 2, 3), round((pa.Z + pb.Z) / 2, 3)]}
-    bed = min((b.min.Z for b in boxes), default=0.0)
-    above = [{'solid': names[k], 'starts_mm_above_bed': round(boxes[k].min.Z - bed, 3), 'at': where(solids[k])}
-             for k in range(len(solids)) if boxes[k].min.Z - bed > 0.05]
+            try:
+                for k in (i, j):
+                    if meshes[k] is None: meshes[k] = solid_manifold(solids[k])
+                if meshes[i].status() == mf.Error.NoError and meshes[j].status() == mf.Error.NoError:
+                    d = meshes[i].min_gap(meshes[j], w)
+                else:   # a tessellation that does not close: only the exact measurement can say
+                    d = 0.0
+                if d >= w: continue
+                exact = exact_calls < EXACT_CAP and not over()
+                if exact:
+                    exact_calls += 1
+                    d, pa, pb = solids[i].distance_to_with_closest_points(solids[j])
+                    at = mid(pa, pb)
+                    holds = lambda x, y: all(getattr(x.min, c) <= getattr(y.min, c) and getattr(y.max, c) <= getattr(x.max, c) for c in 'XYZ')
+                    if d > 1e-6 and (holds(a, b) or holds(b, a)) and not over() and getattr(solids[i] & solids[j], 'volume', 0.0) > 1e-6:
+                        d = 0.0   # one wholly inside the other: the surfaces never meet
+                else:   # past the exact cap or the time budget: the screened gap, marked as such
+                    screened_only += 1
+                    at = r3([(max(getattr(a.min, c), getattr(b.min, c)) + min(getattr(a.max, c), getattr(b.max, c))) / 2 for c in 'XYZ'])
+                rows.append({'a': names[i], 'b': names[j], 'gap_mm': round(d, 4), 'at': at, 'exact': exact})
+                near_pairs.append((i, j, d))
+            except Exception as e:   # one pair that cannot be measured does not cost the others
+                errors.append(f'{names[i]} / {names[j]}: {type(e).__name__}: {e}'[:200])
+                unmeasured.append((names[i], names[j], 'error'))
+    fused = [r for r in rows if r['gap_mm'] <= 1e-6]
+    under = [r for r in rows if 1e-6 < r['gap_mm'] < clearance - 1e-9]
+    # a screened-only row read at or past the clearance is still within the screen's error of it: not cleared
+    unsure = [r for r in rows if not r['exact'] and r['gap_mm'] >= clearance - 1e-9]
+    closest = min(rows, key=lambda r: r['gap_mm']) if rows else None
+    # The print plate is Z = 0 of the exported frame. A solid below it is cut off by the plate; one above it prints on
+    # air unless it rests on a solid that reaches the plate (within its measured gap: print-in-place stacks).
+    below = [{'solid': names[k], 'lowest_z_mm': round(boxes[k].min.Z, 3)} for k in range(len(solids)) if boxes[k].min.Z < -BED_TOLERANCE_MM]
+    grounded = {k for k in range(len(solids)) if abs(boxes[k].min.Z) <= BED_TOLERANCE_MM}
+    rests = {}
+    changed = True
+    while changed:
+        changed = False
+        for i, j, d in near_pairs:
+            for up, low in ((i, j), (j, i)):
+                if up not in grounded and low in grounded and boxes[low].min.Z < boxes[up].min.Z - BED_TOLERANCE_MM:
+                    grounded.add(up); rests[up] = (low, d); changed = True
+    above = []
+    for k in range(len(solids)):
+        z = boxes[k].min.Z
+        if z <= BED_TOLERANCE_MM: continue
+        row = {'solid': names[k], 'starts_mm_above_bed': round(z, 3), 'at': r3(((boxes[k].min.X + boxes[k].max.X) / 2, (boxes[k].min.Y + boxes[k].max.Y) / 2, z))}
+        if k in rests: row.update(rests_on=names[rests[k][0]], gap_below_mm=round(rests[k][1], 4))
+        above.append(row)
+    floating = [r for r in above if 'rests_on' not in r]
     severed = [d for d in declared if d['solids'] != 1]
-    problems = ([f'{r["a"]} and {r["b"]} touch or overlap at {r["at"]}: they print as one piece' for r in fused[:8]] +
-                [f'{r["a"]} and {r["b"]} are {r["gap_mm"]} mm apart at {r["at"]}, under the {clearance} mm print-in-place clearance: they weld when printed' for r in close[:8]] +
+    def capped(items, say, kind):
+        out = [say(x) for x in items[:8]]
+        if len(items) > 8: out.append(f'... and {len(items) - 8} more {kind} (see bodies)')
+        return out
+    weld = 'they weld when printed' if in_place else 'a fit, not checked against print-in-place (P["print_in_place"] is False)'
+    problems = (capped(fused, lambda r: f'{r["a"]} and {r["b"]} touch or overlap at {r["at"]}: they print as one piece', 'touching or overlapping pairs') +
+                (capped(under, lambda r: f'{r["a"]} and {r["b"]} are {r["gap_mm"]} mm apart at {r["at"]}{"" if r["exact"] else " (screened, not measured exactly)"}, under the {clearance} mm print-in-place clearance: {weld}; if these bodies are shown assembled rather than printed in place, set P["print_in_place"] = False', 'pairs under the clearance') if in_place else []) +
+                capped(unsure, lambda r: f'{r["a"]} and {r["b"]} screen at {r["gap_mm"]} mm, within the screen error of the {clearance} mm clearance, and were not measured exactly (exact cap or time budget)', 'unconfirmed pairs') +
                 [f'body "{d["body"]}" is {d["solids"]} separate solids: something cuts it apart' if d['solids'] > 1 else f'body "{d["body"]}" has no solid' for d in severed] +
-                [f'{a["solid"]} starts {a["starts_mm_above_bed"]} mm above the bed: its first layer is printed on air' for a in above[:8]])
-    if skipped:
-        problems.append(f'{skipped} near pair(s) were not measured within the {budget_s:.0f} s budget')
-    return {'solids': len(solids), 'clearance_mm': clearance, 'clearance_source': source,
-            'declared_bodies': declared or None, 'pairs_measured': measured, 'pairs_not_measured': skipped,
-            'fused': fused, 'too_close': close, 'closest': closest if closest and closest['gap_mm'] < near else None,
-            'above_bed': above, 'severed': severed, 'problems': problems,
+                capped(below, lambda r: f'{r["solid"]} reaches {r["lowest_z_mm"]} mm, below the print plate (Z = 0): the plate cuts it off', 'solids below the plate') +
+                capped(floating, lambda r: f'{r["solid"]} starts {r["starts_mm_above_bed"]} mm above the print plate (Z = 0) with no solid under it that reaches the plate: its first layer is printed on air', 'floating solids'))
+    if unmeasured:
+        problems.append(f'{len(unmeasured)} near pair(s) were not measured ({", ".join(sorted({u[2] for u in unmeasured}))}); see bodies.pairs_not_measured')
+    return {'solids': len(solids), 'clearance_mm': clearance, 'clearance_source': source, 'print_in_place': in_place,
+            'declared_bodies': declared or None, 'pairs_measured': len(rows), 'exact_measurements': exact_calls, 'screened_only': screened_only,
+            'pairs_not_measured': [{'a': u[0], 'b': u[1], 'why': u[2]} for u in unmeasured], 'errors': errors,
+            'fused': fused, 'too_close': under, 'unconfirmed': unsure, 'closest': closest,
+            'above_bed': above, 'below_bed': below, 'severed': severed, 'problems': problems,
             'seconds': round(time.monotonic() - started, 3)}
 
 
@@ -159,15 +197,22 @@ def evidence(assembly):
                    'motion, articulated poses and snap or flex behaviour',
                    'printing: supports, bridges and bed adhesion are the slicer\'s answer']
     if assembly is None:
-        not_checked.append('gaps between separate bodies (mesh mode has no solids)')
+        not_checked.append('gaps between separate bodies and contact with the print plate (mesh mode has no solids)')
         return {'checked': checked, 'not_checked': not_checked, 'problems': []}
     if 'error' in assembly:
         not_checked.append('gaps between separate bodies: the measurement failed (' + assembly['error'] + ')')
         return {'bodies': assembly, 'checked': checked, 'not_checked': not_checked, 'problems': ['bodies could not be measured: ' + assembly['error']]}
+    checked.append('whether each solid stands on the print plate (Z = 0 of the exported frame) or rests on a solid that does, and whether any reaches below it (bodies; failures are in problems)')
     if assembly['solids'] > 1:
-        checked.append(f'the closest approach of every pair of the {assembly["solids"]} solids against a {assembly["clearance_mm"]} mm print-in-place clearance ({assembly["clearance_source"]}), and whether each solid starts on the bed (bodies; failures are in problems)')
-    else:
-        checked.append('the single solid starts on the bed (bodies)')
+        pairs = f'the closest approach of each near pair of the {assembly["solids"]} solids'
+        rule = (f'against a {assembly["clearance_mm"]} mm print-in-place clearance ({assembly["clearance_source"]})' if assembly['print_in_place']
+                else 'for touching or overlap only: the script says its bodies are shown assembled (P["print_in_place"] is False)')
+        if assembly['pairs_not_measured'] or assembly['unconfirmed']:
+            not_checked.append(f'{pairs} {rule}: {len(assembly["pairs_not_measured"])} pair(s) were not measured and {len(assembly["unconfirmed"])} only screened (bodies)')
+        else:
+            checked.append(f'{pairs} {rule}, screened on tessellations and measured exactly where the screen could not clear them (bodies; failures are in problems)')
+        if not assembly['print_in_place']:
+            not_checked.append('print-in-place clearance: the bodies are declared as shown assembled')
     if assembly['declared_bodies']:
         checked.append('whether each labelled body is exactly one solid (bodies.declared_bodies; failures are in problems)')
     elif assembly['solids'] > 1:
