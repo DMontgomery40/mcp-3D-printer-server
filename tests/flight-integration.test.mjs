@@ -452,3 +452,25 @@ test("public real-frame visual replay persists no-extrusion warning through FINI
     "",
   );
 });
+
+test("cached Bambu status cannot renew the report time for camera sampling", async(t)=>{
+  const dir=fixture(t);let now=1000;
+  const store=new FlightRecords({dir,now:()=>now});
+  const bambu=new BambuImplementation({});
+  Object.defineProperty(bambu,"flightRecords",{value:store});
+  const key=flightKey("fixture","01PFIXTURE");
+  store.begin(key,{sha256:hash,jobName:"cached.3mf",expected:{heightMm:80,layers:[{layer:1,zMm:0.2,boundsMm:[1,1,20,20]}]}});
+  const raw={subtask_name:"cached",gcode_state:"RUNNING",layer_num:1};
+  bambu.observeReport("fixture","01PFIXTURE",raw);
+  now=61000;
+  bambu.getPrinter=async()=>({data:raw,executeCommand:async()=>{throw Error("fixture PushAll unavailable");}});
+  const status=await bambu.getStatus("fixture","8883","01PFIXTURE:fixture-token");
+  assert.equal(status.connected,true);
+  let captures=0;
+  const capture=async()=>{captures++;return{base64:Buffer.from([255,216,255,217]).toString("base64")};};
+  await store.sample(key,capture);
+  assert.equal(captures,0,"a 60-second-old cached read is not a new MQTT receipt");
+  bambu.observeReport("fixture","01PFIXTURE",raw);
+  await store.sample(key,capture);
+  assert.equal(captures,1,"a genuine report callback permits a fresh camera attempt");
+});

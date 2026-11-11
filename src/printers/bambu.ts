@@ -538,8 +538,9 @@ export class BambuImplementation extends PrinterImplementation {
         await sleep(50);
       }
 
+      // The data-update callback records actual receipt time. Reading this cache
+      // must not make an old report eligible for a new layer-bound camera frame.
       const data = printer.data;
-      if(data)this.observeReport(host,serial,data);
 
       return {
         status: data.gcode_state || "UNKNOWN",
