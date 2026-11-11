@@ -1,5 +1,5 @@
 import {flightKey,type PrintGeometry} from "../counterpart/flight-record.js";
-import {geometryFromGcode} from "../counterpart/print-geometry.js";
+import {geometryFromGcode,geometryFromFile} from "../counterpart/print-geometry.js";
 import { PrinterRefusal, markPrintCommandSent } from "../refusal.js";
 import { uploadFile } from "./ftp-upload.js";
 import { PrinterImplementation } from "../types.js";
@@ -353,7 +353,10 @@ export async function checkedFile(inspection: PrintFileInspection, filePath: str
       plate = { index: Number(plateNumber[1]), sha256: createHash("sha256").update(bytes).digest("hex") };
       if (bytes.length <= 64 * 1024 * 1024) expected = geometryFromGcode(bytes.toString("utf8"));
     }
+  } else if (!/\.3mf$/i.test(filePath)) {
+    expected = await geometryFromFile(filePath);
   }
+
   return {
     sha256: inspection.sha256, ...(plate ? { plate } : {}), ...(expected ? { expected } : {}), model: inspection.model,
     maxNozzleTemperature: inspection.maxNozzleTemperature, maxBedTemperature: inspection.maxBedTemperature,
@@ -1122,6 +1125,7 @@ export class BambuImplementation extends PrinterImplementation {
     if (inspection.selectsAms) {
       throw new Error("Raw G-code with AMS selection requires a .3mf project export with verified physical slot mappings.");
     }
+    const resumeFile = await checkedFile(inspection, filePath);
     const initialStatus = await this.getSafetyStatus(host, serial, token);
     this.validateLoadedGcodeState(initialStatus, inspection);
     const recheckedStatus = await this.getSafetyStatus(host, serial, token);
@@ -1132,7 +1136,6 @@ export class BambuImplementation extends PrinterImplementation {
     await this.ftpUpload(host, token, filePath, `/${remotePath}`);
     const dispatchStatus = await this.getSafetyStatus(host, serial, token);
     const requirements = this.validateLoadedGcodeState(dispatchStatus, inspection);
-    const resumeFile = await checkedFile(inspection, filePath);
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);

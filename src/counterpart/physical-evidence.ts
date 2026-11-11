@@ -1,5 +1,8 @@
 /** Pure assessment of explicit client measurements, not an embedded vision model or success gate. */
 export interface EvidenceFrame {
+  role?: "baseline" | "first_layer" | "periodic" | "height";
+  stage?: string;
+  imageContentIndex?: number;
   id: string;
   capturedAt: string;
   reportAt: string;
@@ -19,7 +22,20 @@ export interface HeightMeasurement {
   method: string;
 }
 export interface PhysicalEvidence {
-  status: "unknown" | "consistent" | "suspect_no_growth";
+  assessment?: {
+    required: boolean;
+    frameId: string;
+    referenceFrameIds: string[];
+    layer: number;
+    expectedHeightMm: number;
+    expectedFootprintMm: [number, number, number, number];
+    instruction: string;
+  };
+  status:
+    | "unknown"
+    | "consistent"
+    | "suspect_no_growth"
+    | "suspect_no_extrusion";
   evidence: string[];
   limitations: string[];
 }
@@ -48,7 +64,10 @@ export function assessPhysical(
   }> = [];
   for (const measurement of measurements) {
     const frame = frames.find(
-      (f) => f.id === measurement.frameId && f.status === "captured",
+      (f) =>
+        f.id === measurement.frameId &&
+        f.status === "captured" &&
+        f.role !== "baseline",
     );
     if (
       !frame ||
@@ -140,8 +159,14 @@ export const PHYSICAL_EVIDENCE_SCHEMA = {
   properties: {
     status: {
       type: "string",
-      enum: ["unknown", "consistent", "suspect_no_growth"],
+      enum: [
+        "unknown",
+        "consistent",
+        "suspect_no_growth",
+        "suspect_no_extrusion",
+      ],
     },
+    assessment: { type: "object", additionalProperties: true },
     evidence: { type: "array", items: { type: "string" } },
     limitations: { type: "array", items: { type: "string" } },
   },

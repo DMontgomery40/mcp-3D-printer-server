@@ -1,0 +1,49 @@
+{
+  "provenance": "Maintainer supplied camera evidence. Empty first-layer image: faf29c4d, 2026-11-11T19:21:42Z, confirmed printing air. Bed-out-of-view image: preceding cd6b27c8 attempt, context only, not a registered empty-bed reference. Visual labels are supplied at the client-worker boundary; the MCP contains no image model.",
+  "artifactSha256": "dcc9b3260dd0c33e45b8f6711b9899ec8cf2b0d90278b76b029fff2f2bb03640",
+  "expected": {
+    "heightMm": 53,
+    "layers": [
+      {
+        "layer": 1,
+        "zMm": 0.2,
+        "boundsMm": [
+          10.622,
+          71.348,
+          245.402,
+          180.628
+        ]
+      },
+      {
+        "layer": 2,
+        "zMm": 0.4,
+        "boundsMm": [
+          10.421,
+          71.158,
+          245.592,
+          180.829
+        ]
+      },
+      {
+        "layer": 11,
+        "zMm": 2.2,
+        "boundsMm": [
+          10.421,
+          71.158,
+          245.592,
+          180.829
+        ]
+      },
+      {
+        "layer": 21,
+        "zMm": 4.2,
+        "boundsMm": [
+          10.421,
+          71.158,
+          224.68,
+          180.829
+        ]
+      }
+    ]
+  }
+}

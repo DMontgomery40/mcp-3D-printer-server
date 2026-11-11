@@ -106,34 +106,7 @@ test("public counterpart_print_record retrieves a persisted record without any n
     gcode_state: "FINISH",
     layer_num: 400,
   });
-  const preload = path.join(root, "tests/fixtures/inspection-no-network.mjs");
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: ["--import", preload, path.join(root, "dist/index.js")],
-    cwd: dir,
-    stderr: "pipe",
-    env: {
-      HOME: dir,
-      COUNTERPART_RECORD_DIR: path.join(dir, "records"),
-      MCP_TRANSPORT: "stdio",
-      PRINTER_TYPE: "bambu",
-      PRINTER_HOST: "127.0.0.1",
-      BAMBU_SERIAL: "01PFIXTURE",
-      BAMBU_TOKEN: "fixture-token",
-      BAMBU_MODEL: "p1s",
-      INSPECTION_NETWORK_LOG: log,
-    },
-  });
-  transport.stderr.on("data", () => {});
-  const client = new Client(
-    { name: "flight-read-test", version: "1" },
-    { capabilities: {} },
-  );
-  t.after(async () => {
-    await client.close();
-    await transport.close();
-  });
-  await client.connect(transport);
+  const client = await recordClient(t, dir, log);
   const tool = (await client.listTools()).tools.find(
     (t) => t.name === "counterpart_print_record",
   );
@@ -293,4 +266,165 @@ test("dispatch authorization keeps durable hash/mapping if the transport respons
   const accepted = bambu.flightRecords.read(flightKey("fixture", "01PFIXTURE"));
   assert.equal(accepted.record.id, pending.record.id);
   assert.equal(accepted.record.reports.length, 1);
+});
+
+test("checked standalone G-code carries bounded expected geometry for camera checkpoints", async (t) => {
+  const dir = fixture(t),
+    source = path.join(dir, "fixture.gcode");
+  fs.writeFileSync(
+    source,
+    "M83\n; Z_HEIGHT: 0.2\n; layer num/total_layer_count: 1/2\nG1 X1 Y1\nG1 X2 Y2 E1\n; Z_HEIGHT: 50\n; layer num/total_layer_count: 2/2\nG1 X3 Y3 E1\n",
+  );
+  const checked = await checkedFile(
+    { ...file, nozzleDiameters: [0.4], usedFilamentPositions: [0] },
+    source,
+  );
+  assert.equal(checked.expected?.heightMm, 50);
+  assert.deepEqual(
+    checked.expected.layers.map((l) => [l.layer, l.zMm]),
+    [
+      [1, 0.2],
+      [2, 50],
+    ],
+  );
+  assert.equal(checked.plate, undefined);
+});
+
+async function recordClient(t, dir, log) {
+  const preload = path.join(root, "tests/fixtures/inspection-no-network.mjs");
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["--import", preload, path.join(root, "dist/index.js")],
+    cwd: dir,
+    stderr: "pipe",
+    env: {
+      HOME: dir,
+      COUNTERPART_RECORD_DIR: path.join(dir, "records"),
+      MCP_TRANSPORT: "stdio",
+      PRINTER_TYPE: "bambu",
+      PRINTER_HOST: "127.0.0.1",
+      BAMBU_SERIAL: "01PFIXTURE",
+      BAMBU_TOKEN: "fixture-token",
+      BAMBU_MODEL: "p1s",
+      INSPECTION_NETWORK_LOG: log,
+    },
+  });
+  transport.stderr.on("data", () => {});
+  const client = new Client(
+    { name: "flight-read-test", version: "1" },
+    { capabilities: {} },
+  );
+  t.after(async () => {
+    await client.close();
+    await transport.close();
+  });
+  await client.connect(transport);
+  return client;
+}
+
+// The client-worker visual label is the maintainer-confirmed ground truth for these real images; no MCP model is stubbed or invoked.
+test("public real-frame visual replay persists no-extrusion warning through FINISH with networking blocked", async (t) => {
+  const dir = fixture(t),
+    log = path.join(dir, "network.log");
+  const spec = JSON.parse(
+    fs.readFileSync(
+      new URL("./fixtures/physical/replay.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const images = {
+    baseline: fs
+      .readFileSync(
+        new URL("./fixtures/physical/bed-out-of-view.jpg", import.meta.url),
+      )
+      .toString("base64"),
+    first: fs
+      .readFileSync(
+        new URL("./fixtures/physical/empty-first-layer.jpg", import.meta.url),
+      )
+      .toString("base64"),
+  };
+  const key = flightKey("127.0.0.1", "01PFIXTURE"),
+    store = new FlightRecords({ dir: path.join(dir, "records") });
+  const jobId = store.begin(key, {
+    sha256: spec.artifactSha256,
+    jobName: "visual-job.3mf",
+    mapping: [2],
+    expected: spec.expected,
+  });
+  store.observe(key, {
+    subtask_name: "visual-job",
+    gcode_state: "PREPARE",
+    layer_num: 0,
+    stg_cur: 2,
+  });
+  await store.sample(key, async () => ({ base64: images.baseline }));
+  store.observe(key, {
+    subtask_name: "visual-job",
+    gcode_state: "RUNNING",
+    layer_num: 1,
+  });
+  await store.sample(key, async () => ({ base64: images.first }));
+  const { frames } = store.read(key).record,
+    frame = frames.find((f) => f.role === "first_layer"),
+    baseline = frames.find((f) => f.role === "baseline");
+  const client = await recordClient(t, dir, log);
+  const read = await client.callTool({
+    name: "counterpart_print_record",
+    arguments: {
+      job_id: jobId,
+      frame_format: "images",
+      frame_ids: [baseline.id, frame.id],
+    },
+  });
+  assert.equal(read.isError, undefined, JSON.stringify(read));
+  assert.equal(read.structuredContent.physical.assessment.frameId, frame.id);
+  assert.equal(read.structuredContent.record.reports.length, 0);
+  assert.ok(read.structuredContent.record.omittedReports > 0);
+  assert.equal(read.content.filter((c) => c.type === "image").length, 2);
+  assert.ok(
+    read.content.some((c) => c.type === "image" && c.data === images.first),
+  );
+  assert.ok(read.structuredContent.record.frames.every((f) => !f.base64));
+  const assessed = await client.callTool({
+    name: "counterpart_print_assess",
+    arguments: {
+      job_id: jobId,
+      artifact_sha256: spec.artifactSha256,
+      frame_id: frame.id,
+      image_sha256: frame.sha256,
+      visibility: "clear",
+      footprint_visible: true,
+      deposition: "absent",
+      attempted: true,
+      reference_frame_id: baseline.id,
+      reference_visibility: "out_of_view",
+      reference_empty: false,
+    },
+  });
+  assert.equal(assessed.isError, undefined, JSON.stringify(assessed));
+  assert.equal(
+    assessed.structuredContent.physical.status,
+    "suspect_no_extrusion",
+  );
+  store.observe(key, {
+    subtask_name: "visual-job",
+    gcode_state: "RUNNING",
+    layer_num: 21,
+  });
+  store.observe(key, {
+    subtask_name: "visual-job",
+    gcode_state: "FINISH",
+    layer_num: 265,
+  });
+  const done = await client.callTool({
+    name: "counterpart_print_record",
+    arguments: { job_id: jobId },
+  });
+  assert.equal(done.structuredContent.record.latest.gcode_state, "FINISH");
+  assert.equal(done.structuredContent.physical.status, "suspect_no_extrusion");
+  assert.equal(
+    fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim() : "",
+    "",
+  );
 });

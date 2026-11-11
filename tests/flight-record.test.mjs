@@ -163,9 +163,14 @@ test("sampled frames bind to exact layer/height and are readable after restart w
     store.observe("p", report(layer));
     await store.sample("p", capture);
   }
-  const view = new FlightRecords({ dir }).read("p", { includeFrames: true });
-  assert.equal(calls, 4);
-  assert.equal(view.record.frames.length, 4);
+  const replay = new FlightRecords({ dir });
+  const ids = replay
+    .read("p")
+    .record.frames.slice(0, 4)
+    .map((f) => f.id);
+  const view = replay.read("p", { includeFrames: true, frameIds: ids });
+  assert.equal(calls, 5);
+  assert.equal(view.record.frames.length, 5);
   assert.equal(view.record.frames[1].expectedHeightMm, 24);
   assert.ok(view.record.frames[0].base64);
   assert.equal(view.physical.status, "unknown");
@@ -449,4 +454,16 @@ test("corrupt older records cannot prevent the total retained-job cap", (t) => {
     fs.readdirSync(dir).filter((name) => name.endsWith(".json")).length,
     1,
   );
+});
+
+test("a cached owner discovers a newer dispatch from another MCP instance", (t) => {
+  let now = 1000;
+  const { store, dir } = setup(t, { now: () => now });
+  const first = store.begin("p", dispatch);
+  now = 2000;
+  const other = new FlightRecords({ dir, now: () => now });
+  const second = other.begin("p", { ...dispatch, jobName: "newer-job" });
+  assert.equal(store.read("p").record.id, second);
+  assert.equal(new FlightRecords({ dir }).read("p").record.id, second);
+  assert.equal(store.read("p", { jobId: first }).record.id, first);
 });

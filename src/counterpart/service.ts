@@ -1,3 +1,5 @@
+import {physicalProblems} from "./visual-evidence.js";
+import type {VisualSubmission} from "./visual-evidence.js";
 import {flightKey,type ReadRecordOptions} from "./flight-record.js";
 import {CAD_CAPABILITY,cadEnabled} from "../cad/contracts.js";
 /**
@@ -122,6 +124,12 @@ export class CounterpartService {
     return implementation.flightRecords.read(generic?generic.flightRecordKey(target.host,target.port):flightKey(target.host,serial),options);
   }
 
+  assessPrintRecord(target:PrinterTarget,input:VisualSubmission){
+    const implementation=this.implementation(target.type),generic=this.generic(target);
+    const key=generic?generic.flightRecordKey(target.host,target.port):flightKey(target.host,target.apiKey.split(':')[0]);
+    return implementation.flightRecords.submitVisual(key,input);
+  }
+
   private physicalSample(target:PrinterTarget) {
     const implementation=this.implementation(target.type),generic=this.generic(target);
     const key=generic?generic.flightRecordKey(target.host,target.port):flightKey(target.host,target.apiKey.split(':')[0]);
@@ -133,12 +141,14 @@ export class CounterpartService {
     if (!generic) {
       const status = await this.bambu(target).getStatus(target.host, target.port, target.apiKey);
       this.physicalSample(target);
-      return {...mapBambu(status?.raw, new Date().toISOString(), { connected: status?.connected === true, model: process.env.BAMBU_MODEL }),physical:this.printRecord(target).physical};
+      const progress=mapBambu(status?.raw, new Date().toISOString(), { connected: status?.connected === true, model: process.env.BAMBU_MODEL }),physical=this.printRecord(target).physical;
+      return {...progress,physical,problems:[...progress.problems,...physicalProblems(physical)]};
     }
     try {
       const progress=await generic.observedProgress(target.host,target.port,target.apiKey);
       this.physicalSample(target);
-      return {...progress,physical:this.printRecord(target).physical};
+      const physical=this.printRecord(target).physical;
+      return {...progress,physical,problems:[...progress.problems,...physicalProblems(physical)]};
     } catch (error) {
       if (unreachable(error)) return progressResult(new Date().toISOString(), "offline", { problems: [] });
       throw error;

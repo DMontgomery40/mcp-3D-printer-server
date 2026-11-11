@@ -32,6 +32,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   counterpart_printer_info: read(true),
   counterpart_print_progress: read(true),
   counterpart_print_record: read(false),
+  counterpart_print_assess: write(false,true,false),
   counterpart_discover_printers: read(true), // listens for printers' own announcements on the local network
   counterpart_propose_filaments: read(true), // reads the printer's loaded filament
   counterpart_setup_fields: read(false), // the settings this server reads; no configured values
