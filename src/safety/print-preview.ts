@@ -153,7 +153,7 @@ function parameterWords(text: string): Map<string, number> {
 }
 
 /** An arc's centre from I/J (offsets from the start) or R (radius; negative takes the longer way round). */
-function arcCentre(x: number, y: number, tx: number, ty: number, clockwise: boolean, i?: number, j?: number, r?: number): [number, number] | undefined {
+export function arcCentre(x: number, y: number, tx: number, ty: number, clockwise: boolean, i?: number, j?: number, r?: number): [number, number] | undefined {
   if (i !== undefined || j !== undefined) return [x + (i ?? 0), y + (j ?? 0)];
   if (r === undefined || r === 0 || (tx === x && ty === y)) return undefined;
   const dx = tx - x, dy = ty - y, chord = Math.hypot(dx, dy);

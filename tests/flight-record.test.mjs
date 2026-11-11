@@ -519,3 +519,25 @@ test("an unmatched external job cannot attach its camera image to the previous r
   assert.equal(calls, 0);
   assert.equal(store.read("p").record.frames.length, 0);
 });
+
+
+test("arc-only extrusion footprints include full-circle and swept cardinal extrema", () => {
+  const cases = [
+    ["G0 X20 Y10\nG2 X20 Y10 I-10 J0 E3", [0,0,20,20]],
+    ["G0 X20 Y10\nG3 I-10 J0 E3", [0,0,20,20]],
+    ["G0 X20 Y10\nG3 X10 Y20 I-10 J0 E1", [10,10,20,20]],
+    ["G0 X10 Y20\nG2 X20 Y10 I0 J-10 E1", [10,10,20,20]],
+    ["G0 X20 Y10\nG3 X10 Y20 R10 E1", [10,10,20,20]],
+    ["G0 X20 Y10\nG3 X10 Y20 R-10 E3", [10,10,30,30]],
+    ["G0 X20 Y10\nG91\nG3 X-10 Y10 I-10 J0 E1", [10,10,20,20]],
+  ];
+  for (const [commands, expected] of cases) {
+    const actual=geometryFromGcode("M83\n; Z_HEIGHT: 0.2\n"+commands);
+    assert.equal(actual.heightMm,0.2,commands);
+    assert.ok(actual.layers[0]?.boundsMm,commands);
+    actual.layers[0].boundsMm.forEach((value,index)=>assert.ok(Math.abs(value-expected[index])<1e-8,commands+" "+JSON.stringify(actual)));
+  }
+  for (const commands of ["G0 X20 Y10\nG2 X20 Y10 R10 E1","G18\nG0 X20 Y10\nG2 X10 Y20 I-10 J0 E1"]) {
+    assert.deepEqual(geometryFromGcode("M83\n; Z_HEIGHT: 0.2\n"+commands),{layers:[]});
+  }
+});

@@ -1,3 +1,5 @@
+import { arcCentre } from "../safety/print-preview.js";
+
 /** Expected geometry from the exact selected plate's sliced commands, never printer progress. */
 export interface LayerGeometry {
   layer: number;
@@ -76,6 +78,7 @@ export function geometryFromGcode(gcode: string): PrintGeometry {
     // Do not invent bed-coordinate footprints for unsupported unit/work-coordinate changes.
     if (
       word === "G20" ||
+      word === "G18" || word === "G19" || word === "G90.1" ||
       word === "G53" ||
       (word === "G92" && (values.X !== undefined || values.Y !== undefined))
     )
@@ -111,9 +114,11 @@ export function geometryFromGcode(gcode: string): PrintGeometry {
       word !== "G0" &&
       !changingFilament &&
       feature !== "custom" &&
-      (values.X !== undefined || values.Y !== undefined)
+      (values.X !== undefined || values.Y !== undefined || word === "G2" || word === "G3")
     ) {
       if (positionUnknown) return { layers: [] };
+      const bounds = motionBounds(x, y, nx, ny, word, values);
+      if (!bounds) return { layers: [] };
       if (!layer) {
         // Repeated Z values do not create fictitious additional layers.
         layer =
@@ -126,10 +131,10 @@ export function geometryFromGcode(gcode: string): PrintGeometry {
       if (layer) {
         const previous = layer.boundsMm;
         layer.boundsMm = [
-          Math.min(previous?.[0] ?? x, x, nx),
-          Math.min(previous?.[1] ?? y, y, ny),
-          Math.max(previous?.[2] ?? x, x, nx),
-          Math.max(previous?.[3] ?? y, y, ny),
+          Math.min(previous?.[0] ?? bounds[0], bounds[0]),
+          Math.min(previous?.[1] ?? bounds[1], bounds[1]),
+          Math.max(previous?.[2] ?? bounds[2], bounds[2]),
+          Math.max(previous?.[3] ?? bounds[3], bounds[3]),
         ];
       }
     }
@@ -145,6 +150,31 @@ export function geometryFromGcode(gcode: string): PrintGeometry {
       : {}),
     layers,
   };
+}
+
+/** Include the cardinal extrema actually swept by an XY arc, including I/J full circles. */
+function motionBounds(x: number, y: number, nx: number, ny: number, word: string, values: Record<string, number>): [number, number, number, number] | undefined {
+  const bounds: [number, number, number, number] = [Math.min(x,nx),Math.min(y,ny),Math.max(x,nx),Math.max(y,ny)];
+  if (!bounds.every(Number.isFinite)) return;
+  if (word !== "G2" && word !== "G3") return bounds;
+  const clockwise = word === "G2";
+  const centre = arcCentre(x,y,nx,ny,clockwise,values.I,values.J,values.R);
+  if (!centre || !centre.every(Number.isFinite)) return;
+  const [cx,cy] = centre, radius = Math.hypot(x-cx,y-cy);
+  if (!Number.isFinite(radius) || radius <= 0 || Math.abs(Math.hypot(nx-cx,ny-cy)-radius) > Math.max(0.01,radius*0.001)) return;
+  const turn = 2*Math.PI;
+  const normal = (angle:number) => ((angle % turn)+turn)%turn;
+  const start = Math.atan2(y-cy,x-cx), end = Math.atan2(ny-cy,nx-cx);
+  const sweep = normal(clockwise ? start-end : end-start);
+  const full = x === nx && y === ny;
+  for (const angle of [0,Math.PI/2,Math.PI,3*Math.PI/2]) {
+    const distance = normal(clockwise ? start-angle : angle-start);
+    if (!full && distance > sweep+1e-10) continue;
+    const px = cx+radius*Math.cos(angle), py = cy+radius*Math.sin(angle);
+    bounds[0]=Math.min(bounds[0],px); bounds[1]=Math.min(bounds[1],py);
+    bounds[2]=Math.max(bounds[2],px); bounds[3]=Math.max(bounds[3],py);
+  }
+  return bounds;
 }
 
 /** Best-effort diagnostics only: an unreadable/oversize file cannot fail an already dispatched print. */
