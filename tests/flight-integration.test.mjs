@@ -441,6 +441,11 @@ test("public real-frame visual replay persists no-extrusion warning through FINI
   current = {subtask_name:"visual-job",gcode_state:"FINISH",layer_num:265};
   connected = false;
   assert.equal((await service.printProgress(target)).physical.status,"unknown");
+  connected=true;
+  current={subtask_name:"visual-job",gcode_state:"RUNNING",layer_num:1,task_id:"new-execution"};
+  assert.equal((await service.printProgress(target)).physical.status,"unknown");
+  current={subtask_name:"visual-job",gcode_state:"FINISH",layer_num:265,task_id:"new-execution"};
+  assert.equal((await service.printProgress(target)).physical.status,"unknown");
   assert.equal(store.read(key,{jobId}).physical.status,"suspect_no_extrusion");
   assert.equal(
     fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim() : "",

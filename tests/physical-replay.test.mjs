@@ -176,6 +176,9 @@ test("the real lowered-bed frame as current evidence remains unknown", async (t)
 test("pruning a job removes its saved visual observations too", async (t) => {
   const s = await replay(t);
   s.store.submitVisual("printer", s.input);
+  s.report("FINISH",265);
+  new FlightRecords({dir:s.dir}).observe("printer",{subtask_name:"offline-air",gcode_state:"RUNNING",layer_num:1});
+  assert.ok(fs.readdirSync(s.dir).some(f=>f.endsWith(".superseded")));
   const json = fs.readdirSync(s.dir).find((f) => f.endsWith(s.jobId + ".json"));
   fs.utimesSync(path.join(s.dir, json), 0, 0);
   new FlightRecords({ dir: s.dir, maxJobs: 1 }).begin("new", {
@@ -183,6 +186,7 @@ test("pruning a job removes its saved visual observations too", async (t) => {
     jobName: "new.3mf",
   });
   assert.equal(s.store.read("printer").status, "unavailable");
+  assert.ok(!fs.readdirSync(s.dir).some(f=>f.endsWith(".superseded")));
   assert.equal(
     fs.readdirSync(s.dir).filter((f) => f.endsWith(".visual.json")).length,
     0,
@@ -268,4 +272,46 @@ test("progress evidence belongs only to the currently reported job while archive
   const restarted=new FlightRecords({dir:s.dir});
   assert.equal(restarted.physicalForReport("printer",{gcode_file:"cache/offline-air.3mf",gcode_state:"FINISH"}).status,"suspect_no_extrusion");
   assert.equal(restarted.physicalForReport("printer",{gcode_file:"cache/other.3mf"}).status,"unknown");
+});
+
+
+test("a same-filename reprint cannot inherit a previous execution's physical warning", async (t) => {
+  const s=await replay(t);
+  s.store.submitVisual("printer",s.input);
+  const raw=(state,id)=>({subtask_name:"offline-air",gcode_state:state,layer_num:1,...(id?{task_id:id}:{})});
+  s.store.observe("printer",raw("RUNNING","private-task-first"));
+  s.store.observe("printer",raw("FINISH","private-task-first"));
+  assert.equal(s.store.physicalForReport("printer",raw("FINISH","private-task-first")).status,"suspect_no_extrusion");
+  assert.equal(s.store.physicalForReport("printer",raw("RUNNING","private-task-second")).status,"unknown");
+  s.store.observe("printer",raw("RUNNING","private-task-second"));
+  s.store.observe("printer",raw("FINISH","private-task-second"));
+  const restarted=new FlightRecords({dir:s.dir});
+  assert.equal(restarted.physicalForReport("printer",raw("FINISH","private-task-second")).status,"unknown");
+  assert.equal(restarted.read("printer",{jobId:s.jobId}).physical.status,"suspect_no_extrusion");
+  assert.ok(!JSON.stringify(restarted.read("printer")).includes("private-task-"));
+});
+test("ended-to-active reprints without execution IDs and changed active task IDs both invalidate current evidence", async (t) => {
+  for (const withIds of [false,true]) {
+    const s=await replay(t);s.store.submitVisual("printer",s.input);
+    const raw=(state,id)=>({subtask_name:"offline-air",gcode_state:state,layer_num:1,...(withIds?{task_id:id}:{})});
+    s.store.observe("printer",raw("RUNNING","first"));
+    if(!withIds)s.store.observe("printer",raw("FINISH","first"));
+    assert.equal(s.store.physicalForReport("printer",raw("RUNNING","second")).status,"unknown");
+    s.store.observe("printer",raw("RUNNING","second"));
+    assert.equal(s.store.physicalForReport("printer",raw("RUNNING","second")).status,"unknown");
+    assert.equal(new FlightRecords({dir:s.dir}).read("printer",{jobId:s.jobId}).physical.status,"suspect_no_extrusion");
+  }
+});
+
+
+test("a separate live observer durably invalidates a reprint without overwriting its dispatch owner's journal",async(t)=>{
+  const s=await replay(t);s.store.submitVisual("printer",s.input);s.report("FINISH",265);
+  const before=s.store.read("printer").record.reports;
+  const observer=new FlightRecords({dir:s.dir});
+  observer.observe("printer",{subtask_name:"offline-air",gcode_state:"RUNNING",layer_num:1});
+  assert.equal(s.store.physicalForReport("printer",{subtask_name:"offline-air",gcode_state:"FINISH"}).status,"unknown");
+  const restarted=new FlightRecords({dir:s.dir});
+  assert.equal(restarted.physicalForReport("printer",{subtask_name:"offline-air",gcode_state:"FINISH"}).status,"unknown");
+  assert.deepEqual(restarted.read("printer").record.reports,before);
+  assert.equal(restarted.read("printer",{jobId:s.jobId}).physical.status,"suspect_no_extrusion");
 });

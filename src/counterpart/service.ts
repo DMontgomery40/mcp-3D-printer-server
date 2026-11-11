@@ -149,7 +149,7 @@ export class CounterpartService {
     try {
       const progress=await generic.observedProgress(target.host,target.port,target.apiKey);
       this.physicalSample(target);
-      const physical=generic.flightRecords.physicalForReport(generic.flightRecordKey(target.host,target.port),{subtask_name:progress.job?.name});
+      const physical=generic.flightRecords.physicalForReport(generic.flightRecordKey(target.host,target.port),{subtask_name:progress.job?.name,gcode_state:progress.state});
       return {...progress,physical,problems:[...progress.problems,...physicalProblems(physical)]};
     } catch (error) {
       if (unreachable(error)) return progressResult(new Date().toISOString(), "offline", { problems: [] });
