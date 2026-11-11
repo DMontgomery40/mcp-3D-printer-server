@@ -19,6 +19,10 @@ export function geometryFromGcode(gcode: string): PrintGeometry {
     y = 0,
     e = 0,
     relative = false,
+    absoluteXY = true,
+    positionUnknown = false,
+    changingFilament = false,
+    feature = "",
     executableEnded = false;
   for (const line of gcode.split(/\r?\n/)) {
     if (line === "; EXECUTABLE_BLOCK_END") executableEnded = true;
@@ -36,29 +40,80 @@ export function geometryFromGcode(gcode: string): PrintGeometry {
       line,
     );
     if (declared) currentIndex = Number(declared[1]);
-    if (/^M83(?:\s|$)/.test(line)) relative = true;
-    if (/^M82(?:\s|$)/.test(line)) relative = false;
-    const command = line.split(";")[0];
-    if (/^G92\b/.test(command)) {
-      const reset = /\bE(-?[\d.]+)/.exec(command);
-      if (reset) e = Number(reset[1]);
+    const featureMatch = /^;\s*(?:FEATURE|TYPE):\s*(.*)/i.exec(line);
+    if (featureMatch) feature = featureMatch[1].trim().toLowerCase();
+    const command = line
+      .split(";")[0]
+      .trim()
+      .toUpperCase()
+      .replace(/^N\d+\s*/, "")
+      .replace(/\*\d+\s*$/, "");
+    const parsed = /^([GMT])(\d+(?:\.\d+)?)/.exec(command);
+    if (!parsed) continue;
+    const word = parsed[1] + String(Number(parsed[2]));
+    const values: Record<string, number> = {};
+    for (const match of command
+      .slice(parsed[0].length)
+      .matchAll(/([A-Z])\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))/g)) {
+      if (values[match[1]] === undefined) values[match[1]] = Number(match[2]);
     }
-    if (!/^G[123]\s/.test(command)) continue;
-    const values = Object.fromEntries(
-      [...command.matchAll(/\b([XYE])(-?\d*\.?\d+)/g)].map((m) => [
-        m[1],
-        Number(m[2]),
-      ]),
-    );
-    const nx = values.X ?? x,
-      ny = values.Y ?? y;
+    if (word === "G90") {
+      absoluteXY = true;
+      continue;
+    }
+    if (word === "G91") {
+      absoluteXY = false;
+      continue;
+    }
+    if (word === "M83") {
+      relative = true;
+      continue;
+    }
+    if (word === "M82") {
+      relative = false;
+      continue;
+    }
+    // Do not invent bed-coordinate footprints for unsupported unit/work-coordinate changes.
+    if (
+      word === "G20" ||
+      word === "G53" ||
+      (word === "G92" && (values.X !== undefined || values.Y !== undefined))
+    )
+      return { layers: [] };
+    if (word === "G28") {
+      positionUnknown = true;
+      continue;
+    }
+    if (Object.values(values).some((v) => !Number.isFinite(v)))
+      return { layers: [] };
+    if (word === "G92") {
+      if (values.E !== undefined) e = values.E;
+      continue;
+    }
+    if (word === "M620" && values.S !== undefined) {
+      changingFilament = true;
+      continue;
+    }
+    if (word === "M621" && values.S !== undefined) {
+      changingFilament = false;
+      continue;
+    }
+    if (!["G0", "G1", "G2", "G3"].includes(word)) continue;
+    const nx =
+      values.X === undefined ? x : absoluteXY ? values.X : x + values.X;
+    const ny =
+      values.Y === undefined ? y : absoluteXY ? values.Y : y + values.Y;
     const extrusion =
       values.E === undefined ? 0 : relative ? values.E : values.E - e;
     if (
       z !== undefined &&
       extrusion > 0 &&
+      word !== "G0" &&
+      !changingFilament &&
+      feature !== "custom" &&
       (values.X !== undefined || values.Y !== undefined)
     ) {
+      if (positionUnknown) return { layers: [] };
       if (!layer) {
         // Repeated Z values do not create fictitious additional layers.
         layer =
@@ -78,6 +133,8 @@ export function geometryFromGcode(gcode: string): PrintGeometry {
         ];
       }
     }
+    if (absoluteXY && values.X !== undefined && values.Y !== undefined)
+      positionUnknown = false;
     x = nx;
     y = ny;
     if (values.E !== undefined) e = relative ? e + values.E : values.E;

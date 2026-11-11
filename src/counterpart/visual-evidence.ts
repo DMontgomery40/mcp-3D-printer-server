@@ -1,4 +1,5 @@
 /** Visual observations come from the client's worker; this module runs no image model or printer I/O. */
+import { frameMatchesReport } from "./physical-evidence.js";
 import type { EvidenceFrame, PhysicalEvidence } from "./physical-evidence.js";
 import type { PrintGeometry } from "./print-geometry.js";
 
@@ -98,10 +99,7 @@ export function assessVisual(
     !footprint.every(Number.isFinite) ||
     footprint[2] <= footprint[0] ||
     footprint[3] <= footprint[1] ||
-    !Number.isFinite(Date.parse(frame.capturedAt)) ||
-    !Number.isFinite(Date.parse(frame.reportAt)) ||
-    Math.abs(Date.parse(frame.capturedAt) - Date.parse(frame.reportAt)) >
-      15000 ||
+    !frameMatchesReport(frame) ||
     !observation.attempted
   )
     return unknown(
@@ -153,6 +151,7 @@ export function assessmentRequest(
   const pending = frames.filter(
     (f) =>
       f.status === "captured" &&
+      frameMatchesReport(f) &&
       f.role !== "baseline" &&
       !observations.some((o) => o.frameId === f.id),
   );

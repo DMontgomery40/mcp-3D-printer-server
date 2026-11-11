@@ -188,3 +188,67 @@ test("pruning a job removes its saved visual observations too", async (t) => {
     0,
   );
 });
+
+test("preparation images captured before the printing report cannot support a no-extrusion verdict", async (t) => {
+  const s = await replay(t);
+  const recordFile = fs
+    .readdirSync(s.dir)
+    .find((f) => f.endsWith(s.jobId + ".json"));
+  const record = JSON.parse(
+    fs.readFileSync(path.join(s.dir, recordFile), "utf8"),
+  );
+  const frame = record.frames.find((f) => f.id === s.frame.id);
+  frame.capturedAt = new Date(Date.parse(frame.reportAt) - 10000).toISOString();
+  fs.writeFileSync(path.join(s.dir, recordFile), JSON.stringify(record));
+  const fresh = new FlightRecords({ dir: s.dir });
+  assert.equal(
+    fresh.submitVisual("printer", s.input).physical.status,
+    "unknown",
+  );
+  assert.equal(fresh.read("printer").physical.assessment, undefined);
+});
+
+test("an active camera waits for a post-boundary frame instead of reusing a preparation image", async () => {
+  const { snapshotFrame } = await import("../dist/counterpart/fresh-frame.js");
+  const calls = [];
+  const frames = [
+    {
+      status: "frame",
+      seq: 5,
+      capturedAt: new Date(90000).toISOString(),
+      base64: lowered,
+    },
+    {
+      status: "frame",
+      seq: 6,
+      capturedAt: new Date(100001).toISOString(),
+      base64: empty,
+    },
+  ];
+  const result = await snapshotFrame(
+    {
+      frame: async (opts) => {
+        calls.push(opts);
+        return frames.shift();
+      },
+    },
+    500,
+    new Date(100000).toISOString(),
+  );
+  assert.equal(result.seq, 6);
+  assert.equal(result.base64, empty);
+  assert.equal(calls[1].sinceSeq, 5);
+  const unavailable = await snapshotFrame(
+    {
+      frame: async () => ({
+        status: "frame",
+        seq: 5,
+        capturedAt: new Date(90000).toISOString(),
+        base64: lowered,
+      }),
+    },
+    500,
+    new Date(100000).toISOString(),
+  );
+  assert.equal(unavailable.status, "unavailable");
+});

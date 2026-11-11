@@ -1,3 +1,4 @@
+import {snapshotFrame} from "./fresh-frame.js";
 import {physicalProblems} from "./visual-evidence.js";
 import type {VisualSubmission} from "./visual-evidence.js";
 import {flightKey,type ReadRecordOptions} from "./flight-record.js";
@@ -67,6 +68,7 @@ export interface PrinterTarget {
 }
 
 export interface SnapshotOptions {
+  capturedAfter?: string;
   savePath?: string;
   timeoutMs?: number;
 }
@@ -133,7 +135,7 @@ export class CounterpartService {
   private physicalSample(target:PrinterTarget) {
     const implementation=this.implementation(target.type),generic=this.generic(target);
     const key=generic?generic.flightRecordKey(target.host,target.port):flightKey(target.host,target.apiKey.split(':')[0]);
-    void implementation.flightRecords.sample(key,()=>this.cameraSnapshot(target,{timeoutMs:8000})).catch(()=>undefined);
+    void implementation.flightRecords.sample(key,after=>this.cameraSnapshot(target,{timeoutMs:8000,capturedAfter:after})).catch(()=>undefined);
   }
 
   async printProgress(target: PrinterTarget): Promise<CounterpartProgress> {
@@ -271,7 +273,7 @@ export class CounterpartService {
     }
     const active = this.streams.get(this.cameraKey(target));
     if (active && !active.stopped) {
-      const frame=await active.frame({waitMs:Math.min(timeoutMs,10000),changedOnly:false});
+      const frame=await snapshotFrame(active,timeoutMs,options.capturedAfter);
       const jpeg=frame.status==="frame"&&frame.base64?Buffer.from(frame.base64,"base64"):undefined;
       if (!jpeg) throw new Error("The active camera stream has not produced a frame.");
       if (options.savePath) await fs.writeFile(options.savePath, jpeg);

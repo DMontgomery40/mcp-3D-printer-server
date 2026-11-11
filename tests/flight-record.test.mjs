@@ -467,3 +467,35 @@ test("a cached owner discovers a newer dispatch from another MCP instance", (t) 
   assert.equal(new FlightRecords({ dir }).read("p").record.id, second);
   assert.equal(store.read("p", { jobId: first }).record.id, first);
 });
+
+test("camera acquisition cannot precede its layer report even within the old 15-second window", async (t) => {
+  const { store } = setup(t, { now: () => 100000 });
+  store.begin("p", {
+    ...dispatch,
+    expected: {
+      heightMm: 80,
+      layers: [{ layer: 1, zMm: 4, boundsMm: [1, 1, 20, 20] }],
+    },
+  });
+  store.observe("p", report(1));
+  let boundary;
+  await store.sample("p", async (after) => {
+    boundary = after;
+    return {
+      base64: Buffer.from([255, 216, 255, 217]).toString("base64"),
+      capturedAt: new Date(95000).toISOString(),
+    };
+  });
+  assert.equal(boundary, new Date(100000).toISOString());
+  assert.equal(store.read("p").record.frames[0].status, "unavailable");
+});
+test("expected footprint tracks rapid travel, relative XY and accepted compact command syntax", () => {
+  const a = geometryFromGcode(
+    "M83\n; Z_HEIGHT: 0.2\nG0 X100 Y100\nG1 X110 Y110 E1",
+  );
+  assert.deepEqual(a.layers[0].boundsMm, [100, 100, 110, 110]);
+  const b = geometryFromGcode(
+    "M83\n; Z_HEIGHT: 0.2\nN10 G00X100Y100*1\nG91\nG01X+10Y+10E1\nG1 X10 Y10 E1",
+  );
+  assert.deepEqual(b.layers[0].boundsMm, [100, 100, 120, 120]);
+});
