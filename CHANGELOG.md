@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.69] – 2026-11-11
+
+### Changed
+
+- `fdm_design` says when and how a design agent researches before designing or asking: whenever the request names something that exists outside the person's hands (a product, a vehicle and year, a case, a standard part, a mounting place) or a decision turns on a fact about the world; six short steps (list the deciding facts, search each by exact name and generation, read the page not the snippet, rephrase before writing "not found", keep each value with its source, design around what stays unknown) sized to take a few minutes with any model that has web tools; and never to ask the person for what a search answers. Prompt text only; checked with the design-guidance tests; no printer contacted.
+
 ## [1.2.68] – 2026-11-11
 
 ### Fixed
