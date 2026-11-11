@@ -423,6 +423,25 @@ test("public real-frame visual replay persists no-extrusion warning through FINI
   });
   assert.equal(done.structuredContent.record.latest.gcode_state, "FINISH");
   assert.equal(done.structuredContent.physical.status, "suspect_no_extrusion");
+
+  // Reuse the saved evidence through the real service without contacting a printer.
+  const { CounterpartService } = await import("../dist/counterpart/service.js");
+  const bambu = new BambuImplementation({});
+  Object.defineProperty(bambu, "flightRecords", {value:store});
+  let current = {subtask_name:"visual-job",gcode_state:"FINISH",layer_num:265};
+  let connected = true;
+  bambu.getStatus = async () => ({connected,raw:current});
+  const service = new CounterpartService(()=>bambu,{}, {name:"fixture",version:"1"});
+  const target={type:"bambu",host:"127.0.0.1",port:"8883",apiKey:"01PFIXTURE:fixture-token"};
+  assert.equal((await service.printProgress(target)).physical.status,"suspect_no_extrusion");
+  current = {subtask_name:"external-next-print",gcode_state:"RUNNING",layer_num:1};
+  const next=await service.printProgress(target);
+  assert.equal(next.physical.status,"unknown");
+  assert.ok(!next.problems.some(p=>p.code==="physical-no-extrusion"));
+  current = {subtask_name:"visual-job",gcode_state:"FINISH",layer_num:265};
+  connected = false;
+  assert.equal((await service.printProgress(target)).physical.status,"unknown");
+  assert.equal(store.read(key,{jobId}).physical.status,"suspect_no_extrusion");
   assert.equal(
     fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim() : "",
     "",

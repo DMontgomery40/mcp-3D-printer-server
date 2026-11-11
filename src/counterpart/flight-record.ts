@@ -348,6 +348,25 @@ export class FlightRecords {
     }
     this.save(record);
   }
+  /** Progress may expose saved evidence only for the job in this returned report. */
+  physicalForReport(key: string, raw: Record<string, any> | null | undefined) {
+    const record = this.get(key);
+    const names = [raw?.subtask_name, raw?.gcode_file].filter(
+      (name): name is string => typeof name === "string" && !!name,
+    );
+    if (!record || !names.some((name) => hash(stem(name)) === record.dispatch.jobHash)) {
+      return {
+        status: "unknown" as const,
+        evidence: [],
+        limitations: [
+          "No retained physical evidence matches the currently reported job.",
+          "Firmware completion is separate from physical success.",
+        ],
+      };
+    }
+    // Bind this read to the matched record even if another MCP dispatches concurrently.
+    return this.read(key, { jobId: record.id }).physical;
+  }
   read(key: string, options: ReadRecordOptions = {}) {
     if (
       options.jobId &&

@@ -143,13 +143,13 @@ export class CounterpartService {
     if (!generic) {
       const status = await this.bambu(target).getStatus(target.host, target.port, target.apiKey);
       this.physicalSample(target);
-      const progress=mapBambu(status?.raw, new Date().toISOString(), { connected: status?.connected === true, model: process.env.BAMBU_MODEL }),physical=this.printRecord(target).physical;
+      const progress=mapBambu(status?.raw, new Date().toISOString(), { connected: status?.connected === true, model: process.env.BAMBU_MODEL }),physical=this.bambu(target).flightRecords.physicalForReport(flightKey(target.host,target.apiKey.split(':')[0]),status?.connected===true?status.raw:undefined);
       return {...progress,physical,problems:[...progress.problems,...physicalProblems(physical)]};
     }
     try {
       const progress=await generic.observedProgress(target.host,target.port,target.apiKey);
       this.physicalSample(target);
-      const physical=this.printRecord(target).physical;
+      const physical=generic.flightRecords.physicalForReport(generic.flightRecordKey(target.host,target.port),{subtask_name:progress.job?.name});
       return {...progress,physical,problems:[...progress.problems,...physicalProblems(physical)]};
     } catch (error) {
       if (unreachable(error)) return progressResult(new Date().toISOString(), "offline", { problems: [] });

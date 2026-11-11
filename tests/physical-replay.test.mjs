@@ -252,3 +252,20 @@ test("an active camera waits for a post-boundary frame instead of reusing a prep
   );
   assert.equal(unavailable.status, "unavailable");
 });
+
+
+test("progress evidence belongs only to the currently reported job while archived evidence stays readable", async (t) => {
+  const s = await replay(t);
+  s.store.submitVisual("printer", s.input);
+  assert.equal(s.store.physicalForReport("printer", {subtask_name:"offline-air",gcode_state:"RUNNING"}).status,"suspect_no_extrusion");
+  for (const raw of [undefined, {}, {subtask_name:"external-next-print",gcode_state:"RUNNING"}]) {
+    const physical=s.store.physicalForReport("printer",raw);
+    assert.equal(physical.status,"unknown");
+    assert.deepEqual(physical.evidence,[]);
+    assert.equal(physical.assessment,undefined);
+  }
+  assert.equal(s.store.read("printer",{jobId:s.jobId}).physical.status,"suspect_no_extrusion");
+  const restarted=new FlightRecords({dir:s.dir});
+  assert.equal(restarted.physicalForReport("printer",{gcode_file:"cache/offline-air.3mf",gcode_state:"FINISH"}).status,"suspect_no_extrusion");
+  assert.equal(restarted.physicalForReport("printer",{gcode_file:"cache/other.3mf"}).status,"unknown");
+});
