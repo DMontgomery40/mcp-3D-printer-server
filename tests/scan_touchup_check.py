@@ -126,4 +126,15 @@ with tempfile.TemporaryDirectory() as tmp:
     rgb[:, int(0.46 * w):] = 0.8
     band = _texture_band(rgb, UVq, Fq, Vq, Fq, 0.4, 3.0)
     assert np.abs(band).max() < 1e-4, f"atlas neighbours bled into the stitch band: {np.abs(band).max()}"
+    # The same two islands with a detailed normal map on the left one and a flat one on the right: the measured
+    # relief stays on the detailed island (Codex review, 2026-11-11: one atlas-wide solve carried it across the gap).
+    from scan_touchup import _height_map
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    nrm = np.zeros((h, w, 3), dtype=np.float32)
+    nrm[..., 0], nrm[..., 1], nrm[..., 2] = 0.5 + 0.3 * np.sin(xx / 3.0), 0.5 + 0.3 * np.cos(yy / 4.0), 1.0
+    nrm[:, int(0.46 * w):] = (0.5, 0.5, 1.0)
+    relief, _ = _height_map(nrm, UVq, Fq, Vq, Fq, 8.0, 0.3)
+    left, right = relief[:, : int(0.45 * w)], relief[:, int(0.47 * w):]
+    assert np.abs(left).max() > 0.05, f"the detailed island lost its relief: {np.abs(left).max()}"
+    assert np.abs(right).max() < 1e-4, f"relief crossed the atlas gap to the flat island: {np.abs(right).max()}"
     print(json.dumps({"ok": True, "seconds": round(time.time() - started, 1)}))

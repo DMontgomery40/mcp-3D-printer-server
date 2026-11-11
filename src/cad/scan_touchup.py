@@ -234,23 +234,38 @@ def _texture_space(UV, FT, V, F, w, h, islands=False):
 
 def _height_map(normal_rgb, UV, FT, V, F, longest_mm, finest_mm):
     """Integrates the tangent-space normal map (OpenGL: +X along U, +Y along V, as Object Capture writes it) with a
-    screened Poisson solve: the height (mm) of the scan's fine detail over its coarse surface, per texel."""
-    from scipy.ndimage import binary_erosion, gaussian_filter
+    screened Poisson solve: the height (mm) of the scan's fine detail over its coarse surface, per texel. Each UV
+    island is solved, smoothed and faded on its own, so relief never crosses the atlas gap to a neighbouring island
+    (Codex review, 2026-11-11)."""
+    from scipy.ndimage import binary_erosion, find_objects, gaussian_filter
     h, w = normal_rgb.shape[:2]
-    mask, mm = _texture_space(UV, FT, V, F, w, h)
+    islands, mm = _texture_space(UV, FT, V, F, w, h, islands=True)
     n = normal_rgb * 2 - 1
     nz = np.maximum(n[..., 2], 0.2)
-    g_col = np.where(mask, -n[..., 0] / nz, 0).astype(np.float32)
-    g_row = np.where(mask, n[..., 1] / nz, 0).astype(np.float32)  # image rows run down: -V
-    kx = (2 * np.pi * np.fft.rfftfreq(w)).astype(np.float32)[None, :]
-    ky = (2 * np.pi * np.fft.fftfreq(h)).astype(np.float32)[:, None]
+    g_col = (-n[..., 0] / nz).astype(np.float32)
+    g_row = (n[..., 1] / nz).astype(np.float32)  # image rows run down: -V
     k0 = np.float32(2 * np.pi * mm / longest_mm)
-    spectrum = -(1j * kx * np.fft.rfft2(g_col) + 1j * ky * np.fft.rfft2(g_row)) / (kx ** 2 + ky ** 2 + k0 ** 2)
-    height = np.fft.irfft2(spectrum, s=(h, w)).astype(np.float32) * np.float32(mm)
-    del spectrum, g_col, g_row
-    height = gaussian_filter(height, max(finest_mm / mm / 2, 0.5))
-    inner = binary_erosion(mask, iterations=max(2, int(round(0.4 / mm))))  # seams were integrated apart
-    return height * gaussian_filter(inner.astype(np.float32), max(1.0, 0.3 / mm)), mm
+    pad = int(np.ceil(6 / k0))  # the screened solve decays over 1 / k0 texels
+    smooth, fade = max(finest_mm / mm / 2, 0.5), max(1.0, 0.3 / mm)
+    erode = max(2, int(round(0.4 / mm)))  # seams were integrated apart
+    height = np.zeros((h, w), dtype=np.float32)
+    for k, box in enumerate(find_objects(islands), start=1):
+        if box is None:
+            continue
+        rows = slice(max(box[0].start - pad, 0), min(box[0].stop + pad, h))
+        cols = slice(max(box[1].start - pad, 0), min(box[1].stop + pad, w))
+        m = islands[rows, cols] == k
+        hc, wc = m.shape
+        kx = (2 * np.pi * np.fft.rfftfreq(wc)).astype(np.float32)[None, :]
+        ky = (2 * np.pi * np.fft.fftfreq(hc)).astype(np.float32)[:, None]
+        spectrum = -(1j * kx * np.fft.rfft2(np.where(m, g_col[rows, cols], 0)) +
+                     1j * ky * np.fft.rfft2(np.where(m, g_row[rows, cols], 0))) / (kx ** 2 + ky ** 2 + k0 ** 2)
+        part = np.fft.irfft2(spectrum, s=(hc, wc)).astype(np.float32) * np.float32(mm)
+        mf_ = m.astype(np.float32)
+        part = gaussian_filter(part * mf_, smooth) / np.maximum(gaussian_filter(mf_, smooth), 1e-3)
+        inner = gaussian_filter(binary_erosion(m, iterations=erode).astype(np.float32), fade)
+        height[rows, cols] += part * inner * mf_
+    return height, mm
 
 
 def _texture_band(rgb, UV, FT, V, F, finest_mm, longest_mm):
