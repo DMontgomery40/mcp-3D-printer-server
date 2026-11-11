@@ -270,7 +270,7 @@ When the context supplies fit observations from this printer, filament and orien
 ## Getting in and staying
 
 - Size a pocket to the widest section the object passes through on the way in, not to its bounding box or the scan's average.
-- Make the pocket's corner radii at least the object's own.
+- Derive a pocket's outline by offsetting the object's own outline outward by the clearance, so each pocket corner radius is the object's plus the clearance. A pocket corner rounder than that cuts into the object's corner even when the width and length clear; a sharper one is safe, or relieve the corner. Check the clearance at the corners, not only across the flats.
 - Put a lead-in chamfer at the mouth. Prusa notes that a chamfer on edges that slot together saves effort when assembling. [F3]
 - Over a span of more than about 150 mm, make wall-screw holes slots so the part can be placed despite measuring error. This is an app prior, not a sourced value.
 
