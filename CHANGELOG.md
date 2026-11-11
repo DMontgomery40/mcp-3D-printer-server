@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `cad_run` measures the bodies of a solid result: the closest approach between every pair of solids in the exported STEP (screened on tessellations with Manifold's `min_gap`, then measured exactly on the B-rep for each pair it reports), touching or overlapping pairs, pairs under a print-in-place clearance (a literal `P["print_in_place_clearance_mm"]`, else 0.3 mm from Prusa's "at least 0.3 mm" for movable parts), solids that start above the bed, and, when `build()` returns `Compound(children=[...])` with a label on each body, any labelled body that is not exactly one solid, so a piece cut off one body cannot hide behind two bodies fused into one in `solid_count`. The result adds `bodies`, `problems`, `checked` and `not_checked`; `valid` keeps its meaning (the exported geometry is sound) and the result now says what that does not establish: fit, strength, motion and printing, and, for unlabelled multi-solid results, which solids are meant to be separate. Regression fixtures rebuild the print-in-place failures of the 2026-11-11 design council in build123d (fused and too-close links, a severed frame with its pawl fused to the wheel at a correct solid count, discs starting 1.6 mm up), each of which passed as `valid: true` before. Passing designs add 0.01 to 0.4 s to inspection. Checked with `tests/cad-bodies.test.mjs` against the pinned CAD runtime; no printer contacted.
+
 ## [1.2.70] – 2026-11-11
 
 ### Changed

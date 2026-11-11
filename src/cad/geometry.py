@@ -1,5 +1,6 @@
 """Independent geometry checks, six orthographic views and triangle-exact surface separation."""
 from pathlib import Path
+import json
 import math
 import numpy as np
 import trimesh
@@ -31,11 +32,147 @@ def inspect(request):
     checks = {'watertight': bool(m.is_watertight), 'winding_consistent': bool(m.is_winding_consistent), 'positive_volume': bool(m.is_volume),
               'manifold': mm.status() == mf.Error.NoError, 'step_valid': bool(step.is_valid) if step is not None else None,
               'stl_step_bounds_agree': bool(np.max(np.abs(m.bounds - np.array(step_bounds))) <= 0.2) if step_bounds is not None else None}
+    try:
+        assembly = bodies(step, request) if step is not None else None
+    except Exception as e:   # a failed measurement must not cost the person the export; it is reported, not passed
+        assembly = {'error': f'{type(e).__name__}: {e}'[:300]}
     return {'valid': all(v for v in checks.values() if v is not None), 'units': 'mm', 'bounds_mm': bounds,
             'size_mm': m.extents.tolist(), 'volume_mm3': float(m.volume) if m.is_volume else None,
             'step_volume_mm3': float(step.volume) if step is not None else None, 'solid_count': len(step.solids()) if step is not None else len(m.split(only_watertight=True)),
             'mesh_components': len(m.split(only_watertight=False)), 'checks': checks,
+            **evidence(assembly),
             'renders': render(m, base.parent / (base.name + '.renders'))}
+
+
+# Starting print-in-place gap between separate bodies: Prusa's first value for movable parts is "at least 0.3 mm"
+# (design guidance, fdm_fit [F3]). A script sets its own with a literal P["print_in_place_clearance_mm"].
+PIP_CLEARANCE_MM = 0.3
+
+
+def clearance_setting(request):
+    try:
+        params = json.loads(Path(request['parameters']).read_text()) if request.get('parameters') else {}
+    except (OSError, ValueError):
+        params = {}
+    value = params.get('print_in_place_clearance_mm') if isinstance(params, dict) else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 10:
+        return float(value), 'P["print_in_place_clearance_mm"]'
+    return PIP_CLEARANCE_MM, 'default: Prusa\'s "at least 0.3 mm" for movable parts (fdm_fit)'
+
+
+def bodies(step, request, budget_s=20.0):
+    """Every pair of solids in the exported STEP: true closest approach (screened on tessellations, measured on the
+    B-rep), overlap, and whether each labelled body the script returned is still one solid. Council 2026-11-11 (scan-to-make #734): chainmail links
+    fused at 48 interfaces, a pawl grazing its wheel while a severed bar kept the solid count right, discs starting in
+    mid-air, all with valid: true."""
+    import time
+    from build123d import Compound
+    clearance, source = clearance_setting(request)
+    started = time.monotonic()
+    # Declared bodies: the top-level children of a returned Compound, named by their labels.
+    declared, names = [], []
+    children = list(step.children) if isinstance(step, Compound) else []
+    # STEP import names an unlabelled shape after its type ("SOLID", "COMPOUND"): only the script's own labels declare
+    labelled = lambda c: bool(c.label) and c.label != type(c).__name__.upper() and c.label.upper() not in ('SOLID', 'COMPOUND', 'COMPSOLID', 'SHELL')
+    if children and all(labelled(c) for c in children):
+        for child in children:
+            pieces = child.solids()
+            declared.append({'body': child.label, 'solids': len(pieces)})
+            names += [child.label if len(pieces) == 1 else f'{child.label} piece {k + 1}' for k in range(len(pieces))]
+        solids = [s for c in children for s in c.solids()]
+    else:
+        solids = list(step.solids())
+        names = [f'solid {k + 1}' for k in range(len(solids))]
+    boxes = [s.bounding_box() for s in solids]
+    near = max(0.5, clearance + 0.2)
+    def where(s):
+        b = s.bounding_box()
+        return [round((b.min.X + b.max.X) / 2, 3), round((b.min.Y + b.max.Y) / 2, 3), round(b.min.Z, 3)]
+    # Screen every near pair on tessellations (Manifold min_gap, chord error <= 0.01 mm), then measure each pair that
+    # comes within the clearance + 0.02 mm, and the closest, exactly on the B-rep (OCC BRepExtrema) for the reported gap.
+    def solid_manifold(s):
+        v, f = s.tessellate(0.01, 0.1)
+        t = trimesh.Trimesh(np.array([[p.X, p.Y, p.Z] for p in v], dtype=float), np.array(f, dtype=np.int64), process=True)
+        t.merge_vertices()
+        return manifold(t)
+    meshes = [None] * len(solids)
+    fused, close, closest, measured, skipped, screen = [], [], None, 0, 0, None
+    for i in range(len(solids)):
+        for j in range(i + 1, len(solids)):
+            a, b = boxes[i], boxes[j]
+            gap = math.sqrt(sum(max(0.0, lo2 - hi1, lo1 - hi2) ** 2 for lo1, hi1, lo2, hi2 in
+                                ((a.min.X, a.max.X, b.min.X, b.max.X), (a.min.Y, a.max.Y, b.min.Y, b.max.Y), (a.min.Z, a.max.Z, b.min.Z, b.max.Z))))
+            if gap >= near: continue
+            if time.monotonic() - started > budget_s:
+                skipped += 1
+                continue
+            measured += 1
+            for k in (i, j):
+                if meshes[k] is None: meshes[k] = solid_manifold(solids[k])
+            if meshes[i].status() == mf.Error.NoError and meshes[j].status() == mf.Error.NoError:
+                d = meshes[i].min_gap(meshes[j], near)
+            else:   # a tessellation that does not close: measure this pair on the B-rep alone
+                d = solids[i].distance_to(solids[j])
+            holds = lambda x, y: all(getattr(x.min, c) <= getattr(y.min, c) and getattr(y.max, c) <= getattr(x.max, c) for c in 'XYZ')
+            if d > 1e-6 and (holds(a, b) or holds(b, a)) and getattr(solids[i] & solids[j], 'volume', 0.0) > 1e-6:
+                d = 0.0   # one wholly inside the other: the surfaces never meet
+            if d >= near: continue
+            if screen is None or d < screen[0]: screen = (d, i, j)
+            if d < clearance + 0.02:
+                if len(fused) + len(close) < 16:
+                    exact, pa, pb = solids[i].distance_to_with_closest_points(solids[j])
+                    d = 0.0 if d == 0.0 else exact
+                    at = [round((pa.X + pb.X) / 2, 3), round((pa.Y + pb.Y) / 2, 3), round((pa.Z + pb.Z) / 2, 3)]
+                else:   # past 16 flagged pairs: the screened gap, located at the middle of where the boxes meet
+                    at = [round((max(getattr(a.min, c), getattr(b.min, c)) + min(getattr(a.max, c), getattr(b.max, c))) / 2, 3) for c in 'XYZ']
+                row = {'a': names[i], 'b': names[j], 'gap_mm': round(d, 4), 'at': at}
+                if closest is None or d < closest['gap_mm']: closest = row
+                if d <= 1e-6: fused.append(row)
+                elif d < clearance - 1e-9: close.append(row)
+    if closest is None and screen is not None:
+        d0, i, j = screen
+        exact, pa, pb = solids[i].distance_to_with_closest_points(solids[j])
+        closest = {'a': names[i], 'b': names[j], 'gap_mm': round(exact, 4), 'at': [round((pa.X + pb.X) / 2, 3), round((pa.Y + pb.Y) / 2, 3), round((pa.Z + pb.Z) / 2, 3)]}
+    bed = min((b.min.Z for b in boxes), default=0.0)
+    above = [{'solid': names[k], 'starts_mm_above_bed': round(boxes[k].min.Z - bed, 3), 'at': where(solids[k])}
+             for k in range(len(solids)) if boxes[k].min.Z - bed > 0.05]
+    severed = [d for d in declared if d['solids'] != 1]
+    problems = ([f'{r["a"]} and {r["b"]} touch or overlap at {r["at"]}: they print as one piece' for r in fused[:8]] +
+                [f'{r["a"]} and {r["b"]} are {r["gap_mm"]} mm apart at {r["at"]}, under the {clearance} mm print-in-place clearance: they weld when printed' for r in close[:8]] +
+                [f'body "{d["body"]}" is {d["solids"]} separate solids: something cuts it apart' if d['solids'] > 1 else f'body "{d["body"]}" has no solid' for d in severed] +
+                [f'{a["solid"]} starts {a["starts_mm_above_bed"]} mm above the bed: its first layer is printed on air' for a in above[:8]])
+    if skipped:
+        problems.append(f'{skipped} near pair(s) were not measured within the {budget_s:.0f} s budget')
+    return {'solids': len(solids), 'clearance_mm': clearance, 'clearance_source': source,
+            'declared_bodies': declared or None, 'pairs_measured': measured, 'pairs_not_measured': skipped,
+            'fused': fused, 'too_close': close, 'closest': closest if closest and closest['gap_mm'] < near else None,
+            'above_bed': above, 'severed': severed, 'problems': problems,
+            'seconds': round(time.monotonic() - started, 3)}
+
+
+def evidence(assembly):
+    """What this result does and does not establish, so valid geometry is never read as a working part."""
+    checked = ['the exported mesh is closed, manifold and consistently wound, and the STEP agrees with it (valid, checks)',
+               'bounds, size, volumes and solid count of the exported files']
+    not_checked = ['fit to the real object or a mating part (use cad_check_fit per state)',
+                   'strength, stiffness or how it holds under load',
+                   'motion, articulated poses and snap or flex behaviour',
+                   'printing: supports, bridges and bed adhesion are the slicer\'s answer']
+    if assembly is None:
+        not_checked.append('gaps between separate bodies (mesh mode has no solids)')
+        return {'checked': checked, 'not_checked': not_checked, 'problems': []}
+    if 'error' in assembly:
+        not_checked.append('gaps between separate bodies: the measurement failed (' + assembly['error'] + ')')
+        return {'bodies': assembly, 'checked': checked, 'not_checked': not_checked, 'problems': ['bodies could not be measured: ' + assembly['error']]}
+    if assembly['solids'] > 1:
+        checked.append(f'the closest approach of every pair of the {assembly["solids"]} solids against a {assembly["clearance_mm"]} mm print-in-place clearance ({assembly["clearance_source"]}), and whether each solid starts on the bed (bodies; failures are in problems)')
+    else:
+        checked.append('the single solid starts on the bed (bodies)')
+    if assembly['declared_bodies']:
+        checked.append('whether each labelled body is exactly one solid (bodies.declared_bodies; failures are in problems)')
+    elif assembly['solids'] > 1:
+        not_checked.append('which solids are meant to be separate bodies: return Compound(children=[...]) with a label on each body so a severed piece cannot pass for one')
+    return {'bodies': assembly, 'problems': assembly['problems'], 'checked': checked, 'not_checked': not_checked}
 
 
 def render(m, folder):
