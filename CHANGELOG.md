@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `scan_touchup()` in mesh-mode `build()`: cleans a textured capture (loose pieces, spikes, holes), refines it without shrinking, lists its colour regions with a labelled picture, flattens chosen regions, seats beads, lays cords along a region's curve, cuts a flat seat and adds the normal map's measured relief. Tested on a synthetic textured sphere; one real capture checked by eye against photos. No printer was involved.
+
 ## [1.2.70] – 2026-11-11
 
 ### Changed

@@ -102,7 +102,9 @@ def main():
         tree, declaration, merged = parameters(source, json.loads(Path(request['parameters']).read_text()))
         declaration.value = ast.Name(id='__cad_parameters__', ctx=ast.Load())
         ast.fix_missing_locations(tree)
-        namespace = {'__name__': 'cad_design', '__file__': request['script'], '__cad_parameters__': merged, 'INPUTS': request.get('inputs', {}), 'load_scan': scan_loader(request.get('inputs', {}))}
+        from scan_touchup import scan_touchup_factory
+        namespace = {'__name__': 'cad_design', '__file__': request['script'], '__cad_parameters__': merged, 'INPUTS': request.get('inputs', {}), 'load_scan': scan_loader(request.get('inputs', {})),
+                     'scan_touchup': scan_touchup_factory(request.get('inputs', {}))}
         exec(compile(tree, request['script'], 'exec'), namespace)
         shape = namespace['build']()
         out = Path(request['output']) / request['name']
