@@ -115,4 +115,15 @@ with tempfile.TemporaryDirectory() as tmp:
         assert "no region 999" in str(error)
     else:
         raise AssertionError("an unknown region was accepted")
+    # Two constant-colour UV islands packed 4 texels apart, inside the coarse blur: the stitch band must stay 0 on
+    # both, or the atlas layout would raise ridges at their borders (Codex review, 2026-11-11).
+    from scan_touchup import _texture_band
+    w = h = 200
+    UVq = np.array([[0.10, 0.1], [0.45, 0.1], [0.45, 0.9], [0.10, 0.9], [0.47, 0.1], [0.82, 0.1], [0.82, 0.9], [0.47, 0.9]])
+    Vq = np.array([[0, 0, 0], [7, 0, 0], [7, 16, 0], [0, 16, 0], [20, 0, 0], [27, 0, 0], [27, 16, 0], [20, 16, 0]], float)
+    Fq = np.array([[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]])
+    rgb = np.full((h, w, 3), 0.2, dtype=np.float32)
+    rgb[:, int(0.46 * w):] = 0.8
+    band = _texture_band(rgb, UVq, Fq, Vq, Fq, 0.4, 3.0)
+    assert np.abs(band).max() < 1e-4, f"atlas neighbours bled into the stitch band: {np.abs(band).max()}"
     print(json.dumps({"ok": True, "seconds": round(time.time() - started, 1)}))

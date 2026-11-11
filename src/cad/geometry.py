@@ -147,23 +147,45 @@ def bodies(step, request, budget_s=20.0):
     unsure = [r for r in rows if not r['exact'] and r['gap_mm'] >= clearance - 1e-9]
     closest = min(rows, key=lambda r: r['gap_mm']) if rows else None
     # The print plate is Z = 0 of the exported frame. A solid below it is cut off by the plate; one above it prints on
-    # air unless it rests on a solid that reaches the plate (within its measured gap: print-in-place stacks).
+    # air unless it rests on a solid that reaches the plate: material directly under its first layer, within the pair's
+    # window (print-in-place stacks).
     below = [{'solid': names[k], 'lowest_z_mm': round(boxes[k].min.Z, 3)} for k in range(len(solids)) if boxes[k].min.Z < -BED_TOLERANCE_MM]
     grounded = {k for k in range(len(solids)) if abs(boxes[k].min.Z) <= BED_TOLERANCE_MM}
-    rests = {}
+    rests, support_unknown, supports = {}, set(), {}
+    def held_up(up, low):
+        # Support is material of low directly under up's first layer: the footprint of up's lowest 0.2 mm overlaps
+        # the footprint of low within the pair's window below it. A neighbour beside the solid is not under it
+        # (Codex review, 2026-11-11: a box 10 mm up, 0.4 mm beside a taller grounded box, read as resting on it).
+        if (up, low) not in supports:
+            z, w = boxes[up].min.Z, window(up, low)
+            if meshes[up] is None or meshes[low] is None or meshes[up].status() != mf.Error.NoError or meshes[low].status() != mf.Error.NoError:
+                supports[(up, low)] = None
+            else:
+                lo = [min(boxes[up].min.X, boxes[low].min.X) - 1, min(boxes[up].min.Y, boxes[low].min.Y) - 1]
+                size = [max(boxes[up].max.X, boxes[low].max.X) + 1 - lo[0], max(boxes[up].max.Y, boxes[low].max.Y) + 1 - lo[1]]
+                band = lambda m, z0, z1: (m ^ mf.Manifold.cube((size[0], size[1], z1 - z0)).translate((lo[0], lo[1], z0))).project()
+                supports[(up, low)] = (band(meshes[up], z, z + 0.2) ^ band(meshes[low], z - w, z + BED_TOLERANCE_MM)).area() > 1e-3
+        return supports[(up, low)]
     changed = True
     while changed:
         changed = False
         for i, j, d in near_pairs:
             for up, low in ((i, j), (j, i)):
                 if up not in grounded and low in grounded and boxes[low].min.Z < boxes[up].min.Z - BED_TOLERANCE_MM:
-                    grounded.add(up); rests[up] = (low, d); changed = True
+                    try:
+                        held = held_up(up, low)
+                    except Exception as e:
+                        held = None
+                        errors.append(f'support of {names[up]} on {names[low]}: {type(e).__name__}: {e}'[:200])
+                    if held is None: support_unknown.add(up)
+                    elif held: grounded.add(up); rests[up] = (low, d); changed = True
     above = []
     for k in range(len(solids)):
         z = boxes[k].min.Z
         if z <= BED_TOLERANCE_MM: continue
         row = {'solid': names[k], 'starts_mm_above_bed': round(z, 3), 'at': r3(((boxes[k].min.X + boxes[k].max.X) / 2, (boxes[k].min.Y + boxes[k].max.Y) / 2, z))}
         if k in rests: row.update(rests_on=names[rests[k][0]], gap_below_mm=round(rests[k][1], 4))
+        elif k in support_unknown: row['support_not_measured'] = True
         above.append(row)
     floating = [r for r in above if 'rests_on' not in r]
     severed = [d for d in declared if d['solids'] != 1]
@@ -177,7 +199,7 @@ def bodies(step, request, budget_s=20.0):
                 capped(unsure, lambda r: f'{r["a"]} and {r["b"]} screen at {r["gap_mm"]} mm, within the screen error of the {clearance} mm clearance, and were not measured exactly (exact cap or time budget)', 'unconfirmed pairs') +
                 [f'body "{d["body"]}" is {d["solids"]} separate solids: something cuts it apart' if d['solids'] > 1 else f'body "{d["body"]}" has no solid' for d in severed] +
                 capped(below, lambda r: f'{r["solid"]} reaches {r["lowest_z_mm"]} mm, below the print plate (Z = 0): the plate cuts it off', 'solids below the plate') +
-                capped(floating, lambda r: f'{r["solid"]} starts {r["starts_mm_above_bed"]} mm above the print plate (Z = 0) with no solid under it that reaches the plate: its first layer is printed on air', 'floating solids'))
+                capped(floating, lambda r: f'{r["solid"]} starts {r["starts_mm_above_bed"]} mm above the print plate (Z = 0) and whether a solid under it reaches the plate could not be measured (a tessellation that does not close)' if r.get('support_not_measured') else f'{r["solid"]} starts {r["starts_mm_above_bed"]} mm above the print plate (Z = 0) with no solid under it that reaches the plate: its first layer is printed on air', 'floating solids'))
     if unmeasured:
         problems.append(f'{len(unmeasured)} near pair(s) were not measured ({", ".join(sorted({u[2] for u in unmeasured}))}); see bodies.pairs_not_measured')
     return {'solids': len(solids), 'clearance_mm': clearance, 'clearance_source': source, 'print_in_place': in_place,

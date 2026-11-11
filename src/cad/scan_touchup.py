@@ -198,20 +198,38 @@ def _subdivide(V, F, UV, FT):
 
 # --- the normal map's measured relief ----------------------------------------------------------------------------
 
-def _texture_space(UV, FT, V, F, w, h):
-    """The texels the mesh's UV triangles cover, and millimetres per texel (median over triangles)."""
+def _uv_islands(UV, FT, w, h):
+    """The UV island (1-based) of each triangle: triangles joined through shared texture positions. Positions are
+    welded at 1/1000 texel, so an exporter that repeats a vt per corner still yields whole islands; separate islands
+    never share a position."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    key = np.round(UV * [w, h] * 1000).astype(np.int64)
+    _, weld = np.unique(key, axis=0, return_inverse=True)
+    t = weld.reshape(-1)[FT]
+    n = int(t.max()) + 1
+    edges = np.concatenate([t[:, [0, 1]], t[:, [1, 2]]])
+    _, comp = connected_components(coo_matrix((np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(n, n)),
+                                   directed=False)
+    return comp[t[:, 0]] + 1
+
+
+def _texture_space(UV, FT, V, F, w, h, islands=False):
+    """The texels the mesh's UV triangles cover, and millimetres per texel (median over triangles). With islands,
+    the coverage is each texel's UV island id (0 outside every island) instead of a mask."""
     from PIL import Image, ImageDraw
     px = UV[FT] * [w, h]
-    island = Image.new("L", (w, h), 0)
-    draw = ImageDraw.Draw(island)
-    for tri in px:
-        draw.polygon([(x, h - y) for x, y in tri], fill=255)
-    mask = np.asarray(island) > 0
+    ids = _uv_islands(UV, FT, w, h) if islands else np.ones(len(FT), dtype=np.int64)
+    cover = Image.new("I", (w, h), 0)
+    draw = ImageDraw.Draw(cover)
+    for tri, k in zip(px, ids):
+        draw.polygon([(x, h - y) for x, y in tri], fill=int(k))
+    cover = np.asarray(cover).astype(np.int32)
     e1, e2 = px[:, 1] - px[:, 0], px[:, 2] - px[:, 0]
     tex_area = np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]) / 2
     area3 = np.linalg.norm(_face_normals(V, F, unit=False), axis=1) / 2
     ok = tex_area > 1e-6
-    return mask, float(np.median(np.sqrt(area3[ok] / tex_area[ok])))
+    return (cover if islands else cover > 0), float(np.median(np.sqrt(area3[ok] / tex_area[ok])))
 
 
 def _height_map(normal_rgb, UV, FT, V, F, longest_mm, finest_mm):
@@ -237,18 +255,28 @@ def _height_map(normal_rgb, UV, FT, V, F, longest_mm, finest_mm):
 
 def _texture_band(rgb, UV, FT, V, F, finest_mm, longest_mm):
     """The colour texture's luminance between finest_mm and longest_mm (a textile's stitch or weave scale), per
-    texel. Blurs are normalised by the UV islands, so a seam's padding never bleeds in; the scan's baked shading
+    texel. Each UV island is filtered on its own, normalised by its own coverage, so neither a seam's padding nor a
+    neighbouring island packed within the blur radius bleeds in (Codex review, 2026-11-11); the scan's baked shading
     is longer than longest_mm and drops out."""
-    from scipy.ndimage import gaussian_filter
+    from scipy.ndimage import find_objects, gaussian_filter
     h, w = rgb.shape[:2]
-    mask, mm = _texture_space(UV, FT, V, F, w, h)
-    lum = (rgb[..., :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)) * mask
-    m = mask.astype(np.float32)
+    islands, mm = _texture_space(UV, FT, V, F, w, h, islands=True)
+    lum = rgb[..., :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    fine, coarse = max(finest_mm / 2 / mm, 0.5), max(longest_mm / 2 / mm, 0.5)
+    pad = int(np.ceil(4 * coarse))
+    band = np.zeros((h, w), dtype=np.float32)
+    for k, box in enumerate(find_objects(islands), start=1):
+        if box is None:
+            continue
+        rows = slice(max(box[0].start - pad, 0), min(box[0].stop + pad, h))
+        cols = slice(max(box[1].start - pad, 0), min(box[1].stop + pad, w))
+        m = (islands[rows, cols] == k).astype(np.float32)
+        lm = lum[rows, cols] * m
 
-    def blur(sigma_mm):
-        sigma = max(sigma_mm / mm, 0.5)
-        return gaussian_filter(lum, sigma) / np.maximum(gaussian_filter(m, sigma), 1e-3)
-    return (blur(finest_mm / 2) - blur(longest_mm / 2)) * m
+        def blur(sigma):
+            return gaussian_filter(lm, sigma) / np.maximum(gaussian_filter(m, sigma), 1e-3)
+        band[rows, cols] += (blur(fine) - blur(coarse)) * m
+    return band
 
 
 # --- colour regions ----------------------------------------------------------------------------------------------

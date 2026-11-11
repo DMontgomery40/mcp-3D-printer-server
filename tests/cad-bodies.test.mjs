@@ -128,7 +128,7 @@ test("bodies shown assembled are held to touching only, and say the clearance wa
   assert.ok(inspect("curved.py", { kind: "pin", gap: -0.1, print_in_place: false }).bodies.fused.length === 1, "interference is still a problem");
 });
 
-test("the print plate is Z = 0, and a solid resting on a solid that reaches it is supported", runtime, () => {
+test("the print plate is Z = 0, and a solid resting on a solid that reaches it is supported, not one beside it", runtime, () => {
   assert.deepEqual(inspect("plate.py", { case: "on" }).problems, []);
   assert.ok(inspect("plate.py", { case: "floating" }).problems.some((p) => /starts 10(\.0)? mm above the print plate/.test(p)));
   assert.ok(inspect("plate.py", { case: "below" }).problems.some((p) => /below the print plate/.test(p)));
@@ -137,6 +137,9 @@ test("the print plate is Z = 0, and a solid resting on a solid that reaches it i
   assert.deepEqual(lid.problems, []);
   assert.equal(lid.bodies.above_bed[0].rests_on, "a");
   assert.ok(lid.checked.some((c) => /Z = 0 of the exported frame/.test(c)));
+  const beside = inspect("plate.py", { case: "beside" });
+  assert.ok(beside.problems.some((p) => /^b starts 10(\.0)? mm above the print plate .*printed on air/.test(p)), beside.problems.join("\n"));
+  assert.equal(beside.bodies.above_bed[0].rests_on, undefined, "a neighbour beside a solid does not hold it up");
 });
 
 test("problems say how many more there are", runtime, () => {
