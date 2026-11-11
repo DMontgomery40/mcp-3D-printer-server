@@ -1181,12 +1181,12 @@ export class STLManipulator extends EventEmitter {
     // BambuStudio.cpp:1882, bbs_3mf.cpp:2051), so nothing is passed.
     if (!layers) return once(bambuOptions);
     if (!cli) throw new Error(`Pausing at a layer needs the Bambu Studio or OrcaSlicer CLI, not ${slicerType}.`);
-    const plate = bambuOptions?.slicePlate && bambuOptions.slicePlate > 0 ? bambuOptions.slicePlate : 1;
+    const chosenPlate = bambuOptions?.slicePlate && bambuOptions.slicePlate > 0 ? bambuOptions.slicePlate : undefined;
+    const plate = chosenPlate ?? 1;
     const threeMf = /\.3mf$/i.test(stlFilePath);
     // --load-custom-gcodes replaces the whole per-plate map and holds one plate (--slice N, or plate 1 for
     // --slice 0: BambuStudio.cpp:2224-2233, 4005-4008), so slicing every plate would drop plates 2..n's own.
-    if (threeMf && !(bambuOptions?.slicePlate && bambuOptions.slicePlate > 0)
-      && (await listModelPlates(stlFilePath)).plate_count > 1) {
+    if (threeMf && chosenPlate === undefined && (await listModelPlates(stlFilePath)).plate_count > 1) {
       throw new Error('Pausing at a layer works on one plate at a time. Choose the plate with slice_plate.');
     }
     // The map replaces the project's own entries for this plate, so they are merged in.

@@ -37,6 +37,7 @@ export interface ModelPlates {
 const MAX_METADATA_BYTES = 8 * 1024 * 1024;
 const MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024;
 const MAX_PLATES = 1000;
+const MAX_INSTANCES_PER_PLATE = 1000;
 
 const words = (value: string) => value
   .replace(/&(?:amp|lt|gt|quot|apos);/g, entity => ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&apos;": "'" }[entity]!))
@@ -82,7 +83,7 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
       const identify = Number(/<metadata\s+key="identify_id"\s+value="(\d+)"/.exec(instance[1])?.[1]);
       return object !== undefined && Number.isSafeInteger(identify) && identify > 0
         ? [{ identify_id: identify, name: objects.get(object) ?? "" }] : [];
-    }).slice(0, 1000);
+    }).slice(0, MAX_INSTANCES_PER_PLATE);
     plates.set(number, { index: number - 1, name: words(name?.[1] ?? "") || `Plate ${number}`, sliced: false, instances,
       objects: [...match[1].matchAll(/<metadata\s+key="object_id"\s+value="(\d+)"/g)].flatMap(item => objects.get(item[1]) ? [objects.get(item[1])!] : []) });
   }
