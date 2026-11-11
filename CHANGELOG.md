@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.68] – 2026-11-11
+
+### Fixed
+
+- The fit guidance (`fdm_fit`, `guidance://fdm/fit-by-function`) derives a pocket's corners by offsetting the object's outline by the clearance. It used to say "at least the object's own radius", and a rounder pocket corner cuts into the object's corner even when the flats clear. Prompt text only; checked with the design-guidance tests; no printer contacted.
+
 ## [1.2.67] – 2026-11-11
 
 ### Added
