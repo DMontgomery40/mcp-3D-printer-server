@@ -399,6 +399,37 @@ The SVG is a simplified schematic, not a photorealistic render.
 
 ### Printer Control Tools
 
+#### counterpart_print_record
+
+Read the flight record of a job this server dispatched, without contacting the printer. Firmware `finished` means the printer finished its commands; it does not verify the physical object.
+
+```json
+{"job_id":"optional saved record UUID", "include_frames":false}
+```
+
+Omit `job_id` for the latest job on the configured printer; ordinary printer target overrides select another saved printer. The result has `contract: "counterpart/1"`, `status: "recorded" | "unavailable"`, an optional version-1 `record`, and separate `physical` evidence. Bambu records allowlisted native report fields; other adapters retain their existing normalized observations, without inventing fields their firmware/adapter does not expose. The record retains the inspected artifact SHA-256, selected plate/hash, filament mapping/materials, timestamped allowlisted state/error/stage/AMS/temperature changes, latest state, truncation count and camera metadata. Printer names, hosts, serials, credentials, arbitrary report text and URLs are excluded; the target and dispatched job identity are hashed. Raw unknown fields remain unknown; AMS `remain: -1` is not empty. Firmware terminal reports freeze the job record so later cooling does not evict its failure evidence. History before this feature or outside retained/connected observations is unavailable, not reconstructed by contacting the printer.
+
+Storage is private (directory 0700, files 0600), survives MCP restart, and is capped at ten jobs, 1 MiB/2048 report changes per job, and four JPEGs of at most 512 KiB each. Older changes/jobs are removed; `droppedReports` and `skippedCheckpoints` disclose gaps. `COUNTERPART_RECORD_DIR` is a trusted server environment override, never a tool-selected filesystem path. Storage failure warns on stderr and marks a record volatile; diagnostics never authorize printing, resume or another mutation.
+
+While the client monitors `counterpart_print_progress`, existing reports can trigger one asynchronous snapshot at each crossed expected-height fraction (5%, 30%, 60%, 90%). There is no additional status polling or autonomous watcher. Without a monitoring client, known layer geometry, a matching active job and a usable existing camera source, no physical verdict is inferred. Skipped heights are not backfilled. Each frame binds its ID, actual report layer/time, expected sliced Z, capture receipt/acquisition time and image SHA-256. Old cached frames and bounded camera failures are marked unavailable. `include_frames:true` reads saved JPEG base64 from disk; it does not open a camera. Expected geometry is the selected plate's sliced layer Z and extrusion endpoint bounds, not a calibrated camera silhouette or measured flow. Arcs' endpoint bounds are not a complete silhouette. Oversize/unsupported G-code or missing layer reports leave geometry/correspondence unknown.
+
+`physical.status` is `unknown`, `consistent` or `suspect_no_growth`, independently of firmware state. Without calibrated visual measurements it remains **unknown**, including after FINISH. A worker may fetch the images/geometry and pass up to four measurements to this read tool:
+
+```json
+{"measurements":[
+  {"frameId":"saved frame UUID", "visible":true, "observedHeightMm":24, "uncertaintyMm":0.5, "method":"calibrated-height"},
+  {"frameId":"another saved frame UUID", "visible":true, "observedHeightMm":24, "uncertaintyMm":0.5, "method":"calibrated-height"}
+]}
+```
+
+The MCP validates the saved frame identities/times and evaluates these **client-supplied** measurements; it runs no vision model. Two visible, sufficiently separated expected heights can support consistency, or an unchanged short observed height can support `suspect_no_growth`. Occluded, out-of-view, uncalibrated, uncertain, stale or contradictory evidence stays unknown. `consistent` concerns height in those frames only; it does not verify final shape, strength or print success. The assessment returns frame IDs and explicit limitations and is computed without altering the record. There is no automatic stop, pause, resume, model call or printer-setting change.
+
+Sensor limits: Bambu Studio v02.08.02.61 declares [P1S lidar calibration unavailable](https://github.com/bambulab/BambuStudio/blob/v02.08.02.61/resources/printers/C12.json#L37), [X1 Carbon lidar calibration available](https://github.com/bambulab/BambuStudio/blob/v02.08.02.61/resources/printers/BL-P001.json#L42), and [H2D calibration/wrapping capabilities](https://github.com/bambulab/BambuStudio/blob/v02.08.02.61/resources/printers/O1D.json#L51). These are capability/configuration facts, not deposited-height measurements. Studio parses [xcam detection options and live support bits](https://github.com/bambulab/BambuStudio/blob/v02.08.02.61/src/slic3r/GUI/DeviceCore/DevPrintOptions.cpp#L37) and [AMS air-print capability with firmware exceptions](https://github.com/bambulab/BambuStudio/blob/v02.08.02.61/src/slic3r/GUI/DeviceManager.cpp#L1112). This feature records reported evidence; it never enables a detector or assumes a capability from a model name.
+
+Validation is offline replay and mocked transports only. No real-printer physical-success claim is made.
+
+
+
 Every printer tool accepts `host`, `port`, `type`, and `api_key`, and Bambu printers also use `bambu_serial` and `bambu_token`. Omitted values fall back to `PRINTER_HOST`, `PRINTER_PORT`, `PRINTER_TYPE`, `API_KEY`, `BAMBU_SERIAL`, and `BAMBU_TOKEN`. Keep keys in the server configuration rather than passing them in calls.
 
 What each call does depends on the backend; see [printer backend setup](https://github.com/DMontgomery40/mcp-3D-printer-server/blob/main/docs/SETUP.md#printer-backend-setup) for the exact API routes.

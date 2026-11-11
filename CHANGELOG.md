@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Keep bounded persistent per-job flight records through `counterpart_print_record`: inspected dispatch hashes and mappings, allowlisted report changes, selected-plate expected layer geometry, and up to four sampled camera frames. Firmware FINISH remains separate from physical evidence. Calibrated client frame measurements can report consistent height or suspected no-growth; absent, stale, occluded or uncalibrated evidence stays unknown. Recording adds no status polling, model calls or automatic printer controls. Validated with offline replay, schema/stdio and mocked transport tests only; real hardware and physical-success acceptance remain unverified. Refs DMontgomery40/scan-to-make#628 and DMontgomery40/scan-to-make#630.
+
 ## [1.2.70] – 2026-11-11
 
 ### Changed

@@ -1,3 +1,4 @@
+import {flightKey,type ReadRecordOptions} from "./flight-record.js";
 import {CAD_CAPABILITY,cadEnabled} from "../cad/contracts.js";
 /**
  * counterpart/1 tools for every printer type this server drives. Generic
@@ -115,14 +116,29 @@ export class CounterpartService {
     return implementation;
   }
 
+  printRecord(target:PrinterTarget,options:ReadRecordOptions={}) {
+    const implementation=this.implementation(target.type),generic=this.generic(target);
+    const serial=target.apiKey.split(':')[0];
+    return implementation.flightRecords.read(generic?generic.flightRecordKey(target.host,target.port):flightKey(target.host,serial),options);
+  }
+
+  private physicalSample(target:PrinterTarget) {
+    const implementation=this.implementation(target.type),generic=this.generic(target);
+    const key=generic?generic.flightRecordKey(target.host,target.port):flightKey(target.host,target.apiKey.split(':')[0]);
+    void implementation.flightRecords.sample(key,()=>this.cameraSnapshot(target,{timeoutMs:8000})).catch(()=>undefined);
+  }
+
   async printProgress(target: PrinterTarget): Promise<CounterpartProgress> {
     const generic = this.generic(target);
     if (!generic) {
       const status = await this.bambu(target).getStatus(target.host, target.port, target.apiKey);
-      return mapBambu(status?.raw, new Date().toISOString(), { connected: status?.connected === true, model: process.env.BAMBU_MODEL });
+      this.physicalSample(target);
+      return {...mapBambu(status?.raw, new Date().toISOString(), { connected: status?.connected === true, model: process.env.BAMBU_MODEL }),physical:this.printRecord(target).physical};
     }
     try {
-      return await generic.observedProgress(target.host, target.port, target.apiKey);
+      const progress=await generic.observedProgress(target.host,target.port,target.apiKey);
+      this.physicalSample(target);
+      return {...progress,physical:this.printRecord(target).physical};
     } catch (error) {
       if (unreachable(error)) return progressResult(new Date().toISOString(), "offline", { problems: [] });
       throw error;
@@ -245,11 +261,12 @@ export class CounterpartService {
     }
     const active = this.streams.get(this.cameraKey(target));
     if (active && !active.stopped) {
-      const jpeg = await active.latest(Math.min(timeoutMs, 10000));
+      const frame=await active.frame({waitMs:Math.min(timeoutMs,10000),changedOnly:false});
+      const jpeg=frame.status==="frame"&&frame.base64?Buffer.from(frame.base64,"base64"):undefined;
       if (!jpeg) throw new Error("The active camera stream has not produced a frame.");
       if (options.savePath) await fs.writeFile(options.savePath, jpeg);
       return compact({status: "success", format: "image/jpeg", sizeBytes: jpeg.length, base64: jpeg.toString("base64"),
-        savedTo: options.savePath, capturedAt: new Date().toISOString(), source: active.transport}) as CameraSnapshotResult;
+        savedTo: options.savePath, capturedAt: frame.capturedAt, source: active.transport}) as CameraSnapshotResult;
     }
     const deadline = Date.now() + timeoutMs;
     const override = overrideSnapshotUrl();

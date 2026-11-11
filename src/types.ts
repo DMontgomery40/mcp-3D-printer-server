@@ -1,3 +1,4 @@
+import {FlightRecords} from "./counterpart/flight-record.js";
 import { AxiosInstance } from "axios";
 
 // Define shared types for the printer implementations
@@ -9,6 +10,7 @@ export type BambuFTP = {
 
 // Base class for printer implementations
 export abstract class PrinterImplementation {
+  readonly flightRecords = new FlightRecords();
   protected apiClient: AxiosInstance;
 
   constructor(apiClient: AxiosInstance) {

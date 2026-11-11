@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {FLIGHT_RECORD_PROPERTIES,FLIGHT_RECORD_DESCRIPTION,FLIGHT_RECORD_OUTPUT_SCHEMA,flightReadOptions} from "./counterpart/flight-tools.js";
 
 // Must stay first: Node.js 18 needs the global crypto before any SDK transport code runs.
 import "./ensure-web-crypto.js";
@@ -1742,6 +1743,11 @@ class ThreeDPrinterMCPServer {
             outputSchema: PRINTER_INFO_OUTPUT_SCHEMA,
           },
           {
+            name:"counterpart_print_record",description:FLIGHT_RECORD_DESCRIPTION,
+            inputSchema:{type:"object",properties:{...FLIGHT_RECORD_PROPERTIES,type:{type:"string",description:"Configured printer backend whose saved record is requested."},host:{type:"string",description:"Saved printer hostname or address; used only to select a local record."},port:{type:"string",description:"Configured printer API port; used only to select a local record."},bambu_serial:{type:"string",description:"Saved Bambu printer serial; used only to select a local record."}},additionalProperties:false},
+            outputSchema:FLIGHT_RECORD_OUTPUT_SCHEMA
+          },
+          {
             name: "counterpart_print_progress",
             description: "Read the printer's state and current job in the counterpart/1 shape: state, job name, progress (0-100), elapsed and remaining seconds, layers when the firmware reports them, temperatures and problems. job.name matches the jobName that upload_gcode and start_print return. Read-only.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
@@ -2786,6 +2792,9 @@ class ThreeDPrinterMCPServer {
             return structured(this.counterpart.cameraStreamStop(target));
           case "counterpart_printer_info":
             return structured(await this.counterpart.printerInfo(target));
+
+          case "counterpart_print_record":
+            return structured(this.counterpart.printRecord(target,flightReadOptions(args)));
 
           case "counterpart_print_progress":
             return structured(await this.counterpart.printProgress(target));

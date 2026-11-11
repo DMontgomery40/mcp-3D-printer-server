@@ -1,3 +1,4 @@
+import {geometryFromFile} from "../counterpart/print-geometry.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -92,6 +93,13 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
   async observedProgress(host: string, port: string, apiKey: string): Promise<CounterpartProgress> {
     const progress = await this.counterpartProgress(host, port, apiKey);
     const key = this.operationKey(host, port);
+    this.flightRecords.observe(key, {
+      observation_source:'adapter-progress',adapter_problems:progress.problems,
+      subtask_name:progress.job?.name, gcode_state:({printing:'RUNNING',preparing:'PREPARE',paused:'PAUSE',finished:'FINISH',failed:'FAILED',cancelled:'FAILED',idle:'IDLE'} as Record<string,string>)[progress.state],
+      layer_num:progress.job?.layer,total_layer_num:progress.job?.totalLayers,mc_percent:progress.job?.progress,
+      nozzle_temper:progress.temps?.nozzle?.actual,nozzle_target_temper:progress.temps?.nozzle?.target,
+      bed_temper:progress.temps?.bed?.actual,bed_target_temper:progress.temps?.bed?.target
+    },Date.parse(progress.observedAt));
     const checked = this.checkedJobs.get(key);
     if (checked && RUNNING_STATES.has(progress.state) && progress.job?.name === checked.name) checked.seenRunning = true;
     else if (checked?.seenRunning && (ENDED_STATES.has(progress.state) || (RUNNING_STATES.has(progress.state) && progress.job?.name !== undefined))) {
@@ -263,6 +271,10 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     return undefined;
   }
 
+  flightRecordKey(host: string, port: string): string {
+    return this.operationKey(host,port);
+  }
+
   private operationKey(host: string, port: string): string {
     return `${this.printerLabel}:${host}:${port}`;
   }
@@ -428,6 +440,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
         throw new Error(`${this.printerLabel} stored ${remoteName} but reports that it did not start printing it.`);
       }
       this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
+    this.flightRecords.begin(this.operationKey(host,port),{sha256:inspection.sha256,jobName:remoteName,materials:inspection.materials,expected:await geometryFromFile(snapshot)});
       return { ...summary, response };
     }
     const upload = await this.rawUploadFile(host, port, apiKey, snapshot, remoteName, false);
@@ -441,6 +454,7 @@ export abstract class GenericPrinterImplementation extends PrinterImplementation
     markPrintCommandSent();
     const response = await this.rawStartJob(host, port, apiKey, remoteName);
     this.checkedJobs.set(this.operationKey(host, port), checkedJob(remoteName, inspection));
+    this.flightRecords.begin(this.operationKey(host,port),{sha256:inspection.sha256,jobName:remoteName,materials:inspection.materials,expected:await geometryFromFile(snapshot)});
     return { ...summary, upload, response };
   }
 }
