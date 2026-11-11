@@ -62,7 +62,13 @@ test("the FDM design guidance is served as MCP prompts, a resource and the serve
 test("the guidance keeps the prompt pack's opening and judgement, with no numeric bans added", () => {
   assert.match(FDM_CORE, /^Design the finished object the user wants, with the manufacturing plan as part of the design\./);
   assert.match(FDM_CORE, /A 45-degree threshold is not a universal support requirement/);
-  assert.match(FDM_CORE, /look up its published dimensions and use them, labelled as published/);
+  // When and how to research is in the everyday prompt, so every worker with web tools gets it, whatever its model.
+  assert.match(FDM_CORE, /Find out before you design, and before you ask\./);
+  assert.match(FDM_CORE, /This takes a few minutes, not an hour, and it works the same with any model that has web tools/);
+  assert.match(FDM_CORE, /A search-result snippet is not a source\./);
+  assert.match(FDM_CORE, /rephrase before concluding anything/);
+  assert.match(FDM_CORE, /Never ask for something a search answers: a photo of their car's dashboard/);
+  assert.match(FDM_CORE, /Without web tools, say so in the result/);
   assert.match(FDM_CORE, /confirmed without changing a prefilled number is not a measurement/);
   assert.match(FDM_CORE, /the bare product's size is not the size to design to/);
   assert.match(FDM_CORE, /There is no single fit number\./);
