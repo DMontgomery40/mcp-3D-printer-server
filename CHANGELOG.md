@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.67] – 2026-11-11
+
+### Added
+
+- Serves two new design prompts and strengthens the everyday guidance. `fdm_fit` (also the resource `guidance://fdm/fit-by-function`) tells a design agent to choose each fit by what the interface has to do, never one clearance for every interface, keeping the object's size and uncertainty, the print correction, and the fit apart, with cited starting clearances and mechanisms that absorb uncertainty. `fdm_flexures` covers parts that flex, grip, snap, clip, spring, or hold something: compliant architectures, strain chosen by duty (once, daily, held bent), material and layer direction as planning bands, bite at the forced opening, heat and creep, and ease of use as a check equal to the hold (where the fingers go, the force to open, one-handed loading). `fdm_design` now carries the same judgement in short form for every task, including looking up published dimensions before asking, treating an unedited prefilled size as no measurement, designing to a cased product's size rather than the bare product's, fitting an object in its stiffest and largest state, treating printed screws at hand sizes as an ordinary choice with threads kept out of the main load path, and stating "prints without supports", "holds", or "fits" only with the engine check or slice number. `fdm_assembly`, `fdm_after_slice` and `cad_design` gain the matching fastener, review and parameter rules. The server's `instructions` say when to add each prompt. Supersedes the fit-by-function resource drafts by serving the fit text as a prompt as well, so prompt-only design workers read it. Validated with the design-guidance and CAD protocol tests against mocked transports; no printer contacted and no physical fit or print claimed. Prompt text only; no tool, slicing, or print behavior changes.
+
 ## [1.2.66] – 2026-11-10
 
 ### Fixed

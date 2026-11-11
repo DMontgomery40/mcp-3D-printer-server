@@ -136,7 +136,7 @@ import { uniquePrintName, withPrinterOperation, withPrintSnapshot } from "./safe
 import { checkedFile } from "./printers/bambu.js";
 import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
 import { validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "./safety/expected-peaks.js";
-import { DESIGN_PROMPTS, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_RESOURCE, FDM_CAPABILITY_URI, FDM_SLICING_PROMPT, SERVER_INSTRUCTIONS, slicingGuidance } from "./design-guidance.js";
+import { DESIGN_PROMPTS, FDM_CAPABILITY_GUIDANCE, FDM_CAPABILITY_RESOURCE, FDM_CAPABILITY_URI, FDM_FIT_GUIDANCE, FDM_FIT_RESOURCE, FDM_FIT_URI, FDM_SLICING_PROMPT, SERVER_INSTRUCTIONS, slicingGuidance } from "./design-guidance.js";
 import { DISCOVER_OUTPUT_SCHEMA, discoverPrinters } from "./counterpart/discovery.js";
 import { SETUP_FIELDS_OUTPUT_SCHEMA, genericSetupFields, slicerSetup, type SlicerSetup } from "./counterpart/setup.js";
 import { detectProfilesRoot } from "./slicer/profile-flatten.js";
@@ -1439,7 +1439,8 @@ class ThreeDPrinterMCPServer {
             mimeType: "application/json",
             description: "List of files available on the 3D printer"
           },
-          FDM_CAPABILITY_RESOURCE
+          FDM_CAPABILITY_RESOURCE,
+          FDM_FIT_RESOURCE
         ],
         templates: [
           {
@@ -1466,6 +1467,9 @@ class ThreeDPrinterMCPServer {
       const uri = request.params.uri;
       if (uri === FDM_CAPABILITY_URI) {
         return { contents: [{ uri, mimeType: FDM_CAPABILITY_RESOURCE.mimeType, text: FDM_CAPABILITY_GUIDANCE }] };
+      }
+      if (uri === FDM_FIT_URI) {
+        return { contents: [{ uri, mimeType: FDM_FIT_RESOURCE.mimeType, text: FDM_FIT_GUIDANCE }] };
       }
       const match = uri.match(/^printer:\/\/([^\/]+)\/(.+)$/);
 

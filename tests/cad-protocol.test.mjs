@@ -97,6 +97,8 @@ test("stdio exposes confined CAD contracts, MCP-owned prompt, scopes and counter
   assert.match(prompt.messages[0].content.text, /P =/);
   assert.match(prompt.messages[0].content.text, /build\(\)/);
   assert.match(prompt.messages[0].content.text, /six/);
+  assert.match(prompt.messages[0].content.text, /never scale a screw to clear its hole/);
+  assert.match(prompt.messages[0].content.text, /a valid flag alone shows none of them/);
 });
 
 test("CAD_ENABLED=0 leaves out every CAD tool, prompt and capability", async (t) => {
