@@ -197,6 +197,10 @@ export class FlightRecords {
   private readonly maxCaptureMs: number;
   private readonly cache = new Map<string, FlightRecord>();
   private readonly pending = new Map<string, Promise<void>>();
+  private readonly recentReports = new Map<
+    string,
+    { id: string; at: number; matches: boolean }
+  >();
   private warned = false;
   private readonly ownerToken = randomUUID();
   constructor(
@@ -279,6 +283,7 @@ export class FlightRecords {
       sampledCheckpoints: [],
       storage: "durable",
     };
+    this.recentReports.delete(printerKey);
     this.cache.set(printerKey, record);
     this.save(record);
     this.prune();
@@ -299,17 +304,21 @@ export class FlightRecords {
   }
   observe(key: string, raw: Record<string, any>, at = this.now()): void {
     const record = this.get(key);
-    if (
-      !record ||
-      !this.canWrite(record) ||
-      !Number.isFinite(at) ||
-      at < Date.parse(record.dispatchedAt)
-    )
+    if (!record || !Number.isFinite(at) || at < Date.parse(record.dispatchedAt))
       return;
     const names = [raw.subtask_name, raw.gcode_file].filter(
       (n): n is string => typeof n === "string" && !!n,
     );
-    if (!names.some((n) => hash(stem(n)) === record.dispatch.jobHash)) return;
+    const matches = names.some(
+      (n) => hash(stem(n)) === record.dispatch.jobHash,
+    );
+    this.recentReports.set(record.printerKey, { id: record.id, at, matches });
+    while (this.recentReports.size > this.maxJobs) {
+      const first = this.recentReports.keys().next().value;
+      if (first === undefined) break;
+      this.recentReports.delete(first);
+    }
+    if (!matches || !this.canWrite(record)) return;
     if (record.endedAt) return;
     const previousAt = record.reports[record.reports.length - 1]?.at;
     if (previousAt && at < Date.parse(previousAt)) return;
@@ -598,8 +607,14 @@ export class FlightRecords {
     const record = this.get(key),
       layer = num(record?.latest.layer_num),
       state = record?.latest.gcode_state;
+    const received = record
+      ? this.recentReports.get(record.printerKey)
+      : undefined;
     if (
       !record ||
+      !received?.matches ||
+      received.id !== record.id ||
+      this.now() - received.at > 15000 ||
       !this.canWrite(record) ||
       this.pending.has(record.printerKey)
     )
@@ -657,8 +672,7 @@ export class FlightRecords {
       ...(baseline ? { stage } : {}),
       layer: layer ?? 0,
       expectedHeightMm: zMm,
-      reportAt:
-        record.reports[record.reports.length - 1]?.at ?? record.dispatchedAt,
+      reportAt: new Date(received.at).toISOString(),
       capturedAt: new Date(this.now()).toISOString(),
       status: "unavailable",
       reason: "capture-pending",
@@ -693,6 +707,8 @@ export class FlightRecords {
         const current = this.get(key);
         if (
           current?.id !== record.id ||
+          this.recentReports.get(record.printerKey)?.matches !== true ||
+          this.recentReports.get(record.printerKey)?.id !== record.id ||
           current.latest.gcode_state !== state ||
           num(current.latest.layer_num) !== layer ||
           (baseline &&

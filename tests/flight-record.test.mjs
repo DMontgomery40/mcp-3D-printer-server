@@ -499,3 +499,23 @@ test("expected footprint tracks rapid travel, relative XY and accepted compact c
   );
   assert.deepEqual(b.layers[0].boundsMm, [100, 100, 120, 120]);
 });
+
+test("an unmatched external job cannot attach its camera image to the previous running job", async (t) => {
+  const { store } = setup(t);
+  store.begin("p", {
+    ...dispatch,
+    expected: {
+      heightMm: 80,
+      layers: [{ layer: 1, zMm: 4, boundsMm: [1, 1, 20, 20] }],
+    },
+  });
+  store.observe("p", report(1));
+  store.observe("p", { ...report(1), subtask_name: "someone-elses-job" });
+  let calls = 0;
+  await store.sample("p", async () => {
+    calls++;
+    return { base64: Buffer.from([255, 216, 255, 217]).toString("base64") };
+  });
+  assert.equal(calls, 0);
+  assert.equal(store.read("p").record.frames.length, 0);
+});
