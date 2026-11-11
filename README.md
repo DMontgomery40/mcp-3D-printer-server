@@ -978,12 +978,15 @@ For example, `printer://192.168.1.100/status` reads the status of the printer at
 
 The server carries manufacturing judgment for agents that design or edit a model to print. It is served as MCP prompts, so the client attaches each piece when it applies; the server's `instructions` tell any client they exist.
 
-- `fdm_design`: for every design or model-editing task. Plan how the object prints as part of the design: geometry, orientation, supports, colours and assembly, using the actual printer, filaments and slice. It keeps what the person asked for and judges overhangs, bridges and supports locally, with no fixed 45-degree or bridge-length ban.
+- `fdm_design`: for every design or model-editing task. Plan how the object prints as part of the design: geometry, orientation, supports, colours and assembly, using the actual printer, filaments and slice. It keeps what the person asked for and judges overhangs, bridges and supports locally, with no fixed 45-degree or bridge-length ban. It also carries the everyday judgement for sizes (look published dimensions up, keep size, print correction and fit apart), for parts that hold something (compliant first, bending in the layer plane, strain by duty), for printed fasteners, and for stating support, fit and hold claims only with the check or slice number that shows them.
+- `fdm_fit`: whenever a part meets a real object or another part: choose each fit by what that interface has to do (drop in and lift out, slide, locate, grip, clamp, snap, press in), why filament prints fit the way they do, mechanisms that absorb size uncertainty, cited starting clearances, and what to report per interface.
+- `fdm_flexures`: whenever a part must flex, grip, snap, clip, spring, or hold something by bending: compliant architectures, strain chosen by duty, material and layer direction, bite at the forced opening, heat and creep.
 - `fdm_multicolor`: when several colours or support materials share a print: filament transitions across layers, colour placement, plate scheduling and flushing.
-- `fdm_assembly`: when a split, accent insert or joint could materially improve the result.
+- `fdm_assembly`: when a split, accent insert, joint or printed fastener could materially improve the result.
 - `fdm_after_slice`: a separate review turn after `slice_stl`, before presenting the manufacturing recommendation: keep, revise, or validate one specific uncertainty, using the returned slicer report.
 - `fdm_slicing`: for every design or model-editing task, next to `fdm_design`: how this server's configured slicer (`SLICER_TYPE`) orients a model and generates supports, and how to check a choice with a checkpoint `slice_stl`. Its text follows the slicer: Bambu Studio's auto-orient and `enable_support`, or plainly that a slicer here doesn't orient or take support settings.
 - `guidance://fdm/capability-guidance` (resource): planning bands and sources for bridges and overhangs, for when one is consequential and there is no sufficiently specific measured capability for the printer, material and profile.
+- `guidance://fdm/fit-by-function` (resource): the same text as the `fdm_fit` prompt, in resource form for clients that read resources.
 
 bambu-printer-mcp serves the same guidance.
 
