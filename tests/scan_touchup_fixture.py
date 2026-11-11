@@ -29,6 +29,15 @@ def position(lon, lat):
     return np.stack([R * np.cos(lat) * np.cos(lon), R * np.cos(lat) * np.sin(lon), R * np.sin(lat)], axis=-1)
 
 
+def stitches(lon, lat):
+    """A textile's stitch pattern that only the colour holds (luminance, -1..1): longitude 60..110 only."""
+    s = np.radians(lon) * R * np.cos(np.radians(lat))
+    t = np.radians(lat) * R
+    k = 2 * np.pi / 4.0
+    window = (lon > 60) & (lon < 110) & (np.abs(lat) < 30)
+    return np.where(window, np.sin(k * s) * np.sin(k * t), 0.0)
+
+
 def bump(lon, lat):
     """The relief (mm) the normal map encodes: bumps on the far side (longitude 120..240), none elsewhere."""
     s = np.radians(lon) * R * np.cos(np.radians(lat))  # mm along the parallel
@@ -81,6 +90,7 @@ def write(folder, hole=True, spike=True, floater=True):
     LT, AT = np.meshgrid(lon_t, lat_t)
     colour = np.empty((TEX, TEX, 3))
     colour[:] = [0.78, 0.62, 0.42]  # yarn tan
+    colour += 0.07 * stitches(LT, AT)[..., None]  # lit loops and shadowed gaps, in the colour only
     (l0, a0), (l1, a1) = CARD
     colour[(LT >= l0) & (LT <= l1) & (AT >= a0) & (AT <= a1)] = [0.95, 0.94, 0.90]
     for lon, lat in EYES:

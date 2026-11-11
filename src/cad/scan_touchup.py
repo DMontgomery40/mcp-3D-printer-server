@@ -3,9 +3,11 @@
 scan_touchup(load_scan(...), colour="colour", normal="normal") takes load_scan's textured mesh (its UVs kept) and
 the declared colour and normal map inputs, and returns a ScanTouchup. Its steps are recorded and run in a fixed
 order by .mesh(): clean (loose pieces, spikes, holes) -> refine (smaller triangles, the body's size kept) -> relief
-(the normal map's measured detail, never colour) -> flatten -> beads and cords (manifold3d union) -> seat.
+(the normal map's measured detail) -> texture relief (opt-in: a textile's stitch pattern from the colour texture)
+-> flatten -> beads and cords (manifold3d union) -> seat.
 .regions() lists the colour regions by id (printed to build.log, with regions.png in the run folder) so the other
-steps can name them. Relief is the measured detail by default; colour only says where a feature is.
+steps can name them. Relief is the measured detail by default; colour says where a feature is, and makes relief
+only through texture_relief(), for a textile the photos show in relief.
 """
 import hashlib
 import json
@@ -196,12 +198,9 @@ def _subdivide(V, F, UV, FT):
 
 # --- the normal map's measured relief ----------------------------------------------------------------------------
 
-def _height_map(normal_rgb, UV, FT, V, F, longest_mm, finest_mm):
-    """Integrates the tangent-space normal map (OpenGL: +X along U, +Y along V, as Object Capture writes it) with a
-    screened Poisson solve: the height (mm) of the scan's fine detail over its coarse surface, per texel."""
+def _texture_space(UV, FT, V, F, w, h):
+    """The texels the mesh's UV triangles cover, and millimetres per texel (median over triangles)."""
     from PIL import Image, ImageDraw
-    from scipy.ndimage import binary_erosion, gaussian_filter
-    h, w = normal_rgb.shape[:2]
     px = UV[FT] * [w, h]
     island = Image.new("L", (w, h), 0)
     draw = ImageDraw.Draw(island)
@@ -212,7 +211,15 @@ def _height_map(normal_rgb, UV, FT, V, F, longest_mm, finest_mm):
     tex_area = np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]) / 2
     area3 = np.linalg.norm(_face_normals(V, F, unit=False), axis=1) / 2
     ok = tex_area > 1e-6
-    mm = float(np.median(np.sqrt(area3[ok] / tex_area[ok])))
+    return mask, float(np.median(np.sqrt(area3[ok] / tex_area[ok])))
+
+
+def _height_map(normal_rgb, UV, FT, V, F, longest_mm, finest_mm):
+    """Integrates the tangent-space normal map (OpenGL: +X along U, +Y along V, as Object Capture writes it) with a
+    screened Poisson solve: the height (mm) of the scan's fine detail over its coarse surface, per texel."""
+    from scipy.ndimage import binary_erosion, gaussian_filter
+    h, w = normal_rgb.shape[:2]
+    mask, mm = _texture_space(UV, FT, V, F, w, h)
     n = normal_rgb * 2 - 1
     nz = np.maximum(n[..., 2], 0.2)
     g_col = np.where(mask, -n[..., 0] / nz, 0).astype(np.float32)
@@ -226,6 +233,22 @@ def _height_map(normal_rgb, UV, FT, V, F, longest_mm, finest_mm):
     height = gaussian_filter(height, max(finest_mm / mm / 2, 0.5))
     inner = binary_erosion(mask, iterations=max(2, int(round(0.4 / mm))))  # seams were integrated apart
     return height * gaussian_filter(inner.astype(np.float32), max(1.0, 0.3 / mm)), mm
+
+
+def _texture_band(rgb, UV, FT, V, F, finest_mm, longest_mm):
+    """The colour texture's luminance between finest_mm and longest_mm (a textile's stitch or weave scale), per
+    texel. Blurs are normalised by the UV islands, so a seam's padding never bleeds in; the scan's baked shading
+    is longer than longest_mm and drops out."""
+    from scipy.ndimage import gaussian_filter
+    h, w = rgb.shape[:2]
+    mask, mm = _texture_space(UV, FT, V, F, w, h)
+    lum = (rgb[..., :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)) * mask
+    m = mask.astype(np.float32)
+
+    def blur(sigma_mm):
+        sigma = max(sigma_mm / mm, 0.5)
+        return gaussian_filter(lum, sigma) / np.maximum(gaussian_filter(m, sigma), 1e-3)
+    return (blur(finest_mm / 2) - blur(longest_mm / 2)) * m
 
 
 # --- colour regions ----------------------------------------------------------------------------------------------
@@ -364,7 +387,7 @@ class ScanTouchup:
         self.colour_path, self.normal_path = colour, normal
         self._clusters, self._min_area = clusters, min_region_mm2
         self._label = self._regions = None
-        self._flat, self._parts, self._seat = [], [], None
+        self._flat, self._parts, self._seat, self._texture = [], [], None, None
 
     def _image(self, path, mode):
         from PIL import Image
@@ -415,6 +438,23 @@ class ScanTouchup:
         self._parts.append(("cord", self._mask(region), diameter_mm, proud_mm, name))
         return self
 
+    def texture_relief(self, height_mm, regions=None, finest_mm=0.4, longest_mm=3.0, name="Textile"):
+        """Raises a textile's stitch or weave pattern from the colour texture: for fabric, knit or crochet the photos
+        show in relief that the scan did not capture (its normal map holds almost none). Off unless called; never
+        for hard objects, printed graphics or labels. The luminance between finest_mm and longest_mm is normalised
+        over the textile and scaled so its peaks stand about height_mm / 2 out and in (lit loops up, shadowed gaps
+        down). It goes on `regions` (default: every region not flattened, beaded or corded), fading out over 1 mm
+        from those and from the seat band. Listed as assumed."""
+        if not 0 < float(height_mm) <= 2:
+            raise ValueError("texture_relief height_mm must be above 0 and at most 2")
+        if not 0 < finest_mm < longest_mm:
+            raise ValueError("texture_relief needs 0 < finest_mm < longest_mm")
+        if self.colour_path is None or self.UV is None:
+            raise ValueError("texture_relief needs the scan's UVs and its colour map as a declared input")
+        self._texture = (float(height_mm), None if regions is None else self._mask(regions), float(finest_mm),
+                         float(longest_mm), name)
+        return self
+
     def seat(self, height_mm):
         """Cuts a flat base height_mm above the lowest point and sets it on z = 0."""
         self._seat = float(height_mm)
@@ -446,6 +486,22 @@ class ScanTouchup:
             self.changes.append(("changed" if relief_gain == 1 else "assumed",
                                  f"surface detail from the scan's normal map, {rms * relief_gain:.2f} mm rms"
                                  + ("" if relief_gain == 1 else f" ({relief_gain:g}x what it measured)")))
+        if self._texture is not None:
+            height_mm, include, finest, longest, name = self._texture
+            band = _texture_band(self._image(self.colour_path, "RGB"), self.UV, self.FT, V, F, finest, longest)
+            b = _per_vertex(_sample(band, self.UV), F, self.FT, len(V))
+            del band
+            allowed = ~keep_clear if include is None else include & ~keep_clear
+            fade = np.clip(_distance(A, V, ~allowed, 1.0), 0, 1) if (~allowed).any() else np.ones(len(V))
+            if self._seat is not None:
+                fade *= np.clip(V[:, 2] - V[:, 2].min() - self._seat, 0, 1)
+            scale = float(np.percentile(np.abs(b[allowed]), 90)) if allowed.any() else 0.0
+            if scale > 0:
+                h = 0.5 * height_mm * np.clip(b / scale, -1, 1)
+                V = V + (h * fade)[:, None] * _vertex_normals(V, F)
+                self.stats["texture_relief_rms_mm"] = round(float(np.sqrt(np.mean((h * fade)[allowed] ** 2))), 3)
+                self.changes.append(("assumed", f"{name}: stitch pattern raised from the colour texture, "
+                                                f"{height_mm:g} mm peak to peak, on the textile only"))
         vn = _vertex_normals(V, F)
         for mask, shape, feather, cap, name in self._flat:
             pts = V[mask]

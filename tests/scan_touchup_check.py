@@ -86,6 +86,27 @@ with tempfile.TemporaryDirectory() as tmp:
     heights = [np.linalg.norm(W[np.linalg.norm(W - fx.position(lo, la), axis=1) < 0.9], axis=1).max() - fx.R
                for lo, la in fx.ARC[5:-5]]
     assert min(heights) > 0.35 and max(heights) - min(heights) < 0.4, heights  # one cord, not beads with gaps
+    # Texture relief (opt-in): the colour's stitch pattern becomes relief on the textile, not on the flattened card.
+    with redirect_stdout(StringIO()):
+        t2 = scan_touchup(load_scan("scan", source_units="mm", up_axis="z", ground=False), colour="colour", normal="normal")
+        t2.flatten([card["id"]], shape="plane", max_move_mm=3, name="Card").texture_relief(0.8, name="Yarn")
+        knit = t2.mesh(relief_gain=0)
+    K = np.asarray(knit.vertices)
+    rk = np.linalg.norm(K, axis=1)
+    lon_k = np.degrees(np.arctan2(K[:, 1], K[:, 0]))
+    lat_k = np.degrees(np.arcsin(np.clip(K[:, 2] / rk, -1, 1)))
+    inside = (lon_k > 65) & (lon_k < 105) & (np.abs(lat_k) < 25)
+    assert np.corrcoef(rk[inside] - fx.R, fx.stitches(lon_k, lat_k)[inside])[0, 1] > 0.7, "lit loops raised"
+    assert 0.5 < np.ptp(rk[inside]) < 1.0, np.ptp(rk[inside])
+    on_card = K[np.linalg.norm(K - fx.position(-22.5, 25), axis=1) < 4]
+    assert np.linalg.svd(on_card - on_card.mean(0), full_matrices=False)[1][2] / np.sqrt(len(on_card)) < 0.05, "card stays flat"
+    assert ("assumed", "Yarn: stitch pattern raised from the colour texture, 0.8 mm peak to peak, on the textile only") in t2.changes
+    try:
+        t2.texture_relief(5)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unbounded texture height was accepted")
     tags = {text.split(":")[0]: tag for tag, text in t.changes}
     assert tags.get("Eye") == "assumed" and tags.get("Arc") == "assumed", tags
     try:
