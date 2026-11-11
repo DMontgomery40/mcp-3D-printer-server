@@ -74,6 +74,15 @@ test("the guidance keeps the prompt pack's opening and judgement, with no numeri
   assert.match(FDM_CORE, /There is no single fit number\./);
   assert.match(FDM_CORE, /in its stiffest, largest state/);
   assert.match(FDM_CORE, /consider a compliant mechanism first/);
+  // Nov 11: a car phone holder came out as one compliant piece with no swivel, on a strip of tape. The product comes first.
+  assert.match(FDM_CORE, /Before choosing a mechanism, establish what every working bought or published version of the thing has, and keep all of it\./);
+  assert.match(FDM_CORE, /For example, a car phone holder turns and tilts to face the driver;/);
+  assert.match(FDM_CORE, /sized by the moment of what it holds, not just its weight/);
+  assert.match(FDM_CORE, /a full pad of the tape's grade, not a strip, on a surface the tape suits/);
+  assert.match(FDM_CORE, /Start from the complete product a capable designer would describe at once, then make it printable\./);
+  assert.match(FDM_CORE, /A design that leaves out a feature they all have says what it lost and why that is acceptable for this person\./);
+  assert.match(FDM_CORE, /consider a compliant mechanism first: [^\n]*That choice is for the element that grips, clips or springs, not for the product: it is never a reason to make the whole thing one piece or to drop a joint, adjustment or base the bought versions have\./, "the scope sits with the compliant-first sentence");
+  assert.match(FDM_CORE, /If a check says a bought product that holds for years would fail, the check is wrong: correct it, then apply it to your design\./);
   assert.match(FDM_CORE, /Keep the bending in the layer plane/);
   assert.match(FDM_CORE, /A printed screw, nut, or threaded hole is an ordinary choice/);
   assert.match(FDM_CORE, /Keep threads out of the main load path/);
@@ -110,6 +119,7 @@ test("the fit guidance chooses each fit by function, keeps size, print correctio
 
 test("the flexures guidance chooses strain by duty, keeps bending in-plane, and prefers observed values", () => {
   assert.match(FDM_FLEXURES, /one bending piece replaces rigid jaws, a hinge and a clamp bolt/);
+  assert.match(FDM_FLEXURES, /as the element that grips or latches, never in place of a joint, adjustment or base the bought versions have\./);
   assert.match(FDM_FLEXURES, /A long leaf, band or arch spreads strain over its length/);
   assert.match(FDM_FLEXURES, /hard stop just past the working stroke/);
   assert.match(FDM_FLEXURES, /Judge bite at the opening the object actually forces/);

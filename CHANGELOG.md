@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.70] – 2026-11-11
+
+### Changed
+
+- `fdm_design` starts a design from the product before any mechanism: establish what every working bought or published version of the thing has (a car phone holder turns and tilts to face the driver; a mount's base is sized by the moment of what it holds; an adhesive mount uses a full pad of the tape's grade, not a strip, on a surface the tape suits), keep all of it, and say what a design that leaves out a feature they all have lost and why that is acceptable for this person. "Consider a compliant mechanism first" is now scoped, in `fdm_design` and `fdm_flexures`, to the element that grips, clips, springs or latches: it is never a reason to make the whole product one piece or to drop a joint, adjustment or base the bought versions have. Connections (tape, screws, a snap) are judged against products that demonstrably work: a check that fails a bought product that holds for years is wrong, and is corrected before it is applied to the design. Prompt text only; checked with the design-guidance tests; no printer contacted.
+
 ## [1.2.69] – 2026-11-11
 
 ### Changed
