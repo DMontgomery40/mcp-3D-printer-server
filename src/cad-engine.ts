@@ -659,12 +659,12 @@ export class CadEngine {
         inputs[alias] = await this.inputFile(value, ext);
       }
     }
+    // Re-check before queueing; a not-ready refusal still comes from inside the queue, after any queue timeout.
     const before = await this.ensureReady(signal);
-    if (!before.ready) throw new CadRefusal("cad-not-ready", before.error!);
     return this.exclusive(
       async (queueWaitMs) => {
         const status = await this.status();
-        if (!status.ready) throw new CadRefusal("cad-not-ready", status.error!);
+        if (!status.ready) throw new CadRefusal("cad-not-ready", before.error ?? status.error!);
         const job = await fs.mkdtemp(path.join(root, `cad-${name}-`));
         await fs.chmod(job, 0o700);
         const script = path.join(job, `${name}.py`),
@@ -859,11 +859,10 @@ export class CadEngine {
     )
       throw new Error("clearance_mm must be finite, between 0 and 100.");
     const before = await this.ensureReady(signal);
-    if (!before.ready) throw new CadRefusal("cad-not-ready", before.error!);
     return this.exclusive(
       async () => {
         const status = await this.status();
-        if (!status.ready) throw new CadRefusal("cad-not-ready", status.error!);
+        if (!status.ready) throw new CadRefusal("cad-not-ready", before.error ?? status.error!);
         const job = await fs.mkdtemp(path.join(this.dataDir, "fit-"));
         try {
           await fs.copyFile(model, path.join(job, "model.stl"));
