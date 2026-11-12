@@ -2,6 +2,7 @@
 
 // Must stay first: Node.js 18 needs the global crypto before any SDK transport code runs.
 import "./ensure-web-crypto.js";
+import {FLIGHT_RECORD_PROPERTIES,FLIGHT_RECORD_DESCRIPTION,FLIGHT_RECORD_OUTPUT_SCHEMA,flightReadOptions,flightRecordResult,FLIGHT_ASSESS_PROPERTIES,FLIGHT_ASSESS_REQUIRED,FLIGHT_ASSESS_DESCRIPTION,PRINT_EVIDENCE_GUIDANCE,visualSubmission} from "./counterpart/flight-tools.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -933,7 +934,7 @@ class ThreeDPrinterMCPServer {
           resources: {},
           tools: {}
         },
-        instructions: SERVER_INSTRUCTIONS + (CAD_ENABLED ? " For headless dimensioned designs and parameter edits, read the cad_design prompt before using cad_run." : "")
+        instructions: SERVER_INSTRUCTIONS + PRINT_EVIDENCE_GUIDANCE + (CAD_ENABLED ? " For headless dimensioned designs and parameter edits, read the cad_design prompt before using cad_run." : "")
       }
     );
 
@@ -1349,7 +1350,7 @@ class ThreeDPrinterMCPServer {
           assertActive();
           validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
         },
-        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) { assertActive(); markPrintCommandSent(); } },
+        assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) { assertActive(); bambu.recordFlightDispatch(devIp,devId,remoteFileName,requirements,resumeFile); markPrintCommandSent(); } },
         onDispatched: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) retainForDispatchedUpload(); },
       };
       let jobUpdates: BridgeJobUpdate[] = [];
@@ -1742,6 +1743,16 @@ class ThreeDPrinterMCPServer {
             description: "Describe this printer for the counterpart/1 contract: server name and version, printer kind and identity, and which features work (progress, layers, camera, filaments, pause, resume, cancel, print_3mf, G-code), detected from the firmware. Read-only.",
             inputSchema: { type: "object", properties: { ...PRINTER_TARGET_PROPERTIES } },
             outputSchema: PRINTER_INFO_OUTPUT_SCHEMA,
+          },
+          {
+            name:"counterpart_print_record",description:FLIGHT_RECORD_DESCRIPTION,
+            inputSchema:{type:"object",properties:{...FLIGHT_RECORD_PROPERTIES,type:{type:"string",description:"Configured printer backend whose saved record is requested."},host:{type:"string",description:"Saved printer hostname or address; used only to select a local record."},port:{type:"string",description:"Configured printer API port; used only to select a local record."},bambu_serial:{type:"string",description:"Saved Bambu printer serial; used only to select a local record."}},additionalProperties:false},
+            outputSchema:FLIGHT_RECORD_OUTPUT_SCHEMA
+          },
+          {
+            name:"counterpart_print_assess",description:FLIGHT_ASSESS_DESCRIPTION,
+            inputSchema:{type:"object",properties:{...FLIGHT_ASSESS_PROPERTIES,type:{type:"string",description:"Configured backend whose saved evidence is assessed."},host:{type:"string",description:"Saved printer hostname or address; selects a local record."},port:{type:"string",description:"Configured API port; selects a local record."},bambu_serial:{type:"string",description:"Saved Bambu serial; selects a local record."}},required:FLIGHT_ASSESS_REQUIRED,additionalProperties:false},
+            outputSchema:FLIGHT_RECORD_OUTPUT_SCHEMA
           },
           {
             name: "counterpart_print_progress",
@@ -2789,6 +2800,12 @@ class ThreeDPrinterMCPServer {
             return structured(this.counterpart.cameraStreamStop(target));
           case "counterpart_printer_info":
             return structured(await this.counterpart.printerInfo(target));
+
+          case "counterpart_print_assess":
+            return flightRecordResult(this.counterpart.assessPrintRecord(target,visualSubmission(args)));
+
+          case "counterpart_print_record":
+            return flightRecordResult(this.counterpart.printRecord(target,flightReadOptions(args)),args?.frame_format==="images");
 
           case "counterpart_print_progress":
             return structured(await this.counterpart.printProgress(target));

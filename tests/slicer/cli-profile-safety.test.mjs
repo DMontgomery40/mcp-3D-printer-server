@@ -1,3 +1,4 @@
+import {SaxesParser} from 'saxes';
 import {trackedMkdtemp} from '../support/temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -729,5 +730,29 @@ test('supertack_plate reaches the CLI as Bambu Studio\'s own "Supertack Plate" b
     const f = await fixture(t);
     await f.slice({ bedType: bed });
     assert.equal(JSON.parse(await fs.readFile(f.capture + '.process.json', 'utf8')).curr_bed_type, key);
+  }
+});
+
+test('sliced 3MF XML escapes quoted compatibility lists before return and cache restore',async t=>{
+  const {parseStringPromise}=await import('xml2js');
+  const f=await fixture(t);
+  const zip=new JSZip();
+  zip.file('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>');
+  zip.file('_rels/.rels','<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>');
+  zip.file('3D/3dmodel.model','<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>');
+  const original='"Bambu Lab X1 Carbon 0.4 nozzle";"A & B <printer>"';
+  zip.file('Metadata/model_settings.config',`<?xml version="1.0"?><config>\n <object id="1">\n <metadata key="compatible_printers" value="${original}"/>\n <metadata key="name" value="Already &amp; valid"/>\n </object>\n</config>`);
+  const gcode='M83\nG1 X1 Y1 E1\n';zip.file('Metadata/plate_1.gcode',gcode);
+  await fs.writeFile(path.join(f.root,'fixture_sliced.3mf'),await zip.generateAsync({type:'nodebuffer'}));
+  for(let i=0;i<2;i++){
+    const result=await f.slice();const produced=await JSZip.loadAsync(await fs.readFile(typeof result==='string'?result:result.path));
+    for(const entry of Object.values(produced.files)){
+      if(entry.dir)continue;const text=await entry.async('string');
+      if(/\.(?:xml|model|rels)$/i.test(entry.name)||(/\.config$/i.test(entry.name)&&text.trimStart().startsWith('<'))){assert.doesNotThrow(()=>new SaxesParser().write(text).close(),entry.name);await assert.doesNotReject(parseStringPromise(text),entry.name);}
+    }
+    const settings=await parseStringPromise(await produced.file('Metadata/model_settings.config').async('string'));
+    assert.equal(settings.config.object[0].metadata[0].$.value,original);
+    assert.equal(settings.config.object[0].metadata[1].$.value,'Already & valid');
+    assert.equal(await produced.file('Metadata/plate_1.gcode').async('string'),gcode);
   }
 });

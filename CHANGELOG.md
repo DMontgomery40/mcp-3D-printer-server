@@ -6,6 +6,17 @@
 
 - Align direct P1S calibration booleans with the shared Studio option resolver, preserve explicit choices, and report requested/resolved/transmitted options and unsupported overrides without guessing SDK wire fields. Payload regressions use fake transports with network blocked; this parity work does not establish a cure for scan-to-make #605 or physical print success.
 
+## [1.2.73] – 2026-11-12
+
+### Added
+
+- Request client vision assessment at the first layer and ten-layer checkpoints, return saved JPEGs as standard MCP images with selected sliced footprint evidence, and persist hash-bound observations through `counterpart_print_assess`. A clear empty footprint reports `suspect_no_extrusion` without requiring a baseline; dark/occluded/unknown evidence stays unknown. Surface the stored warning separately from firmware FINISH and through structured progress problems. Retain no-extrusion warnings across unknown checkpoints and restarts until a later clear visible-footprint present observation at a higher layer supersedes them; keep the warning first among progress problems. Give the phone a layer-specific message and a distinct finished-but-empty message; request each crossed ten-layer milestone even after an unknown first-layer assessment. Bind current evidence to hashed execution IDs and observed ended-to-active boundaries so same-filename reprints cannot inherit it; archived evidence stays readable. Retain at most 32 bounded JPEGs and 64 KiB of observations per job; retrieve at most four images at once. Real empty-first-layer and lowered-bed fixtures replay the maintainer-confirmed observation at the client-worker boundary; no embedded image model, real printer controls or installed-client warning loop is claimed. Refs DMontgomery40/scan-to-make#630.
+
+- Keep bounded persistent per-job flight records through `counterpart_print_record`: inspected dispatch hashes and mappings, allowlisted report changes, selected-plate expected layer geometry (including full-circle and partial XY arcs), and bounded first-layer/periodic camera frames. Firmware FINISH remains separate from physical evidence. Calibrated client frame measurements can report consistent height or suspected no-growth; absent, stale, occluded or uncalibrated evidence stays unknown. Recording adds no status polling, model calls or automatic printer controls. Only actual Bambu report callbacks refresh camera-evidence eligibility; reading cached display status does not. Validated with offline replay, schema/stdio and mocked transport tests only; real hardware and physical-success acceptance remain unverified. Refs DMontgomery40/scan-to-make#628 and DMontgomery40/scan-to-make#630.
+
+### Fixed
+
+- Escape XML attribute values in 3MF metadata, including Studio CLI object compatibility lists with quoted names. Normalize malformed single-line metadata before cache/publication of the slice, preserve geometry and G-code, and reject unexpected malformed metadata. Cover every XML part of produced archives and quoted/ampersand names; validate with offline fixtures and Studio loading only, without printer contact. Refs DMontgomery40/scan-to-make#737.
 
 ## [1.2.72] – 2026-11-12
 
