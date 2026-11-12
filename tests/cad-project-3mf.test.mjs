@@ -375,6 +375,38 @@ test("a mesh a build item places directly through p:path is shared too, and keep
   assert.equal(elementText(model, 1), cubeMesh(1, 1), "the directly placed mesh keeps its bytes");
 });
 
+// Re-check of 4705a47 / e1c380d: an assembly inside a model file uses a shared mesh too, however its reference is spelt.
+// Root object 2 places mesh a.model:1 directly; root object 3 places assembly 9 (in a.model or in a third file
+// b.model), whose component points at a.model:1. Replacing object 2's part must leave object 3's mesh alone.
+const ASSEMBLY_SPELLINGS = [
+  ["no p:path, the assembly in the mesh's own file (control)", "3D/Objects/a.model", ""],
+  ["a self p:path with a leading /", "3D/Objects/a.model", ' p:path="/3D/Objects/a.model"'],
+  ["a self p:path without a leading /", "3D/Objects/a.model", ' p:path="3D/Objects/a.model"'],
+  ["a p:path from a third model file, with a leading /", "3D/Objects/b.model", ' p:path="/3D/Objects/a.model"'],
+  ["a p:path from a third model file, without a leading /", "3D/Objects/b.model", ' p:path="3D/Objects/a.model"'],
+];
+for (const [spelling, assemblyFile, reference] of ASSEMBLY_SPELLINGS) {
+  test(`an assembly inside a model file that uses a shared mesh through ${spelling} keeps the original`, async (t) => {
+    const run = job(t, [[[0, 0, 0], [2, 2, 2]]]);
+    const assembly = `<object id="9" type="model"><components><component${reference} objectid="1"/></components></object>`;
+    const inA = assemblyFile === "3D/Objects/a.model";
+    const entries = {
+      "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources><object id="2" type="model"><components><component p:path="/3D/Objects/a.model" objectid="1"/></components></object><object id="3" type="model"><components><component p:path="/${assemblyFile}" objectid="9"/></components></object></resources><build><item objectid="2"/><item objectid="3" transform="1 0 0 0 1 0 0 0 1 20 0 0"/></build></model>`,
+      "3D/Objects/a.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources>${cubeMesh(1, 1)}${inA ? assembly : ""}</resources><build/></model>`,
+      "Metadata/model_settings.config": `<config><object id="2"><metadata key="name" value="A"/><part id="1" subtype="normal_part"><metadata key="name" value="cube"/></part></object><object id="3"><metadata key="name" value="B"/><part id="9" subtype="normal_part"><metadata key="name" value="cube"/></part></object></config>`,
+    };
+    if (!inA) entries["3D/Objects/b.model"] = `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources>${assembly}</resources><build/></model>`;
+    const base = await craftBase(run.directory, entries);
+    await writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "replace_part", object_id: 2, part_id: 1, path: "/3D/Objects/a.model", stl: 0 }] }, run.parts, { kit: base }, run.out);
+    const zip = await JSZip.loadAsync(fs.readFileSync(run.out));
+    const a = await zip.file("3D/Objects/a.model").async("string");
+    assert.equal(elementText(a, 1), cubeMesh(1, 1), "the mesh object 3's assembly uses keeps its bytes");
+    const [[, [[edited, width]]]] = await partWidths(run.out);
+    assert.deepEqual([edited !== 1, width], [true, 2], "object 2 has its own 2 mm copy");
+    if (!inA) assert.equal(await zip.file("3D/Objects/b.model").async("string"), entries["3D/Objects/b.model"], "the third file is untouched");
+  });
+}
+
 // --- Re-check of #157 / #111 (2026-11-12): the inspection STL the sandbox writes for a 3MF project -----------------
 // tests/cad_project3mf_check.py runs src/cad/project3mf.py's export and geometry.inspect with the CAD runtime's
 // libraries; CAD_TEST_PYTHON names a runtime that has them.

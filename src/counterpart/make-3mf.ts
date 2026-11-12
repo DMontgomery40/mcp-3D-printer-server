@@ -445,31 +445,50 @@ export async function writeCadProject3mf(manifest: unknown, partsDir: string, in
     return value;
   };
   const changed: string[] = [];
-  // A root object's component in its model: the file a part's mesh lives in and its component transform.
+  // A component's or build item's reference, resolved: the model file it names (no path: the file it is written in;
+  // with or without one leading "/") and the object id there.
+  const reference = (attributes: string, file: string) => ({
+    id: Number(/\bobjectid="(\d+)"/.exec(attributes)?.[1]),
+    path: ((/\b(?:\w+:)?path="([^"]*)"/.exec(attributes)?.[1]) ?? "").replace(/^\//, "") || file,
+  });
+  const COMPONENT = /<(?:\w+:)?component\b([^>]*)\/?>/g;
+  // A root object's components: the file each part's mesh lives in and its id there.
   const componentsOf = (objectId: number) => {
     const object = elementById(files.get(ROOT)!, "object", objectId);
     if (!object) fail(`The base 3MF has no object ${objectId}.`);
-    return [...object.text.matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)].map(match => ({
-      id: Number(/\bobjectid="(\d+)"/.exec(match[1])?.[1]),
-      path: (/\b(?:\w+:)?path="\/?([^"]+)"/.exec(match[1])?.[1]) ?? ROOT,
-    }));
+    return [...object.text.matchAll(COMPONENT)].map(match => reference(match[1], ROOT));
   };
   const settingsObject = (objectId: number) => {
     const block = elementById(files.get(SETTINGS)!, "object", objectId);
     if (!block) fail(`The base 3MF's model_settings.config does not describe object ${objectId}.`);
     return block;
   };
-  // Every reference to mesh resource `id` in model file `target`: the root model's components and build items, and a
-  // model part's own components.
-  const usesOf = (target: string, id: number) => {
-    const sameId = (attributes: string) => Number(/\bobjectid="(\d+)"/.exec(attributes)?.[1]) === id;
-    let uses = [...files.get(ROOT)!.matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)]
-      .filter(match => sameId(match[1]) && ((/\b(?:\w+:)?path="\/?([^"]+)"/.exec(match[1])?.[1]) ?? ROOT) === target).length;
-    // A build item may place an object of another model file directly (production extension p:path).
-    uses += [...files.get(ROOT)!.matchAll(/<(?:\w+:)?item\b([^>]*)\/?>/g)]
-      .filter(match => sameId(match[1]) && ((/\b(?:\w+:)?path="\/?([^"]+)"/.exec(match[1])?.[1]) ?? ROOT) === target).length;
-    if (target !== ROOT) uses += [...files.get(target)!.matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)].filter(match => sameId(match[1]) && !/\bpath="/.test(match[1])).length;
-    return uses;
+  // The components that assemblies inside the other model files hold, resolved once: an edit never changes them (it
+  // adds mesh objects to those files and re-points only root components). A file without the word "component" is
+  // skipped without becoming a string.
+  let partReferences: { id: number; path: string }[] | undefined;
+  const modelPartReferences = async () => {
+    if (!partReferences) {
+      partReferences = [];
+      for (const [name, entry] of Object.entries(zip.files)) {
+        if (entry.dir || name === ROOT || !name.toLowerCase().endsWith(".model")) continue;
+        let xml = files.get(name);
+        if (xml === undefined) {
+          const bytes = await entry.async("nodebuffer");
+          if (!bytes.includes("component")) continue;
+          if (bytes.length > MAX_EDIT_MODEL_BYTES) fail(`The base 3MF's ${name} is too large to edit (a model part up to ${MAX_EDIT_MODEL_BYTES / 1024 / 1024} MiB).`);
+          xml = bytes.toString("utf8");
+        }
+        for (const match of xml.matchAll(COMPONENT)) partReferences.push(reference(match[1], name));
+      }
+    }
+    return partReferences;
+  };
+  // Every use of mesh resource `id` in model file `target`: the root model's components and build items (a build item
+  // may place another file's object through p:path), and the components of assemblies in any model part.
+  const usesOf = async (target: string, id: number) => {
+    const root = [...files.get(ROOT)!.matchAll(/<(?:\w+:)?(?:component|item)\b([^>]*)\/?>/g)].map(match => reference(match[1], ROOT));
+    return [...root, ...await modelPartReferences()].filter(entry => entry.id === id && entry.path === target).length;
   };
   // A part given its own copy of a shared mesh: (object, model file, original part id) -> the copy's id, so a later edit
   // of the same part finds it.
@@ -521,7 +540,7 @@ export async function writeCadProject3mf(manifest: unknown, partsDir: string, in
         const next = mesh.text.replace(/<((?:\w+:)?mesh)\b[\s\S]*<\/\1>/, () => fresh);
         // The edited object's own uses of the mesh (an object may place one mesh twice) all take the replacement.
         const own = componentsOf(edit.object_id).filter(entry => entry.id === component.id && entry.path === component.path).length;
-        const others = usesOf(component.path, component.id) - own;
+        const others = await usesOf(component.path, component.id) - own;
         if (others <= 0) {
           files.set(component.path, model.slice(0, mesh.start) + next + model.slice(mesh.end));
           changed.push(`replaced part ${edit.part_id} of object ${edit.object_id} (its painting, if any, went with the old mesh)`);
@@ -540,10 +559,9 @@ export async function writeCadProject3mf(manifest: unknown, partsDir: string, in
         // Point the edited object's components at the copy.
         const root = files.get(ROOT)!;
         const object = elementById(root, "object", edit.object_id)!;
-        const objectText = object.text.replace(/<(?:\w+:)?component\b[^>]*\/?>/g, tag => {
-          const attributes = tag.replace(/^<(?:\w+:)?component\b/, "");
-          const file = (/\b(?:\w+:)?path="\/?([^"]+)"/.exec(attributes)?.[1]) ?? ROOT;
-          if (file !== component.path || Number(/\bobjectid="(\d+)"/.exec(attributes)?.[1]) !== component.id) return tag;
+        const objectText = object.text.replace(COMPONENT, (tag, attributes: string) => {
+          const target = reference(attributes, ROOT);
+          if (target.path !== component.path || target.id !== component.id) return tag;
           return tag.replace(/\bobjectid="\d+"/, `objectid="${id}"`);
         });
         files.set(ROOT, root.slice(0, object.start) + objectText + root.slice(object.end));
