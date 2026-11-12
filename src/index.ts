@@ -79,8 +79,10 @@ import {
   CONTROL_OUTPUT_SCHEMA,
   FILAMENTS_OUTPUT_SCHEMA,
   PRINT_PROGRESS_OUTPUT_SCHEMA,
+  MAKE_3MF_OUTPUT_SCHEMA,
   PRINTER_INFO_OUTPUT_SCHEMA,
 } from "./counterpart/contract.js";
+import { makeCounterpart3mf } from "./counterpart/make-3mf.js";
 import { SlicerError } from "./slicer/slicer-error.js";
 import {
   inspectSliceSettings,
@@ -91,7 +93,7 @@ import {
   hasBambuProjectSettings,
   saveTemplate,
 } from "./slicer/templates.js";
-import { parse3MF, ThreeMFData } from './3mf_parser.js';
+import { analyze3MFPlateObjects, parse3MF, ThreeMFData } from './3mf_parser.js';
 import { BambuImplementation } from "./printers/bambu.js";
 import type { OctoPrintImplementation } from "./printers/octoprint.js";
 import { OctoPrintAppKeys } from "./printers/octoprint-appkeys.js";
@@ -569,7 +571,7 @@ const PRINTER_TARGET_PROPERTIES = {
 const OUTPUT_SCHEMA_TOOLS = new Set([
   "cad_status", "cad_setup", "cad_run", "cad_check_fit", "cad_examples",
   "counterpart_discover_printers", "counterpart_setup_fields", "counterpart_propose_filaments",
-  "counterpart_printer_info", "counterpart_self_check", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
+  "counterpart_printer_info", "counterpart_self_check", "counterpart_print_progress", "counterpart_make_3mf", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
   "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
   "blender_mcp_setup", "fusion_mcp_setup", "connect_printer", "octoprint_request_api_key",
@@ -1817,6 +1819,35 @@ class ThreeDPrinterMCPServer {
             outputSchema: PROPOSE_FILAMENTS_OUTPUT_SCHEMA,
           },
           {
+            name: "counterpart_make_3mf",
+            description: "Counterpart contract (counterpart/1): combine STL parts exported separately (for example each body of a design) into one new 3MF for multi-colour printing. The parts keep their relative positions as one assembly, and each part prints with its filament number (default: part 1 uses filament 1, part 2 filament 2, and so on). Slice it with slice_stl, passing one load_filaments profile per filament number, then print it with print_3mf and ams_mapping or ams_slots. Never overwrites a file.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                parts: {
+                  type: "array",
+                  minItems: 1,
+                  maxItems: 64,
+                  description: "The parts, in filament order.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      stl_path: { type: "string", description: "Path to the part's STL file." },
+                      name: { type: "string", description: "The part's name, shown in the slicer." },
+                      filament: { type: "integer", minimum: 1, maximum: 64, description: "1-based project filament for this part; defaults to the part's position (1, 2, ...)." }
+                    },
+                    required: ["stl_path", "name"],
+                    additionalProperties: false
+                  }
+                },
+                out_path: { type: "string", description: "New .3mf path whose parent directory exists. Existing files are never overwritten." }
+              },
+              required: ["parts", "out_path"],
+              additionalProperties: false
+            },
+            outputSchema: MAKE_3MF_OUTPUT_SCHEMA
+          },
+          {
             name: "get_printer_filaments",
             description: "Report the loaded filament. Bambu: the live AMS and external-spool inventory over MQTT, as bambu-printer-mcp reports it (trays with absolute slot, loaded state, material, colour, tray_info_idx and resolved slicer profile path; summary; recommended load_filaments), plus counterpart/1 slots for every loaded tray and external spool (254, and 255 on dual-nozzle printers). Other printers: one external slot (id \"ext\"); Moonraker printers with Spoolman report the active spool's material, colour and name, others source \"unknown\". Read-only.",
             inputSchema: {
@@ -2316,12 +2347,24 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "list_3mf_plates",
-            description: "List a Bambu Studio or OrcaSlicer 3MF's plates as its designer laid them out, before slicing: plate_count, and for each plate its index (from 0; slice_stl's slice_plate is index + 1, inspect_print_file's plate_index is index), name, the objects on it, each object copy's identify_id (instances: the ids slice_stl's skip_objects takes) whether the file already holds its G-code (sliced), and filaments: the project filaments that plate prints with and only those (index from 1 = slice_stl's load_filaments/filament_colours position and print_3mf's ams_mapping position + 1; colour, material, filament_id, and the first part using it), from the slice when there is one, otherwise worked out as Bambu Studio does from the plate's parts, painting, support, layer ranges and tool changes. filaments_complete is false when a part's mesh was too large to read its painting: that plate then lists every declared filament, so offer them all rather than miss one that prints. project_filaments lists every filament the project declares, used or not (slice_stl takes one load_filaments profile per declared filament). A plain 3MF without plate metadata is one plate. include_thumbnails adds each plate's own preview from the file (thumbnail_png_base64). Read-only.",
+            description: "List a Bambu Studio or OrcaSlicer 3MF's plates as its designer laid them out, before slicing: plate_count, and for each plate its index (from 0; slice_stl's slice_plate is index + 1, inspect_print_file's plate_index is index), name, the objects on it, each object copy's identify_id (instances: the ids slice_stl's skip_objects takes) whether the file already holds its G-code (sliced), and filaments: the project filaments that plate prints with and only those (index from 1 = slice_stl's load_filaments/filament_colours position and print_3mf's ams_mapping position + 1; colour, material, filament_id, and the first part using it), from the slice when there is one, otherwise worked out as Bambu Studio does from the plate's parts, painting, support, layer ranges and tool changes. filaments_complete is false when a part's mesh was too large to read its painting: that plate then lists every declared filament, so offer them all rather than miss one that prints. project_filaments lists every filament the project declares, used or not (slice_stl takes one load_filaments profile per declared filament). build_items: the root 3D/3dmodel.model build items on the plate (0-based, build order); parts: each model part of the plate's objects once, with object_id (the mesh object), path when that mesh is in another model part (p:path), build_object_id (the root object a build item places), name, filament (1-based) and painted: true when slicer painting recolours some facets; draw a plate from these with the 3MF's own meshes. A plain 3MF without plate metadata is one plate. include_thumbnails adds each plate's own preview from the file (thumbnail_png_base64). Read-only.",
             inputSchema: {
               type: "object",
               properties: {
                 three_mf_path: { type: "string", description: "Path to the 3MF (a designer's project, sliced or not)" },
                 include_thumbnails: { type: "boolean", description: "Include each plate's own preview PNG from the file, base64 (default false)" }
+              },
+              required: ["three_mf_path"]
+            }
+          },
+          {
+            name: "list_3mf_plate_objects",
+            description: "List the objects of a sliced 3MF plate that the printer can skip, one per copy, as Bambu Studio's skip dialog lists them: identify_id (id), name, whether it is already skipped, and labelObjectEnabled (the plate was sliced with object labels, which skipping needs). These are the identify_ids slice_stl's skip_objects takes. Read-only.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                three_mf_path: { type: "string", description: "Path to a sliced 3MF/.gcode.3mf file" },
+                plate_index: { type: "number", description: "0-based plate index to inspect (default: 0)" }
               },
               required: ["three_mf_path"]
             }
@@ -2817,6 +2860,9 @@ class ThreeDPrinterMCPServer {
           case "counterpart_print_progress":
             return structured(await this.counterpart.printProgress(target));
 
+          case "counterpart_make_3mf":
+            return structured(await makeCounterpart3mf(args ?? {}));
+
           case "camera_snapshot": {
             if (args?.save_path !== undefined && typeof args.save_path !== "string") throw new Error("Invalid save_path: expected a string.");
             if (args?.timeout_ms !== undefined && typeof args.timeout_ms !== "number") throw new Error("Invalid timeout_ms: expected a number.");
@@ -2948,6 +2994,16 @@ class ThreeDPrinterMCPServer {
             if (args.include_thumbnails !== undefined && typeof args.include_thumbnails !== "boolean") throw new Error("include_thumbnails must be a boolean.");
             const plates = await listModelPlates(args.three_mf_path, { thumbnails: args.include_thumbnails === true });
             return { content: [{ type: "text", text: JSON.stringify(plates) }], structuredContent: plates };
+          }
+          case "list_3mf_plate_objects": {
+            if (!args?.three_mf_path) {
+              throw new Error("Missing required parameter: three_mf_path");
+            }
+            result = await analyze3MFPlateObjects(
+              String(args.three_mf_path),
+              args?.plate_index !== undefined ? Number(args.plate_index) : 0
+            );
+            break;
           }
           case "inspect_print_file": {
             const allowed = new Set(["file_path", "bambu_model", "plate_index", "nozzle_diameters", "bed_type", "include_preview"]);

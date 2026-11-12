@@ -216,6 +216,7 @@ The optional FULU **BambuNetwork bridge** is a separate runtime. With `BAMBU_DEF
 - `counterpart_discover_printers` finds printers on the local network without contacting them: Bambu Lab printers from their own SSDP announcements (serial, `bambu_model` value, name, firmware), and OctoPrint, Klipper (Moonraker) and PrusaLink hosts from their Bonjour adverts (`dns-sd` on macOS, `avahi-browse` on Linux)
 - `counterpart_setup_fields` lists every `PRINTER_TYPE` this server drives and the `.env` settings it reads for each (field role, variable, label, hint, required, the Bambu model choices and the model each serial prefix names, and `cameraSnapshot`: whether `camera_snapshot` reads the printer's camera with only those settings, `false` for every kind here), so a client can offer printer setup without printer tables of its own, and the slicer it would run (type, path, whether it is there, and the Bambu profiles folder) with the `SLICER_TYPE`, `SLICER_PATH` and `BAMBU_PROFILES_ROOT` fields, required only when what they default to is missing
 - `counterpart_propose_filaments` proposes which loaded spool prints each of a model's colours before slicing: nearest OKLab colour with the asked-for material preferred, one feed per print (the AMS or the external spool), a `verdict` and a person-readable `note` per part ("White isn't loaded. Closest loaded: A2 Sunflower Yellow PLA Basic."), each spool's `label`, `name` and slicer `profile`, and, with the person's `chosen` spools, a check against what is loaded now and the full `mapping` including painted slots
+- `counterpart_make_3mf` combines STL parts exported separately into one new 3MF for multi-colour printing: one assembly whose parts keep their relative positions, each printing with its own filament number
 - `get_printer_filaments` slots carry `label` ("A2", "External", "Spool") and a `name` a person reads (Bambu: Bambu Studio's colour name and the product, "Sunflower Yellow PLA Basic")
 - Errors carry their details in `structuredContent` (`status`, `retryable`, `suggestion`, `message`); a printer refusal on `print_3mf` also carries a stable `code`: `printer-command-rejected`, `printer-not-ready`, or `printer-upload-failed` when the file didn't reach the printer and no print command was sent, so a client can act on the code instead of the wording. A Bambu `print_3mf` call made with a progress token reports its LAN upload as MCP progress: `progress` is bytes sent, `total` the file's bytes, and `_meta["counterpart/stage"]` is `"upload"`, at most once per whole percent.
 - STL tools: inspect dimensions, scale, rotate, translate, extend the base, merge vertices, center, lay flat, transform one section of a model, and render multi-angle SVG previews
@@ -589,6 +590,14 @@ Read the printer's state and current job in one shape for every firmware. `state
 }
 ```
 
+#### counterpart_make_3mf
+
+Takes `{parts: [{stl_path, name, filament?}], out_path}` and writes a new 3MF for multi-colour printing, in the shared `counterpart/1` contract. The parts become one assembly: they keep their relative positions, and each part prints with its own filament number (by default part 1 uses filament 1, part 2 filament 2, and so on). Slice it with `slice_stl` and one `load_filaments` profile per filament number, then print it with `print_3mf` and `ams_slots` or `ams_mapping`. The file holds one assembly rather than one object per part, because Bambu Studio 02.08.02.61's CLI arranges separate objects apart, reports G-code path conflicts between stacked objects when arranging is off, and refuses `load_filament_ids` for 3MF input. The assembly is centred on the `BAMBU_MODEL` bed, or a 256 mm bed when none is set, with its lowest point on the bed. It never overwrites a file. The result lists `path`, `objects`, `filaments` (the highest filament number) and each part's triangle count.
+
+```json
+{ "parts": [{ "stl_path": "/Users/yourname/parts/body.stl", "name": "Body" }, { "stl_path": "/Users/yourname/parts/lid.stl", "name": "Lid", "filament": 2 }], "out_path": "/Users/yourname/parts/assembly.3mf" }
+```
+
 #### camera_snapshot
 
 Capture one JPEG frame and return it as base64, with the same arguments and result as bambu-printer-mcp's `camera_snapshot` plus `capturedAt`. Pass `save_path` to also write the file, and `timeout_ms` (default 8000).
@@ -643,10 +652,18 @@ These tools work with `PRINTER_TYPE=bambu` (or `type: "bambu"`). Set up LAN Only
 
 #### list_3mf_plates
 
-List a designer's 3MF plates as Bambu Studio shows them when the file is opened, before slicing. A downloaded kit's six plates are six plates here too. For each plate it gives `index` (from 0, so `slice_stl`'s `slice_plate` is `index + 1`), `name`, the `objects` on it, and `sliced` (whether the file already holds its G-code). It also gives `plate_count` and the file's `title`, `designer` and `licence` when they're set. A plain 3MF with no plate metadata is one plate. `include_thumbnails` adds each plate's own preview from the file. Read-only.
+List a designer's 3MF plates as Bambu Studio shows them when the file is opened, before slicing. A downloaded kit's six plates are six plates here too. For each plate it gives `index` (from 0, so `slice_stl`'s `slice_plate` is `index + 1`), `name`, the `objects` on it, and `sliced` (whether the file already holds its G-code). To draw each plate from the open 3MF standard alone, `build_items` lists the root `3D/3dmodel.model` build items on it (0-based, in build order), and `parts` lists each model part of its objects once: `object_id` (the mesh object), `path` when that mesh is in another model part (`p:path`, e.g. `/3D/Objects/object_1.model`), `build_object_id` (the root object a build item places), `name`, `filament` (1-based, the project filament it prints in) and `painted: true` when slicer painting recolours some of its facets. Negative parts, modifiers and support blockers are not listed. It also gives `plate_count` and the file's `title`, `designer` and `licence` when they're set. A plain 3MF with no plate metadata is one plate. `include_thumbnails` adds each plate's own preview from the file. Read-only.
 
 ```json
 { "three_mf_path": "/Users/yourname/Downloads/kit.3mf", "include_thumbnails": true }
+```
+
+#### list_3mf_plate_objects
+
+List the objects of a sliced 3MF plate that the printer can skip, one per copy, with each copy's `identify_id` from `Metadata/slice_info.config`, as Bambu Studio's skip dialog lists them, its name, whether it is already `skipped`, and `labelObjectEnabled` (the plate was sliced with object labels, which skipping needs). Each object also carries its first-layer `area` and `bbox` from `plate_N.json` when its name is unique on the plate. `plate_index` is zero-based (default 0). A 3MF that was never sliced, or a plate that wasn't, is refused rather than answered with internal ids. Read-only.
+
+```json
+{ "three_mf_path": "/Users/yourname/Downloads/bracket.gcode.3mf", "plate_index": 0 }
 ```
 
 #### inspect_print_file
@@ -876,6 +893,8 @@ Check only by default. `{"install":true}` installs a pinned isolated environment
 Read the `cad_design` prompt first. Supply `script` or a saved `script_path`, `output_dir`, and `name`. Scripts declare literal `P = {...}` parameters and a `build()` function returning a build123d shape. One later call with `script_path` and `parameters` changes a dimension and rebuilds. Each run creates a new subfolder and preserves its source/parameter checkpoint, even on failure. The result contains STL/STEP paths, measured geometry, validity checks, six orthographic views, a perspective view and a contact sheet with the perspective view large beside the six; `next` says to read the perspective view before the next change, and `printed` carries whatever the script wrote with `print()` (up to 4000 characters), so a design can report a number it computed.
 
 Explicit `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]` snapshots the files a script may read as `INPUTS["scan"]`. For a mesh-only edit, use `mode: "mesh"` and return `trimesh.Trimesh`: it exports and validates STL plus renders, with `step: null` and a clear reason. For captured meshes, the injected `load_scan` helper takes explicit source units and an up-axis, converts coordinates to millimetres/Z-up, and grounds the mesh without fitting its size. Cleanup choices and labels belong to the caller’s rules; the MCP supplies execution, mesh libraries, checks and renders.
+
+For a multi-colour result, `build()` returns `project_3mf()`: a new project of named parts with filaments and plates, or (with `project_3mf("kit")` on a declared input 3MF, in `mode: "mesh"`) an edit that adds, replaces, renames or recolours parts and keeps the designer's print settings, painting, plates and other files byte for byte. The run writes `<name>.3mf` with the same writer as `counterpart_make_3mf` and returns `three_mf` and `three_mf_project` (each plate's parts and filaments, read back from the file). See [docs/CAD.md](docs/CAD.md#multi-colour-3mf-projects).
 
 `cad_status` and `cad_setup` expose `storage.expected_download_bytes`, `expected_installed_bytes` and cached measured `installed_bytes`; the first two are fresh-install budget estimates, not remaining transfer sizes. Setup failures carry `structuredContent.code`, `message`, `suggestion` and `retryable`, so clients do not parse wording.
 

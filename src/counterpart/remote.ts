@@ -42,6 +42,7 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   get_stl_info: "read",
   inspect_print_file: "read",
   list_3mf_plates: "read",
+  list_3mf_plate_objects: "read",
   check_fulu_orca_setup: "read",
   cad_status: "read",
   cad_examples: "read",
@@ -65,6 +66,7 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   merge_vertices: "design",
   center_model: "design",
   lay_flat: "design",
+  counterpart_make_3mf: "design",
   // control
   cancel_print: "control",
   camera_stream_start: "control",
