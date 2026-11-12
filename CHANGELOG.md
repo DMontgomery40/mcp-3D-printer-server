@@ -13,6 +13,8 @@
 
 - Refuse CAD inspection of imported 3MF projects with negative volumes until subtraction is supported, rather than return an uncut inspection STL that differs from the preserved project. A real Python fixture reproduces the 1000 mm³ uncut body before the fix and verifies a clear refusal with no inspection output afterwards; no printer contact.
 
+- Refuse CAD inspection of nested or empty component assemblies instead of silently dropping an unselected assembly from the inspection STL and renders. A Python regression checks refusal before output; archive-writer preservation of shared nested references remains covered separately.
+
 ## [1.2.75] – 2026-11-12
 
 ### Added

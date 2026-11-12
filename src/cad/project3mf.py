@@ -159,7 +159,8 @@ def _read(path):
                     raise ValueError(f'Component {part_id} of object {object_id} is missing from {path}.')
                 mesh, painted = mesh_of(target)
                 if mesh is None:
-                    continue
+                    raise ValueError('CAD inspection of nested or empty 3MF components is not supported; '
+                                     'use a project whose object components directly contain meshes.')
                 local = _matrix(component.get('transform'))
                 mesh.apply_transform(local)
                 parts.append(Part(int(object_id), int(part_id), '/' + path, part_meta.get('name') or meta.get('name', ''),

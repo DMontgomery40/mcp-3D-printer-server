@@ -427,3 +427,5 @@ inspection("touching_edit", "an edited object's touching colour parts, placed tw
 inspection("defect_still_fails", "a colour part with a hole still fails inspection when it touches a sound part");
 
 inspection("negative_volume_refused", "an imported project with a negative volume refuses inspection instead of reporting an uncut body");
+
+inspection("nested_assembly_refused", "an imported nested assembly refuses inspection instead of disappearing during an unrelated edit");

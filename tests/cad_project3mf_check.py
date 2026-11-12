@@ -156,6 +156,26 @@ def case_negative_volume_refused(folder):
     return {'ok': False, 'refused': False, 'uncut_volume': float(load_mesh(str(out) + '.stl').volume)}
 
 
+def case_nested_assembly_refused(folder):
+    """An unselected assembly in another file must not disappear from inspection during a separate edit."""
+    root = (f'<model {CORE} {PROD}><resources>{mesh_xml(1, box([0, 0, 0], [1, 1, 1]))}'
+            '<object id="2" type="model"><components><component objectid="1"/></components></object>'
+            '<object id="3" type="model"><components><component p:path="/3D/Objects/b.model" objectid="9"/></components></object>'
+            '</resources><build><item objectid="2"/><item objectid="3" transform="1 0 0 0 1 0 0 0 1 5 0 0"/></build></model>')
+    files = {'3D/Objects/b.model': f'<model {CORE} {PROD}><resources>{mesh_xml(1, box([0, 0, 0], [1, 1, 1]))}'
+             '<object id="9" type="model"><components><component objectid="1" transform="1 0 0 0 1 0 0 0 1 2 0 0"/></components></object>'
+             '</resources><build/></model>'}
+    settings = '<config><object id="2"><part id="1" subtype="normal_part"/></object></config>'
+    try:
+        project = Project3mf('kit', write_3mf(folder, root, files, settings))
+    except ValueError as error:
+        return {'ok': 'nested' in str(error).lower() and not (Path(folder) / 'design.stl').exists(),
+                'refused': str(error), 'output_written': (Path(folder) / 'design.stl').exists()}
+    project.set_part(project.objects[0].parts[0], name='Edited body')
+    found = cubes_at(run(project, folder))
+    return {'ok': False, 'refused': False, 'inspection_bodies': found}
+
+
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory() as tmp:
         print(json.dumps(globals()['case_' + sys.argv[1]](tmp)))
