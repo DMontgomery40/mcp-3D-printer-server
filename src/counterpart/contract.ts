@@ -1,3 +1,5 @@
+import {PHYSICAL_EVIDENCE_SCHEMA} from "./physical-evidence.js";
+import type {PhysicalEvidence} from "./physical-evidence.js";
 /**
  * The Counterpart tool contract (`counterpart/1`). bambu-printer-mcp and this
  * server return the same shapes so one client can treat both alike. Optional
@@ -43,6 +45,7 @@ export interface CounterpartJob {
 }
 
 export interface CounterpartProgress {
+  physical?: PhysicalEvidence;
   contract: typeof COUNTERPART_CONTRACT;
   observedAt: string;
   state: ProgressState;
@@ -178,6 +181,7 @@ export const PRINT_PROGRESS_OUTPUT_SCHEMA = {
   type: "object",
   required: ["contract", "observedAt", "state", "problems"],
   properties: {
+    physical: PHYSICAL_EVIDENCE_SCHEMA,
     contract: { type: "string", const: COUNTERPART_CONTRACT },
     observedAt: { type: "string" },
     state: { type: "string", enum: [...PROGRESS_STATES] },

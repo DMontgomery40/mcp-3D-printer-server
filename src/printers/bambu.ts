@@ -1,3 +1,5 @@
+import {flightKey,type PrintGeometry} from "../counterpart/flight-record.js";
+import {geometryFromGcode,geometryFromFile} from "../counterpart/print-geometry.js";
 import { PrinterRefusal, markPrintCommandSent } from "../refusal.js";
 import { uploadFile } from "./ftp-upload.js";
 import { PrinterImplementation } from "../types.js";
@@ -219,6 +221,7 @@ class BambuClientStore {
 /** The inspected bytes and limits of a started job, for the resume byte check and prompt. */
 export type CheckedFile = {
   sha256: string;
+  expected?: PrintGeometry;
   /** A project's printed plate: its number and the SHA-256 of its Metadata/plate_<index>.gcode. */
   plate?: { index: number; sha256: string };
   model: string;
@@ -341,13 +344,21 @@ function reportsJob(raw: Record<string, any>, remotePath: string): boolean {
 export async function checkedFile(inspection: PrintFileInspection, filePath: string): Promise<CheckedFile> {
   const used = inspection.usedFilamentPositions.map((position) => inspection.materials[position]).filter(Boolean);
   let plate: CheckedFile["plate"];
+  let expected: PrintGeometry | undefined;
   const plateNumber = /^Metadata\/plate_(\d+)\.gcode$/i.exec(inspection.plateInternalPath ?? "");
   if (plateNumber && /\.3mf$/i.test(filePath)) {
     const entry = (await readSafe3mfArchive(filePath)).zip.file(inspection.plateInternalPath!);
-    if (entry) plate = { index: Number(plateNumber[1]), sha256: createHash("sha256").update(await entry.async("nodebuffer")).digest("hex") };
+    if (entry) {
+      const bytes = await entry.async("nodebuffer");
+      plate = { index: Number(plateNumber[1]), sha256: createHash("sha256").update(bytes).digest("hex") };
+      if (bytes.length <= 64 * 1024 * 1024) expected = geometryFromGcode(bytes.toString("utf8"));
+    }
+  } else if (!/\.3mf$/i.test(filePath)) {
+    expected = await geometryFromFile(filePath);
   }
+
   return {
-    sha256: inspection.sha256, ...(plate ? { plate } : {}), model: inspection.model,
+    sha256: inspection.sha256, ...(plate ? { plate } : {}), ...(expected ? { expected } : {}), model: inspection.model,
     maxNozzleTemperature: inspection.maxNozzleTemperature, maxBedTemperature: inspection.maxBedTemperature,
     maxChamberTemperature: inspection.maxChamberTemperature,
     materials: [...new Set(used.length ? used : inspection.materials)],
@@ -394,11 +405,20 @@ export class BambuImplementation extends PrinterImplementation {
    * put the file on the printer at a path this server has not verified: a
    * resume then re-reads it if it can and otherwise asks a person.
    */
+  /** Record the authorized attempt before a lost reply can hide a potentially running job. */
+  recordFlightDispatch(host:string,serial:string,remotePath:string,requirements:PrinterStateRequirements,file:CheckedFile):void {
+    this.flightRecords.begin(flightKey(host,serial),{sha256:file.sha256,jobName:remotePath,mapping:requirements.amsMapping,materials:file.materials,plate:file.plate,expected:file.expected});
+  }
+
   recordCheckedJob(host: string, serial: string, remotePath: string, requirements: PrinterStateRequirements, file: CheckedFile, uploadedHere = true): void {
     if (!/^[a-f0-9]{64}$/.test(file?.sha256 ?? "")) throw new Error("A started job needs the SHA-256 of its inspected bytes.");
     this.checkedJobs.set(`${host}\n${serial}`, {
       ...structuredClone(file), remotePath, requirements: structuredClone(requirements), seenRunning: false, uploadedHere,
     });
+    if(!this.flightRecords.accept(flightKey(host,serial),remotePath)){
+      this.recordFlightDispatch(host,serial,remotePath,requirements,file);
+      this.flightRecords.accept(flightKey(host,serial),remotePath);
+    }
   }
 
   /** Retire a record that never started (the dispatch was refused or failed). */
@@ -409,6 +429,7 @@ export class BambuImplementation extends PrinterImplementation {
 
   /** Feed one merged report to the resume record (the client store calls it for every report). */
   observeReport(host: string, serial: string, raw: Record<string, any> | undefined): void {
+    if(raw)this.flightRecords.observe(flightKey(host,serial),raw);
     const key = `${host}\n${serial}`;
     const checked = this.checkedJobs.get(key);
     if (!checked || !raw || typeof raw.gcode_state !== "string") return;
@@ -517,6 +538,8 @@ export class BambuImplementation extends PrinterImplementation {
         await sleep(50);
       }
 
+      // The data-update callback records actual receipt time. Reading this cache
+      // must not make an old report eligible for a new layer-bound camera frame.
       const data = printer.data;
 
       return {
@@ -646,6 +669,7 @@ export class BambuImplementation extends PrinterImplementation {
     };
 
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
+    this.recordFlightDispatch(host,serial,remoteProjectPath,requirements,resumeFile);
     markPrintCommandSent();
     await printer.publish(projectFileCmd);
     this.recordCheckedJob(host, serial, remoteProjectPath, requirements, resumeFile);
@@ -1102,6 +1126,7 @@ export class BambuImplementation extends PrinterImplementation {
     if (inspection.selectsAms) {
       throw new Error("Raw G-code with AMS selection requires a .3mf project export with verified physical slot mappings.");
     }
+    const resumeFile = await checkedFile(inspection, filePath);
     const initialStatus = await this.getSafetyStatus(host, serial, token);
     this.validateLoadedGcodeState(initialStatus, inspection);
     const recheckedStatus = await this.getSafetyStatus(host, serial, token);
@@ -1112,10 +1137,10 @@ export class BambuImplementation extends PrinterImplementation {
     await this.ftpUpload(host, token, filePath, `/${remotePath}`);
     const dispatchStatus = await this.getSafetyStatus(host, serial, token);
     const requirements = this.validateLoadedGcodeState(dispatchStatus, inspection);
-    const resumeFile = await checkedFile(inspection, filePath);
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
+    this.recordFlightDispatch(host,serial,remotePath,requirements,resumeFile);
     markPrintCommandSent();
     await publishBambuCommand(printer, "print", "gcode_file", { param: remotePath });
     this.recordCheckedJob(host, serial, remotePath, requirements, resumeFile);
