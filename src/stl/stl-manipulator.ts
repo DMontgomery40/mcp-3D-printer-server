@@ -1,3 +1,4 @@
+import { normalize3mfMetadata } from "../slicer/3mf-xml.js";
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
@@ -1468,6 +1469,7 @@ export class STLManipulator extends EventEmitter {
           if (!fs.existsSync(bambuExport.producedPath)) {
             throw new Error(`Slicer exited successfully but did not write ${bambuExport.producedPath}.`);
           }
+          await normalize3mfMetadata(bambuExport.producedPath);
           await assertSlicedProjectOutput(bambuExport.producedPath);
           await keep();
           fs.mkdirSync(path.dirname(bambuExport.finalPath), { recursive: true });

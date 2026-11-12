@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Escape XML attribute values in 3MF metadata, including Studio CLI object compatibility lists with quoted names. Normalize malformed single-line metadata before cache/publication of the slice, preserve geometry and G-code, and reject unexpected malformed metadata. Cover every XML part of produced archives and quoted/ampersand names; validate with offline fixtures and Studio loading only, without printer contact. Refs DMontgomery40/scan-to-make#737.
+
 ## [1.2.71] – 2026-11-11
 
 ### Added
