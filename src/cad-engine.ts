@@ -33,10 +33,18 @@ export interface CadStatus {
   platform: string;
   storage: CadStorage;
   error?: string;
+  /** Set when this call re-verified a runtime that only the engine's own sources had changed under. */
+  reverified?: string;
 }
 export class CadEngine {
   private readonly system: CadSystem;
   readonly dataDir: string;
+  private reverifyFailure?: { fingerprint: string; error: string };
+  /** How long a re-check waits for another CAD operation to let go of the engine (Counterpart reads status with 30 s). */
+  busyWaitMs = 25_000;
+  /** Within this window a freed engine is re-checked here; later this call only waits for the other call's result, so
+   * a wait plus a ~17 s re-check cannot overrun the status deadline. */
+  busyRetryMs = 5_000;
   constructor(private readonly options: CadOptions) {
     this.system = options.system ?? defaultCadSystem;
     this.dataDir = path.resolve(
@@ -207,7 +215,7 @@ export class CadEngine {
     if (args.install !== true)
       return {
         supported: ["darwin", "linux"].includes(this.system.platform),
-        ...(await this.status()),
+        ...(await this.ensureReady(signal)),
       };
     if (!["darwin", "linux"].includes(this.system.platform))
       throw new CadRefusal(
@@ -264,54 +272,8 @@ export class CadEngine {
             );
           throw e;
         }
-        await this.system.run(
-          python,
-          ["-I", "-B", path.join(ASSETS, "worker.py"), "imports"],
-          { ...opts, timeoutMs: 120_000 },
-        );
-        const job = await fs.mkdtemp(path.join(this.dataDir, "verify-"));
-        const request = path.join(job, "request.json");
-        await fs.writeFile(
-          request,
-          JSON.stringify({ output: job, home: os.homedir() }),
-          { mode: 0o600 },
-        );
-        const result = JSON.parse(
-          (
-            await this.confined(
-              "smoke",
-              request,
-              job,
-              [request],
-              180_000,
-              signal,
-            )
-          ).stdout,
-        );
-        if (
-          result.build123d !== BUILD123D ||
-          !result.watertight ||
-          !result.manifold ||
-          !result.step_valid ||
-          result.solid_count !== 1
-        )
-          throw new Error("CAD setup's confined STL/STEP round trip failed.");
-        const storage = {
-          installed_bytes: await measureEnvironment(this.dataDir),
-          measured_at: new Date().toISOString(),
-        };
-        await fs.writeFile(
-          path.join(this.dataDir, "ready.json"),
-          JSON.stringify({
-            build123d: BUILD123D,
-            platform: this.system.platform,
-            verifiedAt: new Date().toISOString(),
-            fingerprint: await this.fingerprint(),
-            dataDevice: (await fs.stat(this.dataDir)).dev,
-            storage,
-          }),
-          { mode: 0o600 },
-        );
+        this.reverifyFailure = undefined;
+        await this.verify(opts, signal);
         return {
           supported: true,
           ...(await this.status()),
@@ -323,6 +285,203 @@ export class CadEngine {
       "setup",
       signal,
     );
+  }
+  /**
+   * The proof setup ends with: the runtime's imports, then the confined build, STL and STEP round trip, then the ready
+   * marker with the engine fingerprint and the runtime identity it proved. Shared by cad_setup and the automatic
+   * re-verification after an update that changed only the engine's sources.
+   */
+  private async verify(
+    opts: { env: NodeJS.ProcessEnv; cwd: string; signal?: AbortSignal; timeoutMs: number },
+    signal?: AbortSignal,
+    measured?: unknown,
+  ): Promise<void> {
+    // Setup proves the fresh install's imports outside confinement first; a re-check of an unchanged runtime relies on
+    // the confined round trip, which imports the same libraries.
+    if (measured === undefined) {
+      const python = path.join(this.dataDir, "runtime", "bin", "python");
+      await this.system.run(
+        python,
+        ["-I", "-B", path.join(ASSETS, "worker.py"), "imports"],
+        { ...opts, timeoutMs: 120_000 },
+      );
+    }
+    const job = await fs.mkdtemp(path.join(this.dataDir, "verify-"));
+    const request = path.join(job, "request.json");
+    await fs.writeFile(
+      request,
+      JSON.stringify({ output: job, home: os.homedir() }),
+      { mode: 0o600 },
+    );
+    const result = JSON.parse(
+      (
+        await this.confined(
+          "smoke",
+          request,
+          job,
+          [request],
+          180_000,
+          signal,
+        )
+      ).stdout,
+    );
+    if (
+      result.build123d !== BUILD123D ||
+      !result.watertight ||
+      !result.manifold ||
+      !result.step_valid ||
+      result.solid_count !== 1
+    )
+      throw new Error("CAD setup's confined STL/STEP round trip failed.");
+    // A re-check of an unchanged runtime keeps the size setup measured instead of walking 1.4 GB again.
+    const storage = measured ?? {
+      installed_bytes: await measureEnvironment(this.dataDir),
+      measured_at: new Date().toISOString(),
+    };
+    await fs.writeFile(
+      path.join(this.dataDir, "ready.json"),
+      JSON.stringify({
+        build123d: BUILD123D,
+        platform: this.system.platform,
+        verifiedAt: new Date().toISOString(),
+        fingerprint: await this.fingerprint(),
+        runtime: await this.runtimeIdentity(),
+        dataDevice: (await fs.stat(this.dataDir)).dev,
+        storage,
+      }),
+      { mode: 0o600 },
+    );
+  }
+  /**
+   * Re-verifies without installing when only the engine's own sources changed since the last proof (#609): the
+   * marker matches this platform, build123d and data device, its engine fingerprint differs, and the installed
+   * runtime still matches requirements.lock exactly with the same interpreter. Anything else, including a changed
+   * lock, still needs cad_setup with install: true. A failed re-verification is reported, not retried, until the
+   * engine changes again or setup runs.
+   */
+  async ensureReady(signal?: AbortSignal, deadline?: number): Promise<CadStatus> {
+    const status = await this.status();
+    if (status.ready || !status.configured) return status;
+    const fingerprint = await this.fingerprint();
+    if (!(await this.onlyEngineChanged(fingerprint))) return status;
+    if (this.reverifyFailure?.fingerprint === fingerprint)
+      return { ...status, error: this.reverifyFailure.error };
+    const started = performance.now();
+    // A cad_run or cad_check_fit passes its own deadline: the re-check, its waiting included, stays inside timeout_ms.
+    const outOfTime = {
+      ...status,
+      error:
+        "The automatic re-check after this MCP's update did not finish within this call's timeout_ms; the next call runs it again.",
+    };
+    if (deadline !== undefined && deadline - started < 1) return outOfTime;
+    const limit = deadline === undefined ? undefined : AbortSignal.timeout(Math.ceil(deadline - started));
+    const bounded = limit ? (signal ? AbortSignal.any([signal, limit]) : limit) : signal;
+    const recheck = () =>
+      this.exclusive(
+        async () => {
+          if ((await this.status()).ready) return;
+          const env = this.environment(this.dataDir);
+          await fs.mkdir(env.TMPDIR!, { recursive: true });
+          const previous = await fs
+            .readFile(path.join(this.dataDir, "ready.json"), "utf8")
+            .then((text) => JSON.parse(text).storage, () => undefined);
+          await this.verify({ env, cwd: this.dataDir, signal: bounded, timeoutMs: 600_000 }, bounded, previous ?? null);
+        },
+        "setup",
+        bounded,
+      );
+    try {
+      // Another call may hold the engine, usually this same re-check from another process (Counterpart reading
+      // cad_status while the design worker's first cad_run starts): wait for it and try again, never call it a failure.
+      const waited = performance.now();
+      for (let attempt = true, until = Math.min(waited + this.busyWaitMs, deadline ?? Infinity); ; ) {
+        try {
+          if (attempt) {
+            await recheck();
+            break;
+          }
+          throw new CadRefusal("cad-setup-busy", "waiting for the other CAD operation's result");
+        } catch (e) {
+          if (!(e instanceof CadRefusal && e.code === "cad-setup-busy")) throw e;
+          signal?.throwIfAborted();
+          if (limit?.aborted) return outOfTime;
+          if ((await this.status()).ready) break;
+          attempt = performance.now() - waited < this.busyRetryMs;
+          if (performance.now() >= until)
+            return {
+              ...(await this.status()),
+              error:
+                "Another CAD operation is running; this MCP re-checks its unchanged runtime by itself when that finishes. Ask again shortly.",
+            };
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+    } catch (e) {
+      signal?.throwIfAborted();
+      if (limit?.aborted) return outOfTime; // ran out of this call's time: not a failed re-check, never cached
+      const reason = e instanceof Error ? e.message : String(e);
+      this.reverifyFailure = {
+        fingerprint,
+        error: `The automatic re-check after this MCP's update failed (${reason.slice(0, 300)}). Run cad_setup with install: true.`,
+      };
+      return { ...(await this.status()), error: this.reverifyFailure.error };
+    }
+    const after = await this.status();
+    return after.ready
+      ? {
+          ...after,
+          reverified: `Re-checked automatically after an update to the engine (${Math.round((performance.now() - started) / 1000)} s): the installed runtime was unchanged; confined import, build, STL and STEP round trip passed.`,
+        }
+      : after;
+  }
+  private async onlyEngineChanged(fingerprint: string): Promise<boolean> {
+    try {
+      const marker = JSON.parse(await fs.readFile(path.join(this.dataDir, "ready.json"), "utf8"));
+      if (
+        marker.build123d !== BUILD123D ||
+        marker.platform !== this.system.platform ||
+        marker.dataDevice !== (await fs.stat(this.dataDir)).dev ||
+        typeof marker.fingerprint !== "string" ||
+        marker.fingerprint === fingerprint
+      )
+        return false;
+      const runtime = await this.runtimeIdentity();
+      if (!runtime.matchesLock) return false;
+      // Markers from engines without the runtime record (bambu-printer-mcp 1.1.89, mcp-3D-printer-server 1.2.71 and
+      // earlier) qualify by the exact package match; the re-run proof decides the rest.
+      if (marker.runtime && (marker.runtime.interpreter !== runtime.interpreter || marker.runtime.lock_sha256 !== runtime.lock_sha256))
+        return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** The interpreter the venv runs and whether its installed distributions are exactly requirements.lock's pins. */
+  private async runtimeIdentity(): Promise<{ interpreter: string; lock_sha256: string; matchesLock: boolean }> {
+    const lock = await fs.readFile(path.join(ASSETS, "requirements.lock"), "utf8");
+    const runtime = path.join(this.dataDir, "runtime");
+    const cfg = await fs.readFile(path.join(runtime, "pyvenv.cfg"), "utf8").catch(() => "");
+    const field = (name: string) => cfg.match(new RegExp(`^${name}\\s*=\\s*(.+)$`, "m"))?.[1]?.trim() ?? "";
+    const interpreter = `${field("version_info") || field("version")} ${await fs.realpath(path.join(runtime, "bin", "python")).catch(() => "")}`;
+    const norm = (name: string) => name.toLowerCase().replace(/[-_.]+/g, "-");
+    const installed = new Map<string, string>();
+    const lib = path.join(runtime, "lib");
+    for (const dir of await fs.readdir(lib).catch(() => [] as string[])) {
+      if (!/^python3\.\d+$/.test(dir)) continue;
+      for (const entry of await fs.readdir(path.join(lib, dir, "site-packages")).catch(() => [] as string[])) {
+        const m = entry.match(/^(.+)-([^-]+)\.dist-info$/);
+        if (m) installed.set(norm(m[1]), m[2]);
+      }
+    }
+    let matchesLock = installed.size > 0;
+    for (const line of lock.split("\n")) {
+      const m = line.match(/^\s*([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)\s*(;.*)?$/);
+      if (!m) continue;
+      const have = installed.get(norm(m[1]));
+      // A pin behind an environment marker may not apply here: absent is fine, a different version is not.
+      if (have === undefined ? !m[3] : have !== m[2]) matchesLock = false;
+    }
+    return { interpreter, lock_sha256: createHash("sha256").update(lock).digest("hex"), matchesLock };
   }
   private async fingerprint(): Promise<string> {
     const hash = createHash("sha256");
@@ -511,10 +670,13 @@ export class CadEngine {
         inputs[alias] = await this.inputFile(value, ext);
       }
     }
+    // Re-check before queueing, inside this run's deadline; a not-ready refusal still comes from inside the queue,
+    // after any queue timeout.
+    const before = await this.ensureReady(signal, deadline);
     return this.exclusive(
       async (queueWaitMs) => {
         const status = await this.status();
-        if (!status.ready) throw new CadRefusal("cad-not-ready", status.error!);
+        if (!status.ready) throw new CadRefusal("cad-not-ready", before.error ?? status.error!);
         const job = await fs.mkdtemp(path.join(root, `cad-${name}-`));
         await fs.chmod(job, 0o700);
         const script = path.join(job, `${name}.py`),
@@ -708,10 +870,13 @@ export class CadEngine {
       clearance > 100
     )
       throw new Error("clearance_mm must be finite, between 0 and 100.");
+    // One deadline for the whole call: the automatic re-check and the fit share timeout_ms.
+    const deadline = performance.now() + milliseconds(args.timeout_ms);
+    const before = await this.ensureReady(signal, deadline);
     return this.exclusive(
       async () => {
         const status = await this.status();
-        if (!status.ready) throw new CadRefusal("cad-not-ready", status.error!);
+        if (!status.ready) throw new CadRefusal("cad-not-ready", before.error ?? status.error!);
         const job = await fs.mkdtemp(path.join(this.dataDir, "fit-"));
         try {
           await fs.copyFile(model, path.join(job, "model.stl"));
@@ -737,7 +902,11 @@ export class CadEngine {
                   path.join(job, "model.stl"),
                   path.join(job, "reference.stl"),
                 ],
-                milliseconds(args.timeout_ms),
+                (() => {
+                  const left = Math.floor(deadline - performance.now());
+                  if (left <= 0) throw new Error("CAD fit timed out.");
+                  return left;
+                })(),
                 signal,
               )
             ).stdout,
