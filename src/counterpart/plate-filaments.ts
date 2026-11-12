@@ -70,11 +70,12 @@ const metadataOf = (block: string): Settings => new Map([...block.matchAll(/<met
 /** model_settings.config objects with their own settings and parts (parts never nest). */
 export function readModelObjects(settings: string): ObjectEntry[] {
   return [...settings.matchAll(/<object\b[^>]*\bid="(\d+)"[^>]*>([\s\S]*?)<\/object>/g)].map(match => {
-    const parts = [...match[2].matchAll(/<part\b([^>]*)>([\s\S]*?)<\/part>/g)].map(part => {
-      const own = metadataOf(part[2]);
+    // A part may be self-closing (<part id="1" subtype="normal_part"/>): it has no settings of its own.
+    const parts = [...match[2].matchAll(/<part\b([^>]*?)(?:\/>|>([\s\S]*?)<\/part>)/g)].map(part => {
+      const own = metadataOf(part[2] ?? "");
       return { id: /\bid="(\d+)"/.exec(part[1])?.[1] ?? "", subtype: /\bsubtype="([^"]+)"/.exec(part[1])?.[1] ?? "normal_part", name: words(own.get("name") ?? ""), settings: own };
     });
-    const own = metadataOf(match[2].replace(/<part\b[^>]*>[\s\S]*?<\/part>/g, ""));
+    const own = metadataOf(match[2].replace(/<part\b[^>]*?(?:\/>|>[\s\S]*?<\/part>)/g, ""));
     return { id: match[1], name: words(own.get("name") ?? ""), settings: own, parts };
   });
 }

@@ -220,3 +220,18 @@ test("a component path that names a non-model entry is refused, never spliced in
   await assert.rejects(writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "add_part", object_id: 2, name: "X", filament: 1, stl: 0 }] }, run.parts, { kit: fake }, run.out), /not a 3MF model part/);
   assert.equal(fs.existsSync(run.out), false);
 });
+
+test("recolouring a self-closing <part/> writes its metadata inside that part, not on its object", async (t) => {
+  const run = job(t, [[[0, 0, 0], [1, 1, 1]]]);
+  const mesh = id => `<object id="${id}" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>`;
+  const base = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS}><resources>${mesh(1)}${mesh(2)}<object id="3" type="model"><components><component objectid="1"/><component objectid="2"/></components></object></resources><build><item objectid="3"/></build></model>`,
+    "Metadata/model_settings.config": settingsFor(3, `<part id="1" subtype="normal_part"/><part id="2" subtype="normal_part"/>`),
+    "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222"] }),
+  });
+  await writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "set_part", object_id: 3, part_id: 1, filament: 2 }] }, run.parts, { kit: base }, run.out);
+  const settings = await (await JSZip.loadAsync(fs.readFileSync(run.out))).file("Metadata/model_settings.config").async("string");
+  assert.equal((settings.match(/<metadata key="extruder"/g) ?? []).length, 2, "one for the object, one for part 1");
+  assert.match(settings, /<part id="1" subtype="normal_part">\s*<metadata key="extruder" value="2"\/>\s*<\/part>/);
+  assert.deepEqual((await listModelPlates(run.out)).plates[0].parts.map(part => [part.object_id, part.filament]), [[1, 2], [2, 1]]);
+});

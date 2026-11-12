@@ -351,7 +351,10 @@ function setMetadata(block: string, key: string, value: string): string {
   const entry = `<metadata key="${key}" value="${xmlAttribute(value)}"/>`;
   const existing = new RegExp(`<metadata\\s+key="${escapeRegExp(key)}"\\s+value="[^"]*"\\s*/>`);
   if (existing.test(block)) return block.replace(existing, entry);
-  return block.replace(/(<part\b[^>]*>)/, `$1\n      ${entry}`);
+  // A self-closing <part …/> opens up, so the metadata lands inside the part and not on its object.
+  const empty = /^<((?:\w+:)?part)\b([^>]*?)\s*\/>$/.exec(block);
+  if (empty) return `<${empty[1]}${empty[2]}>\n      ${entry}\n    </${empty[1]}>`;
+  return block.replace(/(<(?:\w+:)?part\b[^>]*>)/, `$1\n      ${entry}`);
 }
 
 /**
