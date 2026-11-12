@@ -361,6 +361,20 @@ test("an object that places a shared mesh twice takes the copy in both places; t
   assert.deepEqual(widths.find(([id]) => id === 3), [3, [[1, 1]]]);
 });
 
+test("a mesh a build item places directly through p:path is shared too, and keeps the original", async (t) => {
+  const run = job(t, [[[0, 0, 0], [2, 2, 2]]]);
+  const base = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources><object id="2" type="model"><components><component p:path="/3D/Objects/a.model" objectid="1"/></components></object></resources><build><item objectid="2"/><item p:path="/3D/Objects/a.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 20 0 0"/></build></model>`,
+    "3D/Objects/a.model": `<?xml version="1.0"?><model ${CORE_NS}><resources>${cubeMesh(1, 1)}</resources><build/></model>`,
+    "Metadata/model_settings.config": settingsFor(2, `<part id="1" subtype="normal_part"><metadata key="name" value="p"/></part>`),
+  });
+  await writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "replace_part", object_id: 2, part_id: 1, path: "/3D/Objects/a.model", stl: 0 }] }, run.parts, { kit: base }, run.out);
+  const [[, [[edited, width]]]] = await partWidths(run.out);
+  assert.deepEqual([edited !== 1, width], [true, 2]);
+  const model = await (await JSZip.loadAsync(fs.readFileSync(run.out))).file("3D/Objects/a.model").async("string");
+  assert.equal(elementText(model, 1), cubeMesh(1, 1), "the directly placed mesh keeps its bytes");
+});
+
 // --- Re-check of #157 / #111 (2026-11-12): the inspection STL the sandbox writes for a 3MF project -----------------
 // tests/cad_project3mf_check.py runs src/cad/project3mf.py's export and geometry.inspect with the CAD runtime's
 // libraries; CAD_TEST_PYTHON names a runtime that has them.
@@ -375,6 +389,7 @@ const inspection = (name, title) => test(title, { skip: cadReady ? false : "need
 });
 inspection("reused_ids_two", "the inspection STL replaces only the part in the named model file when two files reuse an object id");
 inspection("reused_ids_three", "the inspection STL replaces only the middle part when three model files reuse one object id");
+inspection("placed_twice", "the inspection STL shows a replaced mesh an object places twice under each of its component transforms");
 inspection("touching_new", "a new mesh project's colour parts stacked on one footprint inspect as one valid body");
 inspection("touching_edit", "an edited object's touching colour parts, placed twice, inspect as valid bodies");
 inspection("defect_still_fails", "a colour part with a hole still fails inspection when it touches a sound part");

@@ -90,6 +90,19 @@ def case_reused_ids_three(folder):
     return {'ok': found == [[0.0, 1.0], [3.0, 2.0], [6.0, 1.0]], 'bodies': found}
 
 
+def case_placed_twice(folder):
+    """An object that places one mesh twice (at x = 0 and x = 5) shows the replacement in both places, as the writer
+    puts it under each component transform."""
+    root = (f'<?xml version="1.0"?><model {CORE}><resources>{mesh_xml(1, box([0, 0, 0], [1, 1, 1]))}'
+            '<object id="2" type="model"><components><component objectid="1"/><component objectid="1" transform="1 0 0 0 1 0 0 0 1 5 0 0"/></components></object>'
+            '</resources><build><item objectid="2"/></build></model>')
+    settings = '<config><object id="2"><metadata key="name" value="Pair"/><metadata key="extruder" value="1"/></object></config>'
+    project = Project3mf('kit', write_3mf(folder, root, {}, settings))
+    project.replace_part(project.objects[0].parts[0], box([0, 0, 0], [2, 2, 2]))
+    found = cubes_at(run(project, folder))
+    return {'ok': found == [[0.0, 2.0], [5.0, 2.0]], 'bodies': found}
+
+
 def case_touching_new(folder):
     """A new mesh project whose object is two colour parts stacked on the same footprint is one valid body."""
     project = Project3mf(None, None)

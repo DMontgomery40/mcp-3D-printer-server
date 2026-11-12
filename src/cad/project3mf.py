@@ -317,18 +317,22 @@ def _fused(meshes):
     import manifold3d as mf
     if len(meshes) < 2:
         return meshes
-    solids = []
+    solids, open_parts = [], []
     for m in meshes:
         part = m.copy()
         part.merge_vertices()
-        if not part.is_volume:
-            return meshes
-        solid = mf.Manifold(mf.Mesh(np.asarray(part.vertices, dtype=np.float32), np.asarray(part.faces, dtype=np.uint32)))
-        if solid.status() != mf.Error.NoError:
-            return meshes
-        solids.append(solid)
-    body = mf.Manifold.batch_boolean(solids, mf.OpType.Add).to_mesh()
-    return [trimesh.Trimesh(np.asarray(body.vert_properties, dtype=float)[:, :3], np.asarray(body.tri_verts, dtype=np.int64), process=False)]
+        solid = mf.Manifold(mf.Mesh(np.asarray(part.vertices, dtype=np.float32), np.asarray(part.faces, dtype=np.uint32))) if part.is_volume else None
+        if solid is None or solid.status() != mf.Error.NoError:
+            open_parts.append(m)
+        else:
+            solids.append(solid)
+    if len(solids) < 2:
+        return meshes
+    union = mf.Manifold.batch_boolean(solids, mf.OpType.Add)
+    body = union.to_mesh()
+    if union.status() != mf.Error.NoError or not len(body.tri_verts):
+        return meshes
+    return [trimesh.Trimesh(np.asarray(body.vert_properties, dtype=float)[:, :3], np.asarray(body.tri_verts, dtype=np.int64), process=False)] + open_parts
 
 
 def export(project, out, mode):
@@ -373,15 +377,17 @@ def export(project, out, mode):
             elif edit['op'] == 'replace_part':
                 # The replacement is drawn in the object's frame; the file keeps the part's component transform.
                 entry['stl'], mesh = stl(edit['geometry'], np.linalg.inv(edit['local']))
-                # A part is its (model file, object, part id): two model files may reuse an object id.
-                replaced[(edit['path'], edit['object_id'], edit['part_id'])] = [mesh.copy().apply_transform(edit['local'])]
+                # A part is its (model file, object, part id): two model files may reuse an object id. The mesh is kept
+                # in its file's coordinates: an object that places it twice shows it under each component transform.
+                replaced[(edit['path'], edit['object_id'], edit['part_id'])] = mesh
             edits.append(entry)
         manifest['edits'] = edits
         # The whole project as the build places it, with the edits, for the checks and renders.
         for obj in project.objects:
             meshes = []
             for part in obj.parts:
-                meshes += replaced.get((part.path, obj.id, part.id), [part.mesh])
+                fresh = replaced.get((part.path, obj.id, part.id))
+                meshes.append(part.mesh if fresh is None else fresh.copy().apply_transform(part._local))
             meshes += replaced.get((None, obj.id, 'new'), [])
             meshes = _fused(meshes)
             for placement in obj.placements:
