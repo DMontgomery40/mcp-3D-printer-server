@@ -317,3 +317,15 @@ test("painted parts say so, modifiers and negative parts are not drawn, and a pl
   const one = await listModelPlates(plain);
   assert.deepEqual([one.plates[0].build_items, one.plates[0].parts], [[0, 1], [{ object_id: 1, build_object_id: 1, name: "", filament: 1 }]]);
 });
+
+// Review finding (Muse, #157): a build item whose object is itself the mesh (a plain 3MF) is painted too.
+test("a plain 3MF object painted in another filament says painted and lists that filament", async (t) => {
+  const model = `<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>`
+    + `<object id="1" type="model"><mesh><vertices/><triangles><triangle v1="0" v2="1" v3="2" paint_color="8"/><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>`
+    + `</resources><build><item objectid="1"/></build></model>`;
+  const file = await write3mf(t, { "3D/3dmodel.model": model,
+    "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222"], filament_type: ["PLA", "PLA"] }) });
+  const result = await listModelPlates(file);
+  assert.deepEqual(result.plates[0].parts, [{ object_id: 1, build_object_id: 1, name: "", filament: 1, painted: true }]);
+  assert.deepEqual(filamentsOf(result), [[0, [1, 2]]], "filament 2 is painted on; the unpainted facet keeps filament 1");
+});
