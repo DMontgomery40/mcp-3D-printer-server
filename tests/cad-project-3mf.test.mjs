@@ -221,6 +221,17 @@ test("a component path that names a non-model entry is refused, never spliced in
   assert.equal(fs.existsSync(run.out), false);
 });
 
+test("a model part whose only </resources> sits in a comment beside a self-closing <resources/> is refused (re-check of #642)", async (t) => {
+  const run = job(t, [[[0, 0, 0], [1, 1, 1]]]);
+  const base = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources><object id="2" type="model"><components><component p:path="/3D/Objects/hollow.model" objectid="1"/></components></object></resources><build><item objectid="2"/></build></model>`,
+    "3D/Objects/hollow.model": `<?xml version="1.0"?><model ${CORE_NS}><!-- </resources> --><resources/><build/></model>`,
+    "Metadata/model_settings.config": settingsFor(2, `<part id="1" subtype="normal_part"><metadata key="name" value="p"/></part>`),
+  });
+  await assert.rejects(writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "add_part", object_id: 2, name: "X", filament: 1, stl: 0 }] }, run.parts, { kit: base }, run.out), /not a 3MF model part/);
+  assert.equal(fs.existsSync(run.out), false);
+});
+
 test("recolouring a self-closing <part/> writes its metadata inside that part, not on its object", async (t) => {
   const run = job(t, [[[0, 0, 0], [1, 1, 1]]]);
   const mesh = id => `<object id="${id}" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>`;

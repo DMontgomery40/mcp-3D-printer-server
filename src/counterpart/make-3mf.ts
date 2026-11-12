@@ -324,20 +324,22 @@ function elementById(xml: string, tag: string, id: number): { start: number; end
  */
 function isModelDocument(xml: string): boolean {
   if ((xml.match(/<\/(?:\w+:)?resources\s*>/g) ?? []).length !== 1) return false;
-  let depth = 0, root = "", resources = 0;
+  // A self-closing <resources/> has no close tag of its own, so the one "</resources>" the text holds (in a comment, say)
+  // is not the element's: the splice would land there. Refused.
+  let depth = 0, root = "", resources = 0, selfClosed = false;
   try {
     const parser = new SaxesParser({ xmlns: false });
     parser.on("error", error => { throw error; });
     parser.on("opentag", tag => {
       const local = tag.name.replace(/^\w+:/, "");
       if (depth === 0) root = local;
-      else if (depth === 1 && local === "resources") resources += 1;
+      else if (depth === 1 && local === "resources") { resources += 1; if (tag.isSelfClosing) selfClosed = true; }
       depth += 1;
     });
     parser.on("closetag", () => { depth -= 1; });
     parser.write(xml).close();
   } catch { return false; }
-  return root === "model" && resources === 1;
+  return root === "model" && resources === 1 && !selfClosed;
 }
 
 /** The prefix a document binds to the 3MF production extension, if any. */
