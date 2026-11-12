@@ -232,3 +232,47 @@ test("helpers: job names are file names, and compact drops null, NaN and empty o
   assert.equal(remoteJobName("  "), undefined);
   assert.deepEqual(compact({ a: null, b: NaN, c: { d: undefined }, e: [], f: 0, g: "" }), { e: [], f: 0, g: "" });
 });
+
+// A P1S's first pushes of a new job carried its name and layer count before its layer number, so bambu-node's merged
+// report read the previous job's last layer against the new total ("315/150") for one poll (Counterpart #702).
+test("Bambu: a new job's first reports start at layer 0, not the previous job's last layer", async () => {
+  const { BambuClient } = await import("bambu-node");
+  const { BambuImplementation } = await import("../dist/printers/bambu.js");
+  const store = new BambuImplementation().printerStore;
+  const printer = new BambuClient({ host: "127.0.0.1", serialNumber: "01PTEST", accessToken: "test" });
+  // getPrinter registers the same listener on every client it connects.
+  printer.on("printer:dataUpdate", (data, changed) => store.reportMerged("127.0.0.1-01PTEST", "127.0.0.1", "01PTEST", data, changed));
+  const push = (print) => printer.onMessage(JSON.stringify({ print: { command: "push_status", ...print } }), "device/01PTEST/report");
+  const job = () => mapBambu(printer.data, "2026-11-12T00:00:00.000Z", { connected: true, model: "p1s" }).job;
+  await push({ gcode_state: "RUNNING", subtask_name: "bracket", total_layer_num: 315, layer_num: 314, mc_percent: 99 });
+  await push({ layer_num: 315 });
+  assert.equal(job().layer, 315, "a delta of the same job keeps its layer");
+  await push({ gcode_state: "FINISH", mc_percent: 100 });
+  assert.equal(job().layer, 315, "the finished job keeps its last layer");
+  await push({ gcode_state: "PREPARE", subtask_name: "hook", total_layer_num: 150 });
+  assert.equal(printer.data.layer_num, 0, "bambu-node's merged report starts the new job at layer 0");
+  assert.equal(job().progress, 0, "and at 0 %, not the finished job's 100 %");
+  // Layer 0 is no layer yet here (layerNumber), so the new job shows its total and no layer until the printer sends one.
+  assert.deepEqual([job().name, job().layer, job().totalLayers], ["hook", undefined, 150]);
+  await push({ gcode_state: "RUNNING", layer_num: 1 });
+  assert.deepEqual([job().layer, job().totalLayers], [1, 150]);
+});
+
+test("Bambu: the progress restarts only when a different job starts without its own", async () => {
+  const { newJobResets } = await import("../dist/printers/report-merge.js");
+  const finished = { gcode_state: "FINISH", subtask_name: "a", gcode_file: "/sdcard/a.gcode", total_layer_num: 40, layer_num: 40, mc_percent: 100, mc_remaining_time: 0 };
+  assert.deepEqual(newJobResets(undefined, { layer_num: 12 }), {}, "the first report is taken as it is");
+  assert.deepEqual(newJobResets(finished, { nozzle_temper: 30 }), {}, "an idle delta keeps the last job's progress");
+  assert.deepEqual(newJobResets(finished, { gcode_state: "PREPARE" }), { layer_num: 0, mc_percent: 0, mc_remaining_time: undefined }, "a start after a finished job restarts it");
+  assert.deepEqual(newJobResets(finished, { gcode_state: "PREPARE", mc_remaining_time: 95 }), { layer_num: 0, mc_percent: 0 }, "what the new job sent is kept");
+  assert.equal(newJobResets(finished, { gcode_file: "/sdcard/b.gcode" }).layer_num, 0, "another file is another job");
+  assert.deepEqual(newJobResets(finished, { task_id: "77" }), {}, "a job id the report never had names no other job");
+  assert.equal(newJobResets({ ...finished, task_id: "76" }, { task_id: "77" }).layer_num, 0);
+  assert.equal(newJobResets(finished, { subtask_name: "b", total_layer_num: 10, layer_num: 3 }).layer_num, undefined, "a full report's own layer wins");
+  assert.deepEqual(newJobResets({ ...finished, gcode_state: "PAUSE" }, { gcode_state: "RUNNING" }), {}, "a resume is the same job");
+  // Placeholders name no job: a total of 0 before slicing, an empty file, LAN's task_id "0".
+  const running = { gcode_state: "RUNNING", subtask_name: "a", gcode_file: "/sdcard/a.gcode", task_id: "0", total_layer_num: 0, layer_num: 7 };
+  for (const update of [{ total_layer_num: 150 }, { gcode_file: "" }, { task_id: "123" }, { subtask_name: " " }]) {
+    assert.deepEqual(newJobResets(running, update), {}, JSON.stringify(update));
+  }
+});

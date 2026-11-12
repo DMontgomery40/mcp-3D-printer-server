@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `counterpart_self_check` (counterpart/1) reports whether this install's own runtime dependencies loaded: one check per dependency in `package.json`, with the installed version (an exact pin, `^` or `~` range must be met), and one that the global Web Crypto API is present. `sharp`, an optional dependency, is marked `optional` and does not make `ok` false. It loads modules from the server's own install and contacts no printer. The packed-tarball check runs it against the installed package. bambu-printer-mcp returns the same shape (Counterpart #644).
+- `package.json` has a `counterpart` field, readable with `npm view mcp-3d-printer-server counterpart` before downloading: `contract` (`counterpart/1`), one sentence of `notes` about the release, and `autoUpdate`, which a release sets to false to opt out of the app's automatic update. The MCP `initialize` version stays the package version, now also covered by the counterpart tests (Counterpart #644).
+- `counterpart_printer_info` returns `printer.displayName` for a Bambu printer: the model with its maker as Bambu names it ("Bambu Lab P1S"), from the serial's prefix, else the reported model, so a client shows it as given. bambu-node's own model reads the A1 and A1 mini prefixes the other way round, so the prefix comes first. Other firmware does not report its maker, and their printers have no `displayName` (Counterpart #698).
+
+### Fixed
+
+- At the start of a Bambu print, `counterpart_print_progress` could read the previous job's last layer against the new job's layer count ("315/150") for one poll, because a P1/A1 printer's first pushes for the new job carry its name and layer count before its layer number. A report that names a different job (name, file, task id or layer count) or starts after a finished, failed or idle job now starts at layer 0 (shown as no layer yet) and 0 %, with no remaining time, until the printer sends its own. Empty values, a layer count of 0 and LAN's task id "0" name no job, so they never reset a running one. Checked with bambu-node's own parser fed recorded-style pushes, no printer connection (Counterpart #702).
+
 ## [1.2.74] – 2026-11-12
 
 ### Added
