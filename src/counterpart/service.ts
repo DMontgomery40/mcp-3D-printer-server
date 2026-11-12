@@ -33,6 +33,9 @@ import {
   type PrinterKind,
 } from "./contract.js";
 import { mapBambu } from "./progress.js";
+import { normalizeModel } from "../safety/limits.js";
+import { SERIAL_MODELS } from "../safety/printer-state.js";
+import { modelFromSerial } from "./discovery.js";
 import {
   counterpartSlots,
   externalSpools,
@@ -93,6 +96,18 @@ function kindOf(type: string): PrinterKind {
 
 function overrideSnapshotUrl(): string | undefined {
   return process.env.PRINTER_CAMERA_SNAPSHOT_URL?.trim() || undefined;
+}
+
+/** Bambu's names for its models ("P1S", "A1 Mini", "H2D Pro"), keyed by normalized model. */
+const BAMBU_MODEL_NAMES = new Map(Object.values(SERIAL_MODELS).map((name) => [normalizeModel(name), name]));
+
+/**
+ * The model with its maker, as Bambu names it ("Bambu Lab P1S"), so a client shows it as given. The serial's prefix
+ * names the model first: bambu-node's own model reads the A1 and A1 mini prefixes the other way round.
+ */
+export function bambuDisplayName(model: string | undefined, serial: string | undefined): string | undefined {
+  const name = BAMBU_MODEL_NAMES.get(modelFromSerial(serial) ?? normalizeModel(model));
+  return name ? `Bambu Lab ${name}` : undefined;
 }
 
 export class CounterpartService {
@@ -165,7 +180,8 @@ export class CounterpartService {
     if (!generic) {
       const status = await this.bambu(target).getStatus(target.host, target.port, target.apiKey).catch(() => undefined);
       const model = typeof status?.model === "string" && status.model !== "Unknown" ? status.model : process.env.BAMBU_MODEL?.trim();
-      identity = { model: model || undefined, serial: typeof status?.serial === "string" && status.serial ? status.serial : undefined };
+      const serial = typeof status?.serial === "string" && status.serial ? status.serial : undefined;
+      identity = { model: model || undefined, displayName: bambuDisplayName(model, serial), serial };
       // This server has no Bambu camera path; bambu-printer-mcp does.
       capabilities = {
         progress: true, layers: true, camera: overrideSnapshotUrl() ? "http-snapshot" : "none", filaments: "ams",

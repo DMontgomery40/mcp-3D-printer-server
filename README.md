@@ -556,7 +556,7 @@ Bambu resumes as bambu-printer-mcp does: the paused job must report the unique n
 
 #### counterpart_printer_info
 
-Describe the printer in the shared `counterpart/1` shape: the server's name and version, the printer's kind, host and any model, serial or name it reports, and which features work. Capabilities are detected from the firmware, never assumed. For example, `camera` is `http-snapshot` only when the firmware names a snapshot URL or the conventional one answers with a JPEG.
+Describe the printer in the shared `counterpart/1` shape: the server's name and version, the printer's kind, host and any model, serial or name it reports, and which features work. A Bambu printer also has `displayName`, the model with its maker as Bambu names it ("Bambu Lab P1S"), taken from the serial's prefix, else the reported model; a client shows it as given. Other firmware does not report its maker, so their printers have none. Capabilities are detected from the firmware, never assumed. For example, `camera` is `http-snapshot` only when the firmware names a snapshot URL or the conventional one answers with a JPEG.
 
 ```json
 {
@@ -567,6 +567,12 @@ Describe the printer in the shared `counterpart/1` shape: the server's name and 
                     "pause": true, "resume": true, "cancel": true, "print3mf": false, "gcode": true }
 }
 ```
+
+#### counterpart_self_check
+
+Whether this install's own runtime dependencies loaded: `{contract, server: {name, version}, ok, checks: [{name, ok, optional?, version?, message?}]}`. One check says the running server is its installed package's version; one per dependency in `package.json` says it resolves from this install, loads, and its installed version meets the exact pin (such as `bambu-node`), `^` or `~` range; `web crypto` says the global Web Crypto API the streamable HTTP transport needs is present. `sharp`, an optional dependency, is marked `optional` and does not make `ok` false. Run it after an update. It contacts no printer. bambu-printer-mcp returns the same shape.
+
+`package.json` carries a `counterpart` field, readable with `npm view mcp-3d-printer-server counterpart` before a client downloads a version: `contract` (`counterpart/1`), one sentence of `notes` about that release, and `autoUpdate`, which a release sets to false to ask clients not to install it automatically.
 
 #### counterpart_print_progress
 

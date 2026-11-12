@@ -33,6 +33,7 @@ import { installBambuNodeRejectionGuard } from "./bambu-node-guard.js";
 import { requireHumanConfirmation, type ConfirmHardware } from "../safety/confirmation.js";
 import { assertExpectedPeaks, validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "../safety/expected-peaks.js";
 import { controlReply, refusedControlMessage, type ControlReply } from "../control-reply.js";
+import { jobIdentity, newJobResets } from "./report-merge.js";
 
 export interface BambuPrintOptionsInternal extends CallerPrintOptions {
   /** Bytes sent to the printer so far over FTPS, and the file's size (LAN route). */
@@ -142,6 +143,22 @@ class BambuClientStore {
   constructor(private readonly onReport?: (host: string, serial: string, report: Record<string, any>) => void) {}
 
   private printers: Map<string, BambuClient> = new Map();
+  /** The job each printer's last merged report described (report-merge.ts). */
+  private jobIdentities: Map<string, Record<string, any>> = new Map();
+
+  /**
+   * bambu-node has merged changed into data, its own report object (printer.data). A new job's first pushes can carry
+   * its name and layer count before its layer number, so the previous job's progress is dropped here until the new job reports its own.
+   */
+  reportMerged(key: string, host: string, serial: string, data: Record<string, any>, changed?: Record<string, any>): void {
+    if (!data) return;
+    if (changed && typeof changed === "object") {
+      for (const field of newJobResets(this.jobIdentities.get(key), changed)) delete data[field];
+      this.jobIdentities.set(key, jobIdentity(data));
+    }
+    if (!this.onReport) return;
+    try { this.onReport(host, serial, data); } catch { /* an observer never breaks report handling */ }
+  }
   private initialConnectionPromises: Map<string, Promise<void>> = new Map();
 
   async getPrinter(host: string, serial: string, token: string): Promise<BambuClient> {
@@ -166,10 +183,7 @@ class BambuClientStore {
       accessToken: token,
     });
 
-    printer.on("printer:dataUpdate", (data: Record<string, any>) => {
-      if (!data || !this.onReport) return;
-      try { this.onReport(host, serial, data); } catch { /* an observer never breaks report handling */ }
-    });
+    printer.on("printer:dataUpdate", (data: Record<string, any>, changed?: Record<string, any>) => this.reportMerged(key, host, serial, data, changed));
 
     printer.on("client:connect", () => {
       this.printers.set(key, printer);

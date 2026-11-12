@@ -3,6 +3,11 @@
     "mcpName": "io.github.DMontgomery40/mcp-3d-printer-server",
     "version": "1.2.74",
     "description": "MCP server for connecting Claude with 3D printer management systems",
+    "counterpart": {
+        "contract": "counterpart/1",
+        "notes": "Adds counterpart_self_check and the printer's display name with its maker, and starts a new Bambu job's live layer at 0.",
+        "autoUpdate": true
+    },
     "main": "dist/index.js",
     "repository": "https://github.com/DMontgomery40/mcp-3D-printer-server",
     "type": "module",
