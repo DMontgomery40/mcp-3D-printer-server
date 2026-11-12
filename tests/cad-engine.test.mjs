@@ -256,6 +256,45 @@ test("CAD parameter edits retain the prior checkpoint and use separate build and
   });
   assert.equal(calls.filter((c) => c.args.includes("build")).length, 2);
   assert.equal(calls.filter((c) => c.args.includes("inspect")).length, 2);
+  // beside the image paths: look before the next change; and the script's own print() output, as its words
+  assert.match(first.next, /^Read renders\.perspective before the next cad_run/);
+  assert.equal(first.printed, "user output is NOT a receipt");
+  assert.equal(JSON.parse(await fs.readFile(first.result_manifest, "utf8")).printed, first.printed);
+});
+
+test("cad_check_fit waits for the engine like cad_run, and its own timeout ends the wait (scan-to-make #734)", async (t) => {
+  const { CadEngine } = await import("../dist/cad-engine.js");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cad-fit-queue-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const model = path.join(root, "model.stl");
+  await fs.writeFile(model, "fixture");
+  let release, running = 0, most = 0;
+  const held = new Promise((resolve) => (release = resolve));
+  const engine = new CadEngine({
+    dataDir: path.join(root, "data"),
+    outputRoots: [root],
+    system: {
+      platform: "linux",
+      run: async () => {
+        most = Math.max(most, ++running);
+        await held;
+        running--;
+        return { stdout: JSON.stringify({ clear: true }) };
+      },
+    },
+  });
+  engine.status = async () => ({ configured: true, ready: true, python: "stub", build123d: "0.13.0", platform: "linux" });
+  // four at once, as a design worker sends them: none is refused
+  const checks = [1, 2, 3, 4].map(() => engine.checkFit({ model, reference: model, timeout_ms: 10000 }));
+  await assert.rejects(
+    engine.checkFit({ model, reference: model, timeout_ms: 150 }),
+    (e) => e.code === "cad-queue-timeout" && /fit check's timeout expired while waiting/.test(e.message),
+  );
+  release();
+  const results = await Promise.all(checks);
+  assert.deepEqual(results.map((r) => r.clear), [true, true, true, true]);
+  assert.equal(most, 1, "one operation at a time");
+  assert.ok(results.some((r) => r.queue_wait_ms >= 100), JSON.stringify(results.map((r) => r.queue_wait_ms)));
 });
 
 test("deadline termination removes an actual spawned descendant PID", async (t) => {

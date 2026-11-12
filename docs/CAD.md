@@ -54,7 +54,7 @@ Declare exactly one top-level literal `P = {...}` dictionary of named JSON-compa
 {"script":"...source above...","output_dir":"/allowed/designs","name":"bracket"}
 ```
 
-A solid `build()` returns a valid build123d Shape or Compound. `cad_run` exports `<name>.stl` and `<name>.step`, then a **separate trusted process** checks them and renders front/back/left/right/top/bottom, a perspective view (`perspective`: three-quarter, from the front right and above, depth-buffered and smooth-shaded; it adds about half a second to a second per run) and a contact sheet with the perspective view large beside the six. Model stdout is diagnostic text, never the validation receipt. The result includes paths, bounds/size in millimetres, STL/STEP volume, solid/component counts, and watertight/manifold/winding/STEP checks. `valid` describes geometry checks, not compliance with a user's request. Judge the form from the perspective view, inspect the six orthographic views, and measure actual interfaces, assembly paths and articulated poses. A solid result whose STEP holds no solid body fails the `step_solids` check.
+A solid `build()` returns a valid build123d Shape or Compound. `cad_run` exports `<name>.stl` and `<name>.step`, then a **separate trusted process** checks them and renders front/back/left/right/top/bottom, a perspective view (`perspective`: three-quarter, from the front right and above, depth-buffered and smooth-shaded; it adds about half a second to a second per run) and a contact sheet with the perspective view large beside the six. Model stdout is diagnostic text, never the validation receipt: the result returns up to 4000 characters of it as `printed` (the script's own words, so a design can report a number it computed), and `build.log` keeps the rest. `next` tells the caller to read the perspective view before the next change. The result includes paths, bounds/size in millimetres, STL/STEP volume, solid/component counts, and watertight/manifold/winding/STEP checks. `valid` describes geometry checks, not compliance with a user's request. Judge the form from the perspective view, inspect the six orthographic views, and measure actual interfaces, assembly paths and articulated poses. A solid result whose STEP holds no solid body fails the `step_solids` check.
 
 For the next change, send just the saved script path and changed parameters:
 
@@ -66,7 +66,7 @@ The earlier parameter file is merged, preserving other choices. The source and e
 
 ## Worked examples
 
-`cad_examples` lists the engine's cookbook and returns one script by name; `cad_design` names each in a line. Every example is modelled on a bought product, cites the published sizes it used, states its concept (what it is for, the mechanism, the load path, the print orientation and why) and comes back `valid` from `cad_run` with the number of bodies its concept names. The scripts live in `src/cad/examples/`; `tests/cad-examples.test.mjs` checks each record and, with `CAD_COOKBOOK_DATA_DIR` naming an installed runtime, builds every one through `cad_run` (about 80 s; run it on its own, since it holds the engine's one execution slot). They are patterns to adapt, not sizes to reuse.
+`cad_examples` lists the engine's cookbook by purpose (each entry's `use_for` names the requests it suits) and returns one script by name; `cad_design` names each by that purpose in a line and has a worker name the bought product, choose an example by purpose, and only then choose a mechanism. Every example is modelled on a bought product, cites the published sizes it used, states its concept (what it is for, the mechanism, the load path, the print orientation and why) and comes back `valid` from `cad_run` with the number of bodies its concept names. The scripts live in `src/cad/examples/`; `tests/cad-examples.test.mjs` checks each record and, with `CAD_COOKBOOK_DATA_DIR` naming an installed runtime, builds every one through `cad_run` (about two minutes; run it on its own, since it holds the engine's one execution slot). They are patterns to adapt, not sizes to reuse.
 
 On Linux the sandbox's own root is mounted read-only (`--remount-ro /`), so only the run's job folder and `/tmp` take writes; bubblewrap 0.11 otherwise leaves the folders above each bind writable inside the sandbox, and setup's forbidden-write proof fails.
 
@@ -152,8 +152,8 @@ All CAD failures use the normal tool refusal envelope: `isError: true`, with `st
 | `cad-uv-missing` | uv is absent from the MCP's PATH |
 | `cad-data-volume-refused` | macOS storage is external/network/ownership-disabled or cannot be verified |
 | `cad-setup-busy` | setup was not dispatched because another operation is running/queued |
-| `cad-operation-busy` | a fit check was not dispatched because the environment is busy |
-| `cad-queue-timeout` | a run's deadline expired before dispatch |
+| `cad-operation-busy` | no longer returned: a fit check now waits for the engine like a run |
+| `cad-queue-timeout` | a run's or fit check's deadline expired before dispatch |
 | `cad-not-ready` | setup verification is required |
 | `cad-confinement-unavailable` | unsupported execution platform |
 | `cad-disabled` | the family is disabled |
@@ -161,7 +161,7 @@ All CAD failures use the normal tool refusal envelope: `isError: true`, with `st
 
 ## Queue, selection and input storage
 
-One operation executes per data directory. Runs queue using filesystem tickets (including across MCP processes), wait within their own total timeout, support cancellation, and report `queue_wait_ms`. Timeout covers queue, preparation, build and inspection; `seconds` still measures build/inspection separately. Setup and fit checks refuse busy operations. Nothing automatically replays a request. A timeout/cancel before dispatch creates no build; a dispatched run retains its source/parameter checkpoint.
+One operation executes per data directory. Runs and fit checks queue using filesystem tickets (including across MCP processes), wait within their own total timeout, support cancellation, and report `queue_wait_ms`. Timeout covers queue, preparation, build and inspection; `seconds` still measures build/inspection separately. Setup refuses a busy engine. Nothing automatically replays a request. A timeout/cancel before dispatch creates no build; a dispatched run retains its source/parameter checkpoint.
 
 Every run has `cad-result.json`, created before user code and protected by confinement. It moves atomically from pending to completed with the complete returned receipt: final flag, completed timestamp, lineage/source hash, bounds, volume, solid count, checks and render/artifact paths. Failed builds record failed/final:false. `final:true` is explicit selection, not a guarantee of requested fit or geometric validity. After restart, enumerate only immediate `cad-*` run folders and read their `cad-result.json`; select the latest completed final record for the design, inspect valid/checks, and do not rebuild to recover its validation. The lineage identifier is the saved source's SHA-256, unchanged by parameter overrides.
 

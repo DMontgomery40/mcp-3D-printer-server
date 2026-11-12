@@ -1,4 +1,5 @@
 """Pocket clicker: a bistable double curved beam in a closed frame
+Use for: a fidget or clicker; any part that must snap between two stable positions
 Pattern: a computed 2D curve (cosine beam from a formula) made into a face, extruded flat with a filleted frame round it
 Modelled on: the double curved-beam bistable mechanism of Qiu, Lang and Slocum, "A curved-beam bistable mechanism", J. Microelectromechanical Systems 13(2), 2004, pp. 137-146 (https://manuscript.isc.ac/Inventory/49/950908.htm)
 Published sizes used: bistability ratio rise / thickness must exceed about 2.31 for a cosine beam clamped at both ends with its twisting mode blocked (Qiu, Lang and Slocum 2004, URL above); here rise / thickness = 3.0. All other sizes are design choices.

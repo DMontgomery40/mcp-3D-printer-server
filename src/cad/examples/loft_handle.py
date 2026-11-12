@@ -1,4 +1,5 @@
 """Ergonomic file handle with an oval palm swell
+Use for: a handle or grip for a file, tool, drawer or lid; anything a hand closes round
 Pattern: loft through several sections of different shape (circle to ovals), then fillet the end into a dome
 Modelled on: Bahco ERGO 9-485 oval file handle (https://www.klium.nl/en/bahco-9-485-06-10-oval-shaped-handle-ergo-for-medium-flat-and-semi-circular-files-diameter-6-mm-76671)
 Published sizes used: tang bore = 6 for medium files (retailer, Bahco 9-485-06, URL above); length = 110 (maker, Facom MAN.2 wood file handle, https://www.facom.com/product/man2/28mm-file-and-rasp-wood-handle); power-grip handle diameter 30 to 50, about 40 best, and handle length at least 100 (CCOHS, https://ccohs.ca/oshanswers/ergonomics/handtools/tooldesign.html); the swell here is 36 x 30. Waist, collar, butt and tang depth are design choices.

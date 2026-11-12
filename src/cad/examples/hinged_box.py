@@ -1,4 +1,5 @@
 """Hinged pill and parts box with a snap latch, printed in place
+Use for: a small box or case with a hinged, latching lid for pills, parts, cards or earbuds
 Pattern: model the lid CLOSED on the box, then swing it 180 degrees about the pin axis into the flat printed pose; hull-profile knuckles with cone pin ends cut as cone sockets
 Modelled on: rose plastic UniBox, a polypropylene hinged box with a press closure (https://shop.rose-plastic.de/en_10/plastic-boxes/unibox.html; the page lists no box this small, the smallest read was 100 x 100 mm inside)
 Published sizes used: none published; sizes are design choices

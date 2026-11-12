@@ -1,4 +1,5 @@
 """Fluted clamping knob that captures an M6 hex bolt head
+Use for: a knob, thumbwheel or handwheel that takes a bought bolt or nut; replacing a lost appliance or jig knob
 Pattern: revolve a rounded 2D profile, then pattern a cutter round the axis (polar flutes) and cut the hex pocket
 Modelled on: JW Winco GN 7336 hollow knurled knob, size 34 (https://www.jwwinco.com/en-us/products/2.2-Tensioning-clamping-with-handles/Knurled-knobs/GN-7336-Plastic-Hollow-Knurled-Knobs-without-Tapped-Insert)
 Published sizes used: grip diameter d1 = 34, hub d3 = 16, height h1 = 21, bore d4 = 6.1, hexagon A/F = 10 (maker, URL above, converted from its inch table); M6 hex head across flats s = 10, head height k = 4 (ISO 4017, https://boltsparts.github.io/en/parts/standards/ISO4017.html)

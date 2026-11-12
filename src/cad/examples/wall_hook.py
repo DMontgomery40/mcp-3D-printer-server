@@ -1,4 +1,5 @@
 """Screw-on wall coat hook (single curved arm with a ball tip)
+Use for: hanging a coat, bag, towel or keys on a wall or door; any screw-on hook with a curved arm
 Pattern: loft elliptical sections placed along a spline (an arm that tapers), ball tip, fillet the arm into the back plate
 Modelled on: classic cast single coat hook; screw is SPAX 4.0 mm flat countersunk (https://www.ahlsell.se/en/products/mounting/wood-screw/wood-screw-spax/71333788---traskruv-tft-spax-svart-4.0x25h-200fp-eta-120114)
 Published sizes used: 4.0 mm = screw thread diameter, 8.0 mm = head diameter, 2.4 mm = head height (retailer listing for SPAX, URL above); plate and arm sizes are design choices (no hook maker publishes them)

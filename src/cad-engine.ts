@@ -802,8 +802,13 @@ export class CadEngine {
               )
             ).stdout,
           );
+          const printed = built.stdout.trim();
           const result = {
             ...checked,
+            // Beside the image paths, where the next step is decided.
+            next: "Read renders.perspective before the next cad_run or any other change: say what it shows is wrong against what you are making (the bought product you named, or the object in the photos), then fix that.",
+            // The script's own print() output: its words, not a measurement by this engine.
+            ...(printed ? { printed: printed.length > 4000 ? printed.slice(0, 4000) + "\n[cut at 4000 characters; build.log has the rest]" : printed } : {}),
             status: "completed",
             final: args.final === true,
             completed_at: new Date().toISOString(),
@@ -874,7 +879,7 @@ export class CadEngine {
     const deadline = performance.now() + milliseconds(args.timeout_ms);
     const before = await this.ensureReady(signal, deadline);
     return this.exclusive(
-      async () => {
+      async (queueWaitMs) => {
         const status = await this.status();
         if (!status.ready) throw new CadRefusal("cad-not-ready", before.error ?? status.error!);
         const job = await fs.mkdtemp(path.join(this.dataDir, "fit-"));
@@ -891,7 +896,7 @@ export class CadEngine {
               clearance_mm: clearance,
             }),
           );
-          return JSON.parse(
+          return { queue_wait_ms: queueWaitMs, ...JSON.parse(
             (
               await this.confined(
                 "fit",
@@ -910,13 +915,14 @@ export class CadEngine {
                 signal,
               )
             ).stdout,
-          );
+          ) };
         } finally {
           await fs.rm(job, { recursive: true, force: true });
         }
       },
       "fit",
       signal,
+      deadline,
     );
   }
 }

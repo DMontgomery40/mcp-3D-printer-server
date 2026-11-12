@@ -1,4 +1,5 @@
 """Chainmail patch: rigid square links that pass through each other, printed in place
+Use for: flexible printed fabric, a strap or a mat made of linked rigid pieces
 Pattern: one link made from a rounded ring with two box cuts (two bars stay on the bed, two become bridges), then copied on a grid as a Compound of separate solids
 Modelled on: NASA/JPL "space fabric" (https://www.jpl.nasa.gov/news/space-fabric-links-fashion-and-engineering) and Ed Nisley's printable chain mail (https://softsolder.com/2014/12/04/3d-printed-chain-mail-armor-cosplay-edition/)
 Published sizes used: 2.4 mm = bar width, 6 threads of 0.40 mm (maker, https://softsolder.com/2014/12/04/3d-printed-chain-mail-armor-cosplay-edition/); JPL publishes no sizes; the other sizes are design choices
