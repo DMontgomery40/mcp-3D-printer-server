@@ -25,7 +25,9 @@ Find out before you design, and before you ask. Research whenever the request na
 6. For what is still unknown after about two rounds per fact, shape the design so that fact does not decide whether it works (an adjustable or sprung interface, a foot that suits more than one surface), or state a bounded assumption as an assumption. Ask the person only as the last resort, one short question, and only for what exists nowhere but with them. Never ask for something a search answers: a photo of their car's dashboard, the size of a named product, what a named surface is made of.
 Without web tools, say so in the result, use what you recall labelled as recalled rather than published, and lean harder on step 6.
 
-Before choosing a mechanism, establish what every working bought or published version of the thing has, and keep all of it. For example, a car phone holder turns and tilts to face the driver; a mount's base is sized by the moment of what it holds, not just its weight; an adhesive mount uses a full pad of the tape's grade, not a strip, on a surface the tape suits. Start from the complete product a capable designer would describe at once, then make it printable. A design that leaves out a feature they all have says what it lost and why that is acceptable for this person.
+Write the concept down before any geometry, in a few lines: the bought product you are following, its mechanism, the load path, and how it will print. Before choosing a mechanism, establish what every working bought or published version of the thing has, and keep all of it. For example, a car phone holder turns and tilts to face the driver; a mount's base is sized by the moment of what it holds, not just its weight; an adhesive mount uses a full pad of the tape's grade, not a strip, on a surface the tape suits. Start from the complete product a capable designer would describe at once, then make it printable. A design that leaves out a feature they all have says what it lost and why that is acceptable for this person.
+
+Give it the product's form as well as its function. The bought thing's shape is evidence: a handle swells where the palm closes, a hook's arm thickens towards its root, a knob is round and knurled, a clip's jaws wrap what they hold. Do not reduce a product to a flat profile pushed up, or a box with holes, because that is quick to model and prints without thought: that is a bracket, and people can tell. Put curves where hands and objects touch and where load turns a corner. A flat, in-plane layout is right only for the element that needs it (a spring that must bend in the layer plane, a print-in-place hinge or chain), and then say so; the rest of the product keeps its form, split or turned for printing if need be. When the engine renders the model, look at a three-quarter view and ask whether a person would recognise the thing and want it.
 
 Choose each fit by what that interface has to do: drop in and lift out, slide, locate without rattle, grip so it does not slip or turn, snap over, or press in to stay. There is no single fit number. Keep three things apart for each interface: the object's size and how sure it is, the correction this printer and orientation need (its own observed corrections first, when the context supplies them), and the fit the function calls for. When the size's uncertainty is wider than the function tolerates, do not answer with a better number: choose a mechanism that absorbs the difference (crush ribs, a split closed by a screw, a flexure, a snap), or ask for the one measurement that settles it. The same object changes with time and use: full and nearly empty, new and worn, soft and stiff. A fit that relies on the object giving way must still work in its stiffest, largest state, and a pocket is sized to the widest section the object passes through on the way in, with support where the object actually bears, not to its bounding box.
 
@@ -42,6 +44,8 @@ On a shared-nozzle multicolor setup, reason about filament transitions across la
 Use assembly when its benefit is worth the user's additional work. Design alignment, clearance, engagement, and assembly access deliberately. Glue is a valid planned joining method for suitable materials and loads; make joints self-locating and give them useful bonding area. Use mechanical retention when loads, repeated flexing, or serviceability call for it. State needed glue, hardware, tools, and assembly effort plainly. Avoid adding parts when a modest support or a simple one-piece print is the better result. A printed screw, nut, or threaded hole is an ordinary choice at hand sizes (M8 and up as the usual starting point, about M6 as the floor) with a coarse profile shaped to print without supports; below that floor, under sustained preload that must not relax, in heat, or under shock, a metal screw or insert is the honest choice. Keep threads out of the main load path where a shoulder, tenon, key, or serrated face can carry shear and torque, and let the thread only hold the joint closed.
 
 Verify the chosen geometry in its actual print orientation and inspect the slice when tools permit. Check critical fits, missing or floating features, toolpaths, supports, color assignments, total time, and material consumption. Treat a slicer prediction as a prediction, not a physical test. Fix consequential problems and re-slice relevant changes. Stop when the design meets the brief and no remaining improvement justifies its cost. State "prints without supports", "holds", or "fits" only when the engine's own checks or the slice show it, and give the number that shows it; otherwise call it an untested prediction.
+
+Fit and flexure guidance is longer than this text and is read when it applies: fdm_fit whenever a part meets a real object or another part, fdm_flexures whenever a part must flex, grip, snap, clip or spring. If your host did not attach them, read them with this MCP's design_guidance tool before you choose that fit or size that spring. Where the MCP's code engine is in use, its cad_examples tool lists worked designs to start from.
 
 Keep the user-facing result short: the recommended design, why its manufacturing approach makes sense, how it prints and assembles, and any consequential unresolved assumption. Distinguish measured dimensions, slicer estimates, and untested predictions. Say where each critical size came from (measured, published, or assumed) and what each interface is meant to do and how it fits. Keep detailed analysis in the working process.`;
 
@@ -350,6 +354,35 @@ export const DESIGN_PROMPTS: DesignPrompt[] = [
     description: "A separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation: keep, revise, or validate one specific uncertainty." },
 ];
 
+/**
+ * The on-demand guidance as a tool. A design worker that is handed fdm_design and the engine prompt by its host has
+ * only tools, not prompts or resources, so "add fdm_fit when a part meets an object" could never be followed there:
+ * this read-only tool returns the same texts by name.
+ */
+const GUIDANCE_TOPICS: Record<string, { title: string; when: string; text: () => string }> = {
+  fdm_fit: { title: "Choosing a fit by function", when: "a part meets a real object or another part", text: () => FDM_FIT_GUIDANCE },
+  fdm_flexures: { title: "Parts that flex, grip and snap", when: "a part must flex, grip, snap, clip, spring, or hold something by bending", text: () => FDM_FLEXURES },
+  fdm_assembly: { title: "Splits, inserts and joints", when: "a split, joint, insert or printed thread could improve the result", text: () => FDM_ASSEMBLY },
+  fdm_multicolor: { title: "Multicolour and support materials", when: "several colours or support materials share a print", text: () => FDM_MULTICOLOR },
+  fdm_after_slice: { title: "Review a slice", when: "a candidate has been sliced, before recommending it", text: () => FDM_AFTER_SLICE },
+  fdm_capability: { title: "Bridges and overhangs", when: "a bridge or overhang decides the plan and no measured capability is at hand", text: () => FDM_CAPABILITY_GUIDANCE },
+};
+export const DESIGN_GUIDANCE_TOOL = {
+  name: "design_guidance",
+  description: "Read one piece of this MCP's design guidance by name: " + Object.entries(GUIDANCE_TOPICS).map(([name, t]) => `${name} (when ${t.when})`).join("; ") + ". The same texts as the prompts of those names, for a worker that has tools but not prompts. Read-only.",
+  inputSchema: {
+    type: "object" as const,
+    properties: { name: { type: "string", enum: Object.keys(GUIDANCE_TOPICS), description: "Which guidance to read." } },
+    required: ["name"],
+    additionalProperties: false,
+  },
+};
+export function designGuidance(args: Record<string, unknown>): { name: string; title: string; text: string } {
+  const topic = typeof args.name === "string" ? GUIDANCE_TOPICS[args.name] : undefined;
+  if (!topic || Object.keys(args).length !== 1) throw new Error(`design_guidance takes one name: ${Object.keys(GUIDANCE_TOPICS).join(", ")}.`);
+  return { name: args.name as string, title: topic.title, text: topic.text() };
+}
+
 const SLICER_NAMES: Record<string, string> = {
   bambustudio: "Bambu Studio", orcaslicer: "OrcaSlicer", "orcaslicer-bambulab": "FULU OrcaSlicer-bambulab",
   "orca-slicer-api": "the remote OrcaSlicer service (orca-slicer-api)", prusaslicer: "PrusaSlicer", cura: "Cura", slic3r: "Slic3r",
@@ -379,4 +412,4 @@ export function slicingGuidance(slicerType: string, capabilities: { supports: bo
 export const FDM_SLICING_PROMPT = { name: "fdm_slicing", title: "How this MCP slices",
   description: "Add to every design or model-editing task: how this server's slicer orients a model and generates supports, and how to check a choice with a checkpoint slice." };
 
-export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt and the fdm_slicing prompt. Add fdm_fit whenever a part meets a real object or another part, to choose each fit by what that interface has to do. Add fdm_flexures whenever a part must flex, grip, snap, clip, spring, or hold something by bending. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split, joint or printed fastener could help, and fdm_after_slice as a separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang is consequential and there is no sufficiently specific measured capability available. Read " + FDM_FIT_URI + " for the same fit guidance as the fdm_fit prompt, in resource form.";
+export const SERVER_INSTRUCTIONS = "When designing or editing a model to print, apply the fdm_design prompt and the fdm_slicing prompt. Add fdm_fit whenever a part meets a real object or another part, to choose each fit by what that interface has to do. Add fdm_flexures whenever a part must flex, grip, snap, clip, spring, or hold something by bending. Add fdm_multicolor when several colours or support materials share a print, fdm_assembly when a split, joint or printed fastener could help, and fdm_after_slice as a separate review turn after a candidate has been sliced, before presenting the manufacturing recommendation. Read " + FDM_CAPABILITY_URI + " when a bridge or overhang is consequential and there is no sufficiently specific measured capability available. Read " + FDM_FIT_URI + " for the same fit guidance as the fdm_fit prompt, in resource form. A worker that has tools but not prompts reads the same guidance with the design_guidance tool (fdm_fit, fdm_flexures, fdm_assembly, fdm_multicolor, fdm_after_slice, fdm_capability).";

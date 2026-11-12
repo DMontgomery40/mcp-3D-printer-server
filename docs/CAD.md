@@ -54,7 +54,7 @@ Declare exactly one top-level literal `P = {...}` dictionary of named JSON-compa
 {"script":"...source above...","output_dir":"/allowed/designs","name":"bracket"}
 ```
 
-A solid `build()` returns a valid build123d Shape or Compound. `cad_run` exports `<name>.stl` and `<name>.step`, then a **separate trusted process** checks them and renders front/back/left/right/top/bottom plus a contact sheet. Model stdout is diagnostic text, never the validation receipt. The result includes paths, bounds/size in millimetres, STL/STEP volume, solid/component counts, and watertight/manifold/winding/STEP checks. `valid` describes geometry checks, not compliance with a user's request. Inspect the six returned views and measure actual interfaces, assembly paths and articulated poses.
+A solid `build()` returns a valid build123d Shape or Compound. `cad_run` exports `<name>.stl` and `<name>.step`, then a **separate trusted process** checks them and renders front/back/left/right/top/bottom, a perspective view (`perspective`: three-quarter, from the front right and above, depth-buffered and smooth-shaded; it adds about half a second to a second per run) and a contact sheet with the perspective view large beside the six. Model stdout is diagnostic text, never the validation receipt. The result includes paths, bounds/size in millimetres, STL/STEP volume, solid/component counts, and watertight/manifold/winding/STEP checks. `valid` describes geometry checks, not compliance with a user's request. Judge the form from the perspective view, inspect the six orthographic views, and measure actual interfaces, assembly paths and articulated poses. A solid result whose STEP holds no solid body fails the `step_solids` check.
 
 For the next change, send just the saved script path and changed parameters:
 
@@ -63,6 +63,12 @@ For the next change, send just the saved script path and changed parameters:
 ```
 
 The earlier parameter file is merged, preserving other choices. The source and effective parameters are saved **before execution**; on a timeout/cancellation the error gives checkpoint paths. For a solid design without inputs, those two files are enough to recover with another `cad_run`. Input-dependent designs also need their saved input snapshots and `<name>.inputs.json`; script-path edits reuse those snapshots by default, or `inputs` can explicitly replace them. There is no automatic replay of interrupted execution.
+
+## Worked examples
+
+`cad_examples` lists the engine's cookbook and returns one script by name; `cad_design` names each in a line. Every example is modelled on a bought product, cites the published sizes it used, states its concept (what it is for, the mechanism, the load path, the print orientation and why) and comes back `valid` from `cad_run` with the number of bodies its concept names. The scripts live in `src/cad/examples/`; `tests/cad-examples.test.mjs` checks each record and, with `CAD_COOKBOOK_DATA_DIR` naming an installed runtime, builds every one through `cad_run` (about 80 s; run it on its own, since it holds the engine's one execution slot). They are patterns to adapt, not sizes to reuse.
+
+On Linux the sandbox's own root is mounted read-only (`--remount-ro /`), so only the run's job folder and `/tmp` take writes; bubblewrap 0.11 otherwise leaves the folders above each bind writable inside the sandbox, and setup's forbidden-write proof fails.
 
 ## Mesh experiments in the same environment
 
@@ -76,7 +82,7 @@ def build():
     return scan
 ```
 
-Call with `mode: "mesh"` and `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]`. A mesh-mode `build()` returns `trimesh.Trimesh`; the MCP exports STL, independently checks it and creates the same six renders. It reports **`step: null`** with `step_unavailable`, since a mesh edit has no parametric B-rep. It does not create a misleading faceted STEP. STEP-specific checks/volume are null, and `valid` refers to the mesh checks. This input/mesh path runs cleanup scripts without embedding regularization or inference policy in the MCP.
+Call with `mode: "mesh"` and `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]`. A mesh-mode `build()` returns `trimesh.Trimesh`; the MCP exports STL, independently checks it and creates the same renders. It reports **`step: null`** with `step_unavailable`, since a mesh edit has no parametric B-rep. It does not create a misleading faceted STEP. STEP-specific checks/volume are null, and `valid` refers to the mesh checks. This input/mesh path runs cleanup scripts without embedding regularization or inference policy in the MCP.
 
 ## Scan fit
 

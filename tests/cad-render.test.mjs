@@ -13,7 +13,7 @@ const geometry = fileURLToPath(
 );
 
 test(
-  "orthographic renders reveal recessed windows and visible edges without a triangle wireframe",
+  "renders reveal recessed windows and visible edges without a triangle wireframe, and the perspective view is depth-correct",
   {
     skip:
       !python && "set CAD_RENDER_PYTHON or CAD_E2E_DATA_DIR to a CAD runtime",
@@ -66,14 +66,35 @@ with tempfile.TemporaryDirectory(prefix='cad-render-') as temp:
     edge = np.asarray(front)[py-2:py+3, px-2:px+3].mean(axis=2).min()
     assert edge < min(near.mean(), recessed.mean()) - 20, f'window crease missing: {edge}'
 
-    assert set(paths) == set(views + ['contact'])
-    for name in views:
+    assert set(paths) == set(views + ['perspective', 'contact'])
+    for name in views + ['perspective']:
         assert Image.open(paths[name]).size == (800, 800)
+    # The sheet: the perspective view large on the left, the six views in two columns beside it.
     sheet = Image.open(paths['contact'])
-    assert sheet.size == (1600, 2400)
+    assert sheet.size == (2668, 1602)
     for i, name in enumerate(views):
-        tile = sheet.crop(((i % 2) * 800, (i // 2) * 800, (i % 2 + 1) * 800, (i // 2 + 1) * 800))
-        assert tile.tobytes() == Image.open(paths[name]).tobytes()
+        x, y = 1600 + (i % 2) * 534, (i // 2) * 534
+        tile = sheet.crop((x, y, x + 534, y + 534))
+        assert tile.tobytes() == Image.open(paths[name]).resize((534, 534), Image.LANCZOS).tobytes()
+    big = np.asarray(sheet.crop((0, 0, 1600, 1600)))
+    teal = (big[:, :, 2] > big[:, :, 1]) & (big[:, :, 1] > big[:, :, 0])
+    assert 0.15 < teal.mean() < 0.8, f'perspective view should fill the frame: {teal.mean()}'
+
+    # Perspective uses a depth buffer: a thin post standing on a wide plate (two huge triangles per face)
+    # must stay visible in front of the plate's far half, which depth-sorting by triangle would paint over it.
+    perspective = runpy.run_path(${JSON.stringify(geometry)})['perspective']
+    plate = box([120, 120, 2], (0, 0, 1))
+    post = box([4, 4, 60], (0, 0, 32))
+    def solid_columns(m):
+        rgb = np.asarray(perspective(m, 800))
+        mask = (rgb[:, :, 2] > rgb[:, :, 1]) & (rgb[:, :, 1] > rgb[:, :, 0])
+        return mask
+    both = solid_columns(trimesh.util.concatenate([plate, post]))
+    rows = np.where(both.any(axis=1))[0]
+    top_band = both[rows[0]:rows[0] + 40]
+    assert 3 <= top_band.sum(axis=1).max() <= 60, 'the post should stand clear above the plate as a narrow column'
+    widths = both[rows[0]:rows[0] + 300].sum(axis=1)
+    assert (widths[:200] > 0).all(), 'the post is interrupted: something behind it was painted over it'
     again = render(cup, root / 'again')
     hashes = {}
     for name in paths:
@@ -106,7 +127,7 @@ with tempfile.TemporaryDirectory(prefix='cad-render-') as temp:
     asymmetric = trimesh.util.concatenate([box([10, 20, 30]), box([6, 6, 6], (4, 9, 14))])
     centres = {}
     for name, file in render(asymmetric, root / 'asym').items():
-        if name == 'contact': continue
+        if name in ('contact', 'perspective'): continue
         rgb = np.asarray(Image.open(file))
         ys, xs = np.where((rgb[:, :, 2] > rgb[:, :, 1]) & (rgb[:, :, 1] > rgb[:, :, 0]))
         assert len(xs) > 1000

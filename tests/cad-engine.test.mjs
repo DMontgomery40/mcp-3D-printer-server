@@ -60,6 +60,9 @@ test("CAD confinement has no network or home mounts and refuses unsupported host
   const linux = await cadSandbox("linux", roots);
   assert.equal(linux.command, "bwrap");
   assert.ok(linux.args.includes("--unshare-all"));
+  // the sandbox's own root is read-only: only the job folder and /tmp take writes
+  assert.equal(linux.args[linux.args.indexOf("--remount-ro") + 1], "/");
+  assert.ok(linux.args.indexOf("--remount-ro") > linux.args.lastIndexOf("--bind"));
   assert.ok(linux.args.includes("--die-with-parent"));
   assert.equal(linux.args.includes("/home"), false);
   await assert.rejects(cadSandbox("win32", roots), /confinement.*unavailable/i);

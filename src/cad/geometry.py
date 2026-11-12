@@ -1,11 +1,11 @@
-"""Independent geometry checks, six orthographic views and triangle-exact surface separation."""
+"""Independent geometry checks, six orthographic views, a perspective view and triangle-exact surface separation."""
 from pathlib import Path
 import json
 import math
 import numpy as np
 import trimesh
 import manifold3d as mf
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 
 def mesh(file):
@@ -31,6 +31,9 @@ def inspect(request):
     step_bounds = [list(sb.min), list(sb.max)] if sb is not None else None
     checks = {'watertight': bool(m.is_watertight), 'winding_consistent': bool(m.is_winding_consistent), 'positive_volume': bool(m.is_volume),
               'manifold': mm.status() == mf.Error.NoError, 'step_valid': bool(step.is_valid) if step is not None else None,
+              # A solid design whose STEP holds only shells (seen after rounding a sketch by offsetting it out and
+              # back) is not the B-rep it claims to be, however good its mesh looks.
+              'step_solids': bool(len(step.solids()) >= 1) if step is not None else None,
               'stl_step_bounds_agree': bool(np.max(np.abs(m.bounds - np.array(step_bounds))) <= 0.2) if step_bounds is not None else None}
     try:
         assembly = bodies(step, request) if step is not None else None
@@ -287,10 +290,125 @@ def render(m, folder):
                 draw.line([tuple(xy[i, j]), tuple(xy[i, (j + 1) % 3])], fill=(27, 62, 70), width=2)
         draw.text((24, 22), name + ' | ' + ', '.join(f'{x:.2f}' for x in m.extents) + ' mm', fill='black')
         file = folder / (name + '.png'); im.save(file); paths[name] = str(file); images.append(im)
-    sheet = Image.new('RGB', (1600, 2400), 'white')
-    for i, im in enumerate(images): sheet.paste(im, ((i % 2) * 800, (i // 2) * 800))
+    # The view a person judges a shape from: three-quarter, in perspective, large on the sheet beside the six.
+    big = perspective(m, 1600)
+    label = 'perspective, from the front right and above | ' + ' x '.join(f'{x:.1f}' for x in m.extents) + ' mm'
+    ImageDraw.Draw(big).text((28, 24), label, fill='black', font=ImageFont.load_default(size=30))
+    file = folder / 'perspective.png'; big.resize((800, 800), Image.LANCZOS).save(file); paths['perspective'] = str(file)
+    sheet = Image.new('RGB', (1600 + 2 * 534, 1602), 'white')
+    sheet.paste(big, (0, 0))
+    for i, im in enumerate(images): sheet.paste(im.resize((534, 534), Image.LANCZOS), (1600 + (i % 2) * 534, (i // 2) * 534))
     sheet.save(folder / 'contact.png'); paths['contact'] = str(folder / 'contact.png')
     return paths
+
+
+def perspective(m, size=1600, azimuth=35.0, elevation=26.0):
+    """A three-quarter view in true perspective with a depth buffer (large flat faces defeat depth sorting at an
+    angle). Seen from the front (-Y) turned `azimuth` degrees towards +X and raised `elevation` degrees, through a
+    28 degree lens, framed to fill the picture. Smooth shading across facets that meet within 40 degrees, so a
+    lofted or filleted surface reads as one surface and a real edge stays an edge; outlines where the surface steps
+    in depth or creases by more than 35 degrees. Every array operation is over all triangles at once."""
+    V, F, N = np.asarray(m.vertices, float), np.asarray(m.faces), np.asarray(m.face_normals, float)
+    centre, radius = m.bounds.mean(axis=0), max(float(np.linalg.norm(m.extents)) / 2, 1e-9)
+    az, el = math.radians(azimuth), math.radians(elevation)
+    to_eye = np.array([math.sin(az) * math.cos(el), -math.cos(az) * math.cos(el), math.sin(el)])
+    d = -to_eye
+    r = np.cross(d, [0, 0, 1.0]); r /= np.linalg.norm(r)
+    u = np.cross(r, d)
+    eye = centre + to_eye * radius / math.sin(math.radians(14)) * 1.06
+    q = V - eye
+    zc = q @ d
+    tx, ty = (q @ r) / zc, (q @ u) / zc
+    zoom = 0.86 * size / max(float(np.ptp(tx)), float(np.ptp(ty)), 1e-12)
+    X = size / 2 + zoom * (tx - (tx.min() + tx.max()) / 2)
+    Y = size / 2 - zoom * (ty - (ty.min() + ty.max()) / 2)
+    W = 1.0 / zc                                       # inverse depth is affine across a triangle on screen
+    # light: key from the upper left of the viewer, a weaker fill from the right
+    key = -0.55 * r + 0.75 * u - 0.45 * d; key /= np.linalg.norm(key)
+    fill = 0.8 * r + 0.15 * u - 0.6 * d; fill /= np.linalg.norm(fill)
+    lum = lambda n: 0.26 + 0.58 * np.clip(n @ key, 0, None) + 0.2 * np.clip(n @ fill, 0, None)
+    vn = np.asarray(m.vertex_normals, float)
+    corner = vn[F]                                     # (T, 3, 3): use the vertex normal only where it is this face's
+    smooth = np.einsum('tkj,tj->tk', corner, N) > 0.766
+    L = np.where(smooth, lum(corner.reshape(-1, 3)).reshape(-1, 3), lum(N)[:, None])
+    facing = np.einsum('ij,ij->i', N, V[F].mean(axis=1) - eye) < 0
+    if m.is_watertight:
+        front = facing                                 # a closed solid: its back faces are never seen
+    else:                                              # an open scan is seen from both sides: light the side that faces the eye
+        front = np.ones(len(F), bool)
+        L = np.where(facing[:, None], L, np.where(smooth, lum(-corner.reshape(-1, 3)).reshape(-1, 3), lum(-N)[:, None]))
+        N = np.where(facing[:, None], N, -N)
+    x, y, w, L = X[F][front], Y[F][front], W[F][front], L[front]
+    Nf = N[front]
+    det = (x[:, 1] - x[:, 0]) * (y[:, 2] - y[:, 0]) - (x[:, 2] - x[:, 0]) * (y[:, 1] - y[:, 0])
+    ok = np.abs(det) > 1e-12
+    x, y, w, L, Nf, det = x[ok], y[ok], w[ok], L[ok], Nf[ok], det[ok]
+    if not len(x):                                     # nothing faces the eye (a mesh seen exactly edge-on)
+        return Image.new('RGB', (size, size), '#f5f5f2')
+    def plane(a):                                      # a(px, py) = a0 + gx (px - x0) + gy (py - y0)
+        gx = ((a[:, 1] - a[:, 0]) * (y[:, 2] - y[:, 0]) - (a[:, 2] - a[:, 0]) * (y[:, 1] - y[:, 0])) / det
+        gy = ((a[:, 2] - a[:, 0]) * (x[:, 1] - x[:, 0]) - (a[:, 1] - a[:, 0]) * (x[:, 2] - x[:, 0])) / det
+        return a[:, 0], gx, gy
+    w0, wx, wy = plane(w)
+    l0, lx, ly = plane(L)
+    # rows each triangle covers (pixel centres at +0.5), then the columns of each row
+    r0 = np.clip(np.ceil(y.min(axis=1) - 0.5), 0, size - 1).astype(np.int64)
+    r1 = np.clip(np.floor(y.max(axis=1) - 0.5), 0, size - 1).astype(np.int64)
+    rows = np.maximum(r1 - r0 + 1, 0)
+    t = np.repeat(np.arange(len(x)), rows)
+    row = r0[t] + (np.arange(len(t)) - np.repeat(np.cumsum(rows) - rows, rows))
+    yc = row + 0.5
+    lo, hi = np.full(len(t), np.inf), np.full(len(t), -np.inf)
+    for a, b in ((0, 1), (1, 2), (2, 0)):
+        ya, yb, xa, xb = y[t, a], y[t, b], x[t, a], x[t, b]
+        crosses = ((ya <= yc) & (yc < yb)) | ((yb <= yc) & (yc < ya))
+        xi = xa + (yc - ya) * (xb - xa) / np.where(crosses, yb - ya, 1.0)
+        lo, hi = np.where(crosses, np.minimum(lo, xi), lo), np.where(crosses, np.maximum(hi, xi), hi)
+    c0 = np.clip(np.ceil(np.where(np.isfinite(lo), lo, 0) - 0.5), 0, size - 1).astype(np.int64)
+    c1 = np.clip(np.floor(np.where(np.isfinite(hi), hi, -1) - 0.5), -1, size - 1).astype(np.int64)
+    cols = np.maximum(c1 - c0 + 1, 0)
+    cols[~np.isfinite(lo)] = 0
+    k = np.repeat(np.arange(len(t), dtype=np.int32), cols)
+    px = (c0[k] + (np.arange(len(k)) - np.repeat(np.cumsum(cols) - cols, cols))).astype(np.int32)
+    tri, py = t[k].astype(np.int32), row[k].astype(np.int32)
+    del k
+    dx, dy = (px + 0.5 - x[tri, 0]).astype(np.float32), (py + 0.5 - y[tri, 0]).astype(np.float32)
+    wv = w0[tri] + wx[tri] * dx + wy[tri] * dy
+    pix = py.astype(np.int64) * size + px
+    del px, py
+    zbuf = np.zeros(size * size)
+    np.maximum.at(zbuf, pix, wv)
+    win = wv >= zbuf[pix]
+    tid = np.full(size * size, -1, dtype=np.int32)
+    tid[pix[win]] = tri[win]
+    shade = np.zeros(size * size, dtype=np.float32)
+    shade[pix[win]] = np.clip(l0[tri[win]] + lx[tri[win]] * dx[win] + ly[tri[win]] * dy[win], 0, 1)
+    del tri, dx, dy, wv, pix, win
+    tid, zbuf, shade = tid.reshape(size, size), zbuf.reshape(size, size), shade.reshape(size, size)
+    solid = tid >= 0
+    ti = np.where(solid, tid, 0)
+    gx, gy, nrm = wx[ti], wy[ti], Nf[ti].astype(np.float32)
+    edge = np.zeros((size, size), bool)
+    for sy, sx in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+        other = np.roll(solid, (-sy, -sx), axis=(0, 1))
+        wj = np.roll(zbuf, (-sy, -sx), axis=(0, 1))
+        nj = np.roll(nrm, (-sy, -sx), axis=(0, 1))
+        inside = np.ones((size, size), bool)
+        if sx == 1: inside[:, -1] = False
+        if sx == -1: inside[:, 0] = False
+        if sy == 1: inside[-1, :] = False
+        if sy == -1: inside[0, :] = False
+        step = np.abs(wj - (zbuf + gx * sx + gy * sy)) > 1.6 * zbuf / zoom
+        crease = np.einsum('ijk,ijk->ij', nrm, nj) < math.cos(math.radians(35))
+        edge |= solid & inside & ((~other) | (other & (wj < zbuf) & step) | (other & crease & (sx + sy > 0)))
+    edge |= np.roll(edge, 1, axis=0) & solid | np.roll(edge, 1, axis=1) & solid   # two pixels wide before scaling down
+    del gx, gy, nrm, ti
+    rgb = np.empty((size, size, 3), dtype=np.float32)
+    ramp = np.linspace(0, 1, size)[:, None]
+    for c, (base, dark, top, bottom) in enumerate(((79, 22, 247, 240), (166, 46, 247, 240), (186, 52, 244, 238))):
+        rgb[:, :, c] = np.where(solid, base * shade + dark * (1 - shade), top + (bottom - top) * ramp)
+    rgb[edge] = (27, 62, 70)
+    return Image.fromarray(rgb.clip(0, 255).astype(np.uint8), 'RGB')
 
 
 def triangle_distance(a, b):
