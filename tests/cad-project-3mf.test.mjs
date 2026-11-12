@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import JSZip from "jszip";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -359,3 +360,21 @@ test("an object that places a shared mesh twice takes the copy in both places; t
   assert.ok(pair.every(([id, width]) => id === pair[0][0] && id !== 1 && width === 2), JSON.stringify(pair));
   assert.deepEqual(widths.find(([id]) => id === 3), [3, [[1, 1]]]);
 });
+
+// --- Re-check of #157 / #111 (2026-11-12): the inspection STL the sandbox writes for a 3MF project -----------------
+// tests/cad_project3mf_check.py runs src/cad/project3mf.py's export and geometry.inspect with the CAD runtime's
+// libraries; CAD_TEST_PYTHON names a runtime that has them.
+const cadPython = process.env.CAD_TEST_PYTHON ?? "python3";
+const cadCheck = fileURLToPath(new URL("./cad_project3mf_check.py", import.meta.url));
+const cadReady = spawnSync(cadPython, ["-c", "import numpy, trimesh, manifold3d, build123d, PIL"], { timeout: 60000 }).status === 0;
+const inspection = (name, title) => test(title, { skip: cadReady ? false : "needs the CAD runtime's Python libraries (set CAD_TEST_PYTHON)", timeout: 300000 }, () => {
+  const r = spawnSync(cadPython, [cadCheck, name], { encoding: "utf8", timeout: 240000 });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+  const result = JSON.parse(r.stdout.trim().split("\n").at(-1));
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
+inspection("reused_ids_two", "the inspection STL replaces only the part in the named model file when two files reuse an object id");
+inspection("reused_ids_three", "the inspection STL replaces only the middle part when three model files reuse one object id");
+inspection("touching_new", "a new mesh project's colour parts stacked on one footprint inspect as one valid body");
+inspection("touching_edit", "an edited object's touching colour parts, placed twice, inspect as valid bodies");
+inspection("defect_still_fails", "a colour part with a hole still fails inspection when it touches a sound part");

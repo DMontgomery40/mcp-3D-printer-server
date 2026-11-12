@@ -308,9 +308,33 @@ def project_factory(inputs):
     return project_3mf
 
 
+def _fused(meshes):
+    """An object's parts as one body for the checks, as the STEP path fuses them: colour parts that touch or overlap
+    print as one piece, and their shared faces are not the object's surface. A part that is not a closed solid is kept
+    as it is, beside the others, so the checks still see the defect."""
+    import numpy as np
+    import trimesh
+    import manifold3d as mf
+    if len(meshes) < 2:
+        return meshes
+    solids = []
+    for m in meshes:
+        part = m.copy()
+        part.merge_vertices()
+        if not part.is_volume:
+            return meshes
+        solid = mf.Manifold(mf.Mesh(np.asarray(part.vertices, dtype=np.float32), np.asarray(part.faces, dtype=np.uint32)))
+        if solid.status() != mf.Error.NoError:
+            return meshes
+        solids.append(solid)
+    body = mf.Manifold.batch_boolean(solids, mf.OpType.Add).to_mesh()
+    return [trimesh.Trimesh(np.asarray(body.vert_properties, dtype=float)[:, :3], np.asarray(body.tri_verts, dtype=np.int64), process=False)]
+
+
 def export(project, out, mode):
     """Write the project's parts as STL, a manifest the MCP writes the 3MF from, and one combined STL (plus STEP for a
-    new all-solid project) for the engine's usual checks and renders."""
+    new all-solid project) for the engine's usual checks and renders. The combined STL holds one fused body per object
+    placement, as the STEP holds one fused body per object."""
     import numpy as np
     import trimesh
     import build123d as cad
@@ -345,23 +369,25 @@ def export(project, out, mode):
             entry = {k: v for k, v in edit.items() if k not in ('geometry', 'local')}
             if edit['op'] == 'add_part':
                 entry['stl'], mesh = stl(edit['geometry'])
-                replaced.setdefault((edit['object_id'], 'new'), []).append(mesh)
+                replaced.setdefault((None, edit['object_id'], 'new'), []).append(mesh)
             elif edit['op'] == 'replace_part':
                 # The replacement is drawn in the object's frame; the file keeps the part's component transform.
                 entry['stl'], mesh = stl(edit['geometry'], np.linalg.inv(edit['local']))
-                replaced[(edit['object_id'], edit['part_id'])] = [mesh.copy().apply_transform(edit['local'])]
+                # A part is its (model file, object, part id): two model files may reuse an object id.
+                replaced[(edit['path'], edit['object_id'], edit['part_id'])] = [mesh.copy().apply_transform(edit['local'])]
             edits.append(entry)
         manifest['edits'] = edits
         # The whole project as the build places it, with the edits, for the checks and renders.
         for obj in project.objects:
             meshes = []
             for part in obj.parts:
-                meshes += replaced.get((obj.id, part.id), [part.mesh])
-            meshes += replaced.get((obj.id, 'new'), [])
+                meshes += replaced.get((part.path, obj.id, part.id), [part.mesh])
+            meshes += replaced.get((None, obj.id, 'new'), [])
+            meshes = _fused(meshes)
             for placement in obj.placements:
                 combined += [m.copy().apply_transform(placement) for m in meshes]
     else:
-        objects = {}
+        objects, meshes = {}, {}
         for part in project._new:
             key = part['object']
             if key in objects and objects[key]['plate'] != part['plate']:
@@ -369,7 +395,9 @@ def export(project, out, mode):
             index, mesh = stl(part['geometry'])
             objects.setdefault(key, {'name': key, 'plate': part['plate'], 'parts': []})['parts'].append(
                 {'stl': index, 'name': part['name'], 'filament': part['filament']})
-            combined.append(mesh)
+            meshes.setdefault(key, []).append(mesh)
+        for key in objects:
+            combined += _fused(meshes[key])
         manifest['objects'] = list(objects.values())
         shapes = [p['geometry'] for p in project._new]
         if mode == 'solid':
