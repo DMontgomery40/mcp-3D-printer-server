@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { parseStringPromise } from 'xml2js';
-import { ThreeMFData, BambuSlicerConfig, ThreeMFMetadata, ThreeMFObject, ThreeMFBuildItem, AMSFilamentMapping } from './types.js';
+import { ThreeMFData, BambuSlicerConfig, ThreeMFMetadata, ThreeMFObject, ThreeMFBuildItem, AMSFilamentMapping, ThreeMFPlateObjects } from './types.js';
 import * as fs from 'fs/promises';
 
 // Parses Bambu Studio's JSON config data
@@ -228,3 +228,68 @@ export async function parse3MF(filePath: string): Promise<ThreeMFData> {
         throw new Error(`Failed to parse 3MF file: ${error.message}`);
     }
 } 
+
+/**
+ * The objects of one sliced plate that the printer can skip, as Bambu Studio lists them in its skip dialog
+ * (02.08.02.61 slic3r/GUI/PartSkipDialog.cpp:734-741, SkipPartCanvas.cpp:690-730): one entry per instance
+ * from Metadata/slice_info.config's plate whose `index` matches (written per instance at bbs_3mf.cpp:8718-8750),
+ * with its identify_id. plate_N.json's bbox_objects are not paired by position: their `id` is an internal
+ * object id the printer doesn't know (BambuStudio.cpp:7374-7382), and copies share a name. The wipe tower
+ * is never a slice_info object.
+ */
+export async function analyze3MFPlateObjects(
+    filePath: string,
+    plateIndex: number = 0
+): Promise<ThreeMFPlateObjects> {
+    const data = await fs.readFile(filePath);
+    const zip = await JSZip.loadAsync(data);
+    const plateNumber = plateIndex + 1;
+    const sliceInfo = zip.file('Metadata/slice_info.config');
+    if (!sliceInfo) {
+        throw new Error('This 3MF has no Metadata/slice_info.config, so it was not sliced by Bambu Studio or OrcaSlicer and has no skip-object ids. Slice it first.');
+    }
+    const parsed = await parseStringPromise(await sliceInfo.async('string'), { explicitArray: true });
+    const plates: any[] = parsed?.config?.plate ?? [];
+    const selected = plates.find(plate => (plate?.metadata ?? [])
+        .some((item: any) => item?.$?.key === 'index' && Number(item?.$?.value) === plateNumber));
+    if (!selected) {
+        throw new Error(`Plate ${plateNumber} was not sliced in this 3MF, so it has no skip-object ids.`);
+    }
+    const labelObjectEnabled = (selected.metadata ?? [])
+        .some((item: any) => item?.$?.key === 'label_object_enabled' && item?.$?.value === 'true');
+    const instances = (selected.object ?? []).flatMap((object: any) => {
+        const id = Number(object?.$?.identify_id);
+        if (!Number.isSafeInteger(id) || id <= 0) return [];
+        return [{ id, name: typeof object.$.name === 'string' ? object.$.name : `object_${id}`, skipped: object.$.skipped === 'true' }];
+    });
+
+    // First-layer area and box, attached by name only where one instance and one box carry it.
+    const boxes = new Map<string, any[]>();
+    const plateFile = zip.file(`Metadata/plate_${plateNumber}.json`);
+    if (plateFile) {
+        try {
+            const plateJson = JSON.parse(await plateFile.async('string'));
+            for (const box of Array.isArray(plateJson?.bbox_objects) ? plateJson.bbox_objects : []) {
+                if (typeof box?.name !== 'string' || box.name === 'wipe_tower') continue;
+                boxes.set(box.name, [...(boxes.get(box.name) ?? []), box]);
+            }
+        } catch {
+            // The ids above still stand without the boxes.
+        }
+    }
+    const nameCount = new Map<string, number>();
+    for (const instance of instances) nameCount.set(instance.name, (nameCount.get(instance.name) ?? 0) + 1);
+
+    return {
+        plateIndex,
+        labelObjectEnabled,
+        objects: instances.map((instance: { id: number; name: string; skipped: boolean }) => {
+            const box = nameCount.get(instance.name) === 1 && boxes.get(instance.name)?.length === 1 ? boxes.get(instance.name)![0] : undefined;
+            return {
+                ...instance,
+                area: box && Number.isFinite(Number(box.area)) ? Number(box.area) : null,
+                bbox: box?.bbox ?? null,
+            };
+        }),
+    };
+}

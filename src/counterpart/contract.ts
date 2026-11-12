@@ -353,3 +353,28 @@ export function progressResult(
     problems: parts.problems ?? [],
   }) as CounterpartProgress;
 }
+
+/** outputSchema for counterpart_make_3mf. */
+export const MAKE_3MF_OUTPUT_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    contract: { type: "string", const: COUNTERPART_CONTRACT },
+    path: { type: "string", description: "Absolute path of the written 3MF." },
+    objects: { type: "integer", minimum: 1, description: "Objects in the 3MF: one assembly." },
+    filaments: { type: "integer", minimum: 1, description: "Highest filament number any part uses; pass that many load_filaments to slice_stl." },
+    parts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          stl_path: { type: "string" },
+          filament: { type: "integer", minimum: 1 },
+          triangles: { type: "integer", minimum: 1 },
+        },
+        required: ["name", "stl_path", "filament", "triangles"],
+      },
+    },
+  },
+  required: ["contract", "path", "objects", "filaments", "parts"],
+};
