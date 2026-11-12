@@ -84,6 +84,46 @@ def build():
 
 Call with `mode: "mesh"` and `inputs: [{"name": "scan", "path": "/allowed/scan.stl"}]`. A mesh-mode `build()` returns `trimesh.Trimesh`; the MCP exports STL, independently checks it and creates the same renders. It reports **`step: null`** with `step_unavailable`, since a mesh edit has no parametric B-rep. It does not create a misleading faceted STEP. STEP-specific checks/volume are null, and `valid` refers to the mesh checks. This input/mesh path runs cleanup scripts without embedding regularization or inference policy in the MCP.
 
+## Multi-colour 3MF projects
+
+`build()` can return `project_3mf()` instead of a shape when the result is a 3MF project: parts with names and filament assignments, on plates as Bambu Studio and OrcaSlicer read them. The script only describes the parts; the sandbox meshes them and writes a manifest, and the MCP itself writes `<name>.3mf` in the run folder with the same writer as `counterpart_make_3mf`, escaping names as Bambu Studio needs. The result adds `three_mf` and `three_mf_project`: `base`, the `changes` made, and the written file read back as `list_3mf_plates` reads it (each plate's `build_items`, `parts` and `filaments`, plus `project_filaments`). Slice it with `slice_stl`; never rebuild it from the STL, which loses the parts and their filaments.
+
+A new project:
+
+```python
+from build123d import Box, Cylinder, Pos
+P = {"size": 20.0, "inlay": 1.0}
+
+def build():
+    project = project_3mf()
+    project.add_part(Pos(0, 0, 1.5) * Box(P["size"], P["size"], 3), name="Tile", filament=1, object="Coaster")
+    project.add_part(Pos(0, 0, 3 + P["inlay"] / 2) * Cylinder(4, P["inlay"]), name="Dot", filament=2, object="Coaster")
+    project.add_part(Pos(30, 0, 5) * Box(10, 10, 10), name="Cube", filament=3, plate=2)
+    return project
+```
+
+Parts that share `object=` are one object (an assembly, one part per filament, printed as one piece); a part without it is its own object. Each plate's objects keep their relative positions, centred on that plate with their lowest point on the bed, and plates are laid out as Bambu Studio lays them out for the configured printer's bed (256 mm without one). A one-plate project is written exactly as `counterpart_make_3mf` writes one. In solid mode every part is a build123d shape and the STEP holds one body per object, its parts fused, so the body checks measure objects against each other and an inlay is not reported as fused into its own tile. Objects on different plates are checked where `build()` drew them, so draw them apart. With trimesh parts use `mode: "mesh"`.
+
+Editing a designer's 3MF (declare it as an input, run in `mode: "mesh"`):
+
+```python
+from build123d import Cylinder, Pos
+P = {"badge_d": 8.0, "badge_h": 1.2}
+
+def build():
+    project = project_3mf("kit")
+    body = project.object("Body")              # by name or root object id
+    low, high = body.parts[0].mesh.bounds      # a trimesh, in the object's frame
+    badge = Pos((low[0] + high[0]) / 2, (low[1] + high[1]) / 2, high[2] + P["badge_h"] / 2) * Cylinder(P["badge_d"] / 2, P["badge_h"])
+    project.add_part(badge, name="Badge", filament=2, object="Body")
+    project.set_part(project.object("Trim").parts[0], filament=1)
+    return project
+```
+
+`project.objects` lists the file's objects (`id`, `name`, `plate`, `parts`) and each part (`id`, `name`, `filament`, `painted`, `mesh`). Negative parts, modifiers and support blockers are not listed and stay as they are. `add_part` adds a part to an object in that object's frame, `replace_part(part, mesh)` replaces a part's mesh (a painted part's painting goes with its old mesh; when other objects use the same mesh, the edited object gets its own copy under a new part id and the others keep the original) and `set_part(part, name=..., filament=...)` renames or recolours one. Only the model files and `Metadata/model_settings.config` entries those edits touch change: print settings, painting, plates, other parts, previews and every other file in the archive are copied byte for byte, `Metadata/project_settings.config` included. The previews (`Metadata/plate_N.png`) are still the designer's until the file is sliced again. A sliced `.gcode.3mf` is refused as a base: edit the project file. A base whose `model_settings.config` is over 8 MiB, a model part over 64 MiB, or the files an edit rewrites over 128 MiB together is refused; a component that points at anything other than a 3MF model part is refused too. Edits need objects made of parts, as Bambu Studio and OrcaSlicer write them: a plain 3MF whose object is one mesh is listed but refused for edits. A part's filament must be one the project declares. `project.object()` takes a root object id, or a name only one object has: copies of a part are separate objects with one name, so pick each by id. The run's checks and renders see each object's parts fused into one body, as the STEP of a new solid project fuses them, so colour parts that only touch pass; a part that is not a closed solid is checked as it is and still fails.
+
+Evidence: on Linux (Ubuntu 26.04, bubblewrap) `tests/cad-project-3mf.test.mjs` edits Bambu Studio 02.08.02.61's own two-plate, three-filament project through `cad_run` (a badge added to one part in another filament, a part replaced, a part recoloured) and makes a new two-plate project; both read back with their parts and colours through `list_3mf_plates`, and the edit leaves every untouched file byte-identical. Neither file has been opened in Bambu Studio's GUI, sliced or printed: this box has no Bambu Studio profile tree.
+
 ## Scan fit
 
 `cad_check_fit` takes `model`, `reference`, optional `transform: {rotation_deg:[x,y,z], translation_mm:[x,y,z]}`, optional `clearance_mm` and a deadline. XYZ rotations are about the origin, followed by translation, applied only to the reference. Scaling is not supported implicitly or through the transform.

@@ -36,6 +36,22 @@ export interface PlateFilament {
   name?: string;
 }
 
+/**
+ * One part on a plate, as the open 3MF standard places it, so a client draws it in its filament's colour without
+ * reading slicer files: the mesh object `object_id`, in the model part `path` when that is not the root
+ * 3D/3dmodel.model (production extension p:path, as the file names it), and the 1-based project filament it prints
+ * with. `painted` is true when the slicer's painting (paint_color) recolours some of its facets.
+ */
+export interface PlatePart {
+  object_id: number;
+  /** The root object (a build item's objectid) this part belongs to: copies of one mesh may print in other filaments. */
+  build_object_id: number;
+  path?: string;
+  name: string;
+  filament: number;
+  painted?: true;
+}
+
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
 const MAX_MESH_BYTES = 64 * 1024 * 1024;
 const MAX_MESH_TOTAL = 256 * 1024 * 1024;
@@ -54,11 +70,12 @@ const metadataOf = (block: string): Settings => new Map([...block.matchAll(/<met
 /** model_settings.config objects with their own settings and parts (parts never nest). */
 export function readModelObjects(settings: string): ObjectEntry[] {
   return [...settings.matchAll(/<object\b[^>]*\bid="(\d+)"[^>]*>([\s\S]*?)<\/object>/g)].map(match => {
-    const parts = [...match[2].matchAll(/<part\b([^>]*)>([\s\S]*?)<\/part>/g)].map(part => {
-      const own = metadataOf(part[2]);
+    // A part may be self-closing (<part id="1" subtype="normal_part"/>): it has no settings of its own.
+    const parts = [...match[2].matchAll(/<part\b([^>]*?)(?:\/>|>([\s\S]*?)<\/part>)/g)].map(part => {
+      const own = metadataOf(part[2] ?? "");
       return { id: /\bid="(\d+)"/.exec(part[1])?.[1] ?? "", subtype: /\bsubtype="([^"]+)"/.exec(part[1])?.[1] ?? "normal_part", name: words(own.get("name") ?? ""), settings: own };
     });
-    const own = metadataOf(match[2].replace(/<part\b[^>]*>[\s\S]*?<\/part>/g, ""));
+    const own = metadataOf(match[2].replace(/<part\b[^>]*?(?:\/>|>[\s\S]*?<\/part>)/g, ""));
     return { id: match[1], name: words(own.get("name") ?? ""), settings: own, parts };
   });
 }
@@ -176,6 +193,8 @@ export interface PlateLayout {
   instances?: { objectId: string; instanceId: number }[];
   /** Metadata/plate_N.json filament_ids (0-based) when the file holds this plate's slice. */
   slicedFilamentIds?: number[];
+  /** The file has no plate metadata: this one plate holds every build item. */
+  allItems?: boolean;
 }
 
 /**
@@ -183,7 +202,7 @@ export interface PlateLayout {
  * 3D/3dmodel.model text.
  */
 export async function plateFilaments(zip: JSZip, settings: string, model: string, plates: PlateLayout[], limits: PaintLimits = PAINT_LIMITS)
-  : Promise<{ plates: Map<number, PlateFilament[]>; incomplete: Set<number>; project: PlateFilament[] }> {
+  : Promise<{ plates: Map<number, PlateFilament[]>; incomplete: Set<number>; project: PlateFilament[]; buildItems: Map<number, number[]>; parts: Map<number, PlatePart[]> }> {
   const text = async (name: string) => {
     const file = zip.file(name);
     if (!file) return "";
@@ -203,7 +222,10 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
   const objects = new Map(readModelObjects(settings).map(object => [object.id, object]));
   // Root objects' components: which sub-object mesh in which file each part is (part id = component objectid).
   const components = new Map<string, Map<string, string>>();
+  // Root objects that are meshes themselves (a plain 3MF): their own id is the part.
+  const rootMeshes = new Set<string>();
   for (const object of model.matchAll(/<(?:\w+:)?object\b[^>]*\bid="(\d+)"[^>]*>([\s\S]*?)<\/(?:\w+:)?object>/g)) {
+    if (/<(?:\w+:)?mesh[\s>]/.test(object[2])) rootMeshes.add(object[1]);
     const parts = new Map<string, string>();
     for (const component of object[2].matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)) {
       const path = /\b(?:\w+:)?path="\/?([^"]+)"/.exec(component[1])?.[1];
@@ -251,10 +273,14 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
       .map(layer => Number(/\bextruder="(\d+)"/.exec(layer[1])?.[1])));
   }
 
-  // Painting only matters for parts on a plate that is not sliced yet.
+  // Painting decides an unsliced plate's filaments, and marks painted parts on every plate. Unsliced plates' meshes
+  // come first, so the read budget goes to the filament lists before the painted marks.
   const paintPaths = new Set<string>();
-  for (const plate of plates) if (!plate.slicedFilamentIds) for (const objectId of plate.objectIds)
+  for (const sliced of [false, true]) for (const plate of plates) if (!!plate.slicedFilamentIds === sliced) for (const objectId of plate.objectIds)
     for (const path of components.get(objectId)?.values() ?? []) paintPaths.add(path);
+  // A build item whose object is itself the mesh (a plain 3MF) keeps its painting in the root model.
+  const ROOT_MODEL = "3D/3dmodel.model";
+  if (buildItems.some(item => rootMeshes.has(/\bobjectid="(\d+)"/.exec(item)?.[1] ?? ""))) paintPaths.add(ROOT_MODEL);
   const { painting, unread } = await readPainting(zip, paintPaths, limits);
   // Plates with a part whose painting couldn't be read: they list every declared filament and say they're incomplete.
   const incomplete = new Set<number>();
@@ -262,7 +288,43 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
   const global = (key: string) => intOf(config[key]) ?? 0;
   const FEATURES = ["wall_filament", "sparse_infill_filament", "solid_infill_filament"] as const;
   const result = new Map<number, PlateFilament[]>();
+  const plateItems = new Map<number, number[]>();
+  const plateParts = new Map<number, PlatePart[]>();
+  const itemObject = buildItems.map(item => /\bobjectid="(\d+)"/.exec(item)?.[1]);
+  // The plate's copies as root build items (0-based, in build order): a copy is its object's instance_id-th item.
+  const plateItemsOf = (plate: PlateLayout) => {
+    const items = new Set<number>();
+    if (plate.instances?.length) for (const copy of plate.instances) {
+      let seen = -1;
+      const index = itemObject.findIndex(objectId => objectId === copy.objectId && ++seen === copy.instanceId);
+      if (index >= 0) items.add(index);
+    }
+    else itemObject.forEach((objectId, index) => { if (objectId && (plate.allItems || plate.objectIds.includes(objectId))) items.add(index); });
+    return items;
+  };
   for (const plate of plates) {
+    const items = plateItemsOf(plate);
+    plateItems.set(plate.number, [...items].sort((a, b) => a - b));
+    // Each model part of the plate's objects once, in its own filament: what a client colours when it draws the plate.
+    const drawn: PlatePart[] = [];
+    for (const objectId of [...new Set([...items].map(index => itemObject[index]!))]) {
+      const object = objects.get(objectId);
+      const meshes = components.get(objectId);
+      const objectFilament = intOf(object?.settings.get("extruder")) || (global("wall_filament") > 0 ? global("wall_filament") : 1);
+      const entry = (id: string, name: string, filament: number) => {
+        const path = meshes?.get(id) ?? (id === objectId && rootMeshes.has(objectId) ? ROOT_MODEL : undefined);
+        const paint = path ? painting.get(`${path}#${id}`) : undefined;
+        drawn.push({ object_id: Number(id), build_object_id: Number(objectId), ...(path && path !== "3D/3dmodel.model" ? { path: `/${path}` } : {}), name,
+          filament: valid(filament) ? filament : 1, ...(paint?.states.size ? { painted: true as const } : {}) });
+      };
+      if (object?.parts.length) {
+        for (const part of object.parts) if (part.subtype === "normal_part" && /^\d+$/.test(part.id))
+          entry(part.id, part.name || object.name, intOf(part.settings.get("extruder")) || objectFilament);
+      } else if (meshes) for (const id of meshes.keys()) entry(id, object?.name ?? "", objectFilament);
+      else if (rootMeshes.has(objectId)) entry(objectId, object?.name ?? "", objectFilament);
+    }
+    plateParts.set(plate.number, drawn.slice(0, 1000));
+
     const used = new Map<number, string | undefined>();
     const add = (index: number | undefined, name?: string) => {
       if (!valid(index)) return;
@@ -329,6 +391,12 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
     // else filament 1 (ModelVolume::extruder_id's default).
     if (!used.size && (plate.objectIds.some(id => !objects.has(id)) || (!objects.size && buildItems.length)))
       for (const key of FEATURES) add(global(key) > 0 ? global(key) : 1);
+    // Painting on such an object's own mesh prints its painted filaments.
+    for (const index of items) {
+      const objectId = itemObject[index];
+      if (objectId && !objects.get(objectId)?.parts.length && rootMeshes.has(objectId))
+        for (const state of painting.get(`${ROOT_MODEL}#${objectId}`)?.states ?? []) add(state, objects.get(objectId)?.name || undefined);
+    }
     // A mixed filament slot prints as its component filaments (PartPlate.cpp:1437-1449, expand_mixed_filaments in
     // FilamentMixer.cpp:460-478; components are 1-based, comma-separated, FilamentMixer.cpp:165-180).
     const mixed = Array.isArray(config.filament_is_mixed) ? (config.filament_is_mixed as unknown[]).map(value => boolOf(value) === true) : [];
@@ -350,5 +418,5 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
     result.set(plate.number, [...used.entries()].sort((a, b) => a[0] - b[0]).map(([index, name]) => describe(index, project, name)));
   }
   // Every filament the project declares, used on a plate or not: slice_stl takes one profile per declared filament.
-  return { plates: result, incomplete, project: Array.from({ length: declared }, (_, i) => describe(i + 1, project)) };
+  return { plates: result, incomplete, project: Array.from({ length: declared }, (_, i) => describe(i + 1, project)), buildItems: plateItems, parts: plateParts };
 }

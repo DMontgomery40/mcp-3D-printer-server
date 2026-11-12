@@ -104,12 +104,16 @@ def main():
         declaration.value = ast.Name(id='__cad_parameters__', ctx=ast.Load())
         ast.fix_missing_locations(tree)
         from scan_touchup import scan_touchup_factory
-        namespace = {'__name__': 'cad_design', '__file__': request['script'], '__cad_parameters__': merged, 'INPUTS': request.get('inputs', {}), 'load_scan': scan_loader(request.get('inputs', {})),
+        from project3mf import Project3mf, export as export_project, project_factory
+        namespace = {'project_3mf': project_factory(request.get('inputs', {})), '__name__': 'cad_design', '__file__': request['script'], '__cad_parameters__': merged, 'INPUTS': request.get('inputs', {}), 'load_scan': scan_loader(request.get('inputs', {})),
                      'scan_touchup': scan_touchup_factory(request.get('inputs', {}))}
         exec(compile(tree, request['script'], 'exec'), namespace)
         shape = namespace['build']()
         out = Path(request['output']) / request['name']
-        if request.get('mode', 'solid') == 'mesh':
+        if isinstance(shape, Project3mf):
+            # A 3MF project: parts and a manifest for the MCP to write the 3MF from, plus the usual combined exports.
+            export_project(shape, out, request.get('mode', 'solid'))
+        elif request.get('mode', 'solid') == 'mesh':
             import trimesh
             if not isinstance(shape, trimesh.Trimesh):
                 raise ValueError('Mesh-mode build() must return a trimesh.Trimesh.')

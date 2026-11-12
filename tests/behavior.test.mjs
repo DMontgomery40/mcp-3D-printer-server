@@ -15,6 +15,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import JSZip from "jszip";
 import { PrusaImplementation } from "../dist/printers/prusa.js";
 import { inspectFuluOrcaSetup, invokeFuluBridgeRpc, linuxPluginLibraryEnv } from "../dist/fulu-orca.js";
+import { analyze3MFPlateObjects } from "../dist/3mf_parser.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -191,6 +192,8 @@ function assertCommonToolPresence(listToolsResult) {
   assert.ok(names.includes("slice_stl"), "slice_stl tool must be registered");
   assert.ok(names.includes("check_fulu_orca_setup"), "check_fulu_orca_setup tool must be registered");
   assert.ok(names.includes("fulu_bambu_network_rpc"), "fulu_bambu_network_rpc tool must be registered");
+  assert.ok(names.includes("list_3mf_plate_objects"), "list_3mf_plate_objects tool must be registered");
+  assert.ok(names.includes("counterpart_make_3mf"), "counterpart_make_3mf tool must be registered");
   assertAnthropicCompatibleToolSchemas(listToolsResult);
   assertPrinterControlSchemas(listToolsResult);
 }
@@ -1434,4 +1437,63 @@ test("streamable HTTP entrypoints work without a global Web Crypto API, as on No
   const withoutWebCrypto = ["--import", "data:text/javascript,delete globalThis.crypto"];
   await assertStreamableHttpEntrypoint(t, path.join(REPO_ROOT, "dist", "http-server.js"), "HTTP_PORT", withoutWebCrypto);
   await assertStreamableHttpEntrypoint(t, path.join(REPO_ROOT, "dist", "sse-server.js"), "SSE_PORT", withoutWebCrypto);
+});
+
+test("skip-object listing gives every copy its own identify_id from slice_info, never paired by position", async () => {
+  // Bambu Studio's GUI slice (h2d_gui_sliced): 20 copies of two objects, so names repeat and
+  // plate_1.json's bbox_objects carry internal ids (6495, 6476, ...) the printer doesn't know.
+  const fixture = path.join(REPO_ROOT, "tests/fixtures/h2d_gui_sliced");
+  const sliceInfo = await fs.readFile(path.join(fixture, "slice_info.config"), "utf8");
+  const zip = new JSZip();
+  zip.file("Metadata/plate_1.json", await fs.readFile(path.join(fixture, "plate_1.json"), "utf8"));
+  zip.file("Metadata/slice_info.config", sliceInfo);
+  const tempPath = path.join(os.tmpdir(), `plate-objects-${Date.now()}.3mf`);
+  await fs.writeFile(tempPath, await zip.generateAsync({ type: "nodebuffer" }));
+  try {
+    const plateObjects = await analyze3MFPlateObjects(tempPath, 0);
+    const expected = [...sliceInfo.matchAll(/<object identify_id="(\d+)" name="([^"]+)"/g)].map(m => [Number(m[1]), m[2]]);
+    assert.equal(expected.length, 20);
+    assert.deepEqual(plateObjects.objects.map(o => [o.id, o.name]), expected);
+    assert.equal(plateObjects.labelObjectEnabled, true);
+    // Copies share a name, so no first-layer box can be told apart for them.
+    assert.ok(plateObjects.objects.every(o => o.area === null && o.bbox === null && o.skipped === false));
+    // Plate 2 was not sliced in this file: no ids, rather than plate 1's.
+    await assert.rejects(analyze3MFPlateObjects(tempPath, 1), /Plate 2 was not sliced/);
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
+});
+
+test("skip-object listing of a Bambu Studio CLI slice with three copies", async () => {
+  // Bambu Studio 02.08.02.61 CLI slice of three cube copies (Nov 6 2026): slice_info identify_ids 15, 26, 37;
+  // plate_1.json bbox_objects ids 50, 51, 52 are internal object ids.
+  const file = path.join(REPO_ROOT, "tests/fixtures/studio-02.08.02.61/p1s-three-copies.3mf");
+  const plateObjects = await analyze3MFPlateObjects(file, 0);
+  assert.deepEqual(plateObjects.objects.map(o => [o.id, o.name, o.area]), [[15, "cube.stl_1", 400], [26, "cube.stl_2", 400], [37, "cube.stl_3", 400]]);
+  assert.ok(plateObjects.objects.every(o => Array.isArray(o.bbox) && o.bbox.length === 4));
+  // The wipe tower's box is never a skippable object, even when plate_N.json lists one.
+  const zip = await JSZip.loadAsync(await fs.readFile(file));
+  const plate = JSON.parse(await zip.file("Metadata/plate_1.json").async("string"));
+  plate.bbox_objects.push({ id: 1001, name: "wipe_tower", area: 100, bbox: [0, 0, 10, 10] });
+  zip.file("Metadata/plate_1.json", JSON.stringify(plate));
+  const withTower = path.join(os.tmpdir(), `plate-objects-tower-${Date.now()}.3mf`);
+  await fs.writeFile(withTower, await zip.generateAsync({ type: "nodebuffer" }));
+  try {
+    assert.deepEqual((await analyze3MFPlateObjects(withTower, 0)).objects.map(o => o.id), [15, 26, 37]);
+  } finally {
+    await fs.rm(withTower, { force: true });
+  }
+});
+
+test("skip-object listing refuses a 3MF without slice_info instead of offering internal bbox ids", async () => {
+  const fixture = path.join(REPO_ROOT, "tests/fixtures/h2d_gui_sliced");
+  const zip = new JSZip();
+  zip.file("Metadata/plate_1.json", await fs.readFile(path.join(fixture, "plate_1.json"), "utf8"));
+  const tempPath = path.join(os.tmpdir(), `plate-objects-bbox-${Date.now()}.3mf`);
+  await fs.writeFile(tempPath, await zip.generateAsync({ type: "nodebuffer" }));
+  try {
+    await assert.rejects(analyze3MFPlateObjects(tempPath, 0), /slice_info\.config/);
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
 });

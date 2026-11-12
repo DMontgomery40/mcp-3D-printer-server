@@ -398,7 +398,7 @@ If your Creality printer runs Klipper with Moonraker reachable on the network, a
 
 ## Progress, camera, pause and resume
 
-`counterpart_printer_info`, `counterpart_print_progress`, `camera_snapshot`, `get_printer_filaments`, `pause_print`, and `resume_print` follow the `counterpart/1` contract that [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) also implements, so one client can treat both servers alike. Each declares an `outputSchema` and returns `structuredContent` plus the same JSON as text. A tool error carries text only, because MCP clients validate any structured content against the output schema.
+`counterpart_printer_info`, `counterpart_print_progress`, `counterpart_make_3mf`, `camera_snapshot`, `get_printer_filaments`, `pause_print`, and `resume_print` follow the `counterpart/1` contract that [bambu-printer-mcp](https://github.com/DMontgomery40/bambu-printer-mcp) also implements, so one client can treat both servers alike. Each declares an `outputSchema` and returns `structuredContent` plus the same JSON as text. A tool error carries text only, because MCP clients validate any structured content against the output schema.
 
 | Firmware | Progress requests | State and job | Camera | Pause / resume | Checked against |
 |---|---|---|---|---|---|
