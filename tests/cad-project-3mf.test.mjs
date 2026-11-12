@@ -187,3 +187,36 @@ test("a part added to an object whose meshes are in the root model is defined be
   assert.match(model, /<component objectid="1"\/><component objectid="3" transform="1 0 0 0 1 0 0 0 1 0 0 0"\/><\/components>/);
   assert.deepEqual((await listModelPlates(run.out)).plates[0].parts.map(part => [part.name, part.filament, part.object_id]), [["tag", 1, 1], ["Dot", 2, 3]]);
 });
+
+// --- Review findings (Muse, 2026-11-12): a designer kit is untrusted input to the trusted writer -------------------
+
+const CORE_NS = 'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"';
+const PROD_NS = 'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"';
+async function craftBase(directory, entries) {
+  const file = path.join(directory, `base-${Math.random().toString(36).slice(2)}.3mf`);
+  const zip = new JSZip();
+  for (const [name, value] of Object.entries(entries)) zip.file(name, value);
+  fs.writeFileSync(file, await zip.generateAsync({ type: "nodebuffer" }));
+  return file;
+}
+const settingsFor = (objectId, parts) => `<config><object id="${objectId}"><metadata key="name" value="Thing"/><metadata key="extruder" value="1"/>${parts}</object></config>`;
+
+test("a component path that names a non-model entry is refused, never spliced into", async (t) => {
+  const run = job(t, [[[0, 0, 0], [1, 1, 1]], [[0, 0, 0], [2, 2, 2]]]);
+  const settingsJson = JSON.stringify({ filament_colour: ["#111111", "#222222"], note: "</resources>" });
+  const base = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources><object id="2" type="model"><components><component p:path="/Metadata/project_settings.config" objectid="1"/></components></object></resources><build><item objectid="2"/></build></model>`,
+    "Metadata/model_settings.config": settingsFor(2, `<part id="1" subtype="normal_part"><metadata key="name" value="p"/></part>`),
+    "Metadata/project_settings.config": settingsJson,
+  });
+  await assert.rejects(writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "add_part", object_id: 2, name: "X", filament: 1, stl: 0 }] }, run.parts, { kit: base }, run.out), /not a 3MF model part/);
+  await assert.rejects(writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "replace_part", object_id: 2, part_id: 1, path: "/Metadata/project_settings.config", stl: 1 }] }, run.parts, { kit: base }, run.out), /not a 3MF model part/);
+  // A .model entry that is not a model document is refused the same way.
+  const fake = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources><object id="2" type="model"><components><component p:path="/3D/Objects/fake.model" objectid="1"/></components></object></resources><build><item objectid="2"/></build></model>`,
+    "3D/Objects/fake.model": `{"json": "</resources>"}`,
+    "Metadata/model_settings.config": settingsFor(2, `<part id="1" subtype="normal_part"><metadata key="name" value="p"/></part>`),
+  });
+  await assert.rejects(writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "add_part", object_id: 2, name: "X", filament: 1, stl: 0 }] }, run.parts, { kit: fake }, run.out), /not a 3MF model part/);
+  assert.equal(fs.existsSync(run.out), false);
+});
