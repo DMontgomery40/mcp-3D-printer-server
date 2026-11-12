@@ -40,8 +40,11 @@ export class CadEngine {
   private readonly system: CadSystem;
   readonly dataDir: string;
   private reverifyFailure?: { fingerprint: string; error: string };
-  /** How long a re-check waits for another CAD operation to let go of the engine. */
+  /** How long a re-check waits for another CAD operation to let go of the engine (Counterpart reads status with 30 s). */
   busyWaitMs = 25_000;
+  /** Within this window a freed engine is re-checked here; later this call only waits for the other call's result, so
+   * a wait plus a ~17 s re-check cannot overrun the status deadline. */
+  busyRetryMs = 5_000;
   constructor(private readonly options: CadOptions) {
     this.system = options.system ?? defaultCadSystem;
     this.dataDir = path.resolve(
@@ -381,14 +384,19 @@ export class CadEngine {
     try {
       // Another call may hold the engine, usually this same re-check from another process (Counterpart reading
       // cad_status while the design worker's first cad_run starts): wait for it and try again, never call it a failure.
-      for (const until = performance.now() + this.busyWaitMs; ; ) {
+      const waited = performance.now();
+      for (let attempt = true, until = waited + this.busyWaitMs; ; ) {
         try {
-          await recheck();
-          break;
+          if (attempt) {
+            await recheck();
+            break;
+          }
+          throw new CadRefusal("cad-setup-busy", "waiting for the other CAD operation's result");
         } catch (e) {
           if (!(e instanceof CadRefusal && e.code === "cad-setup-busy")) throw e;
           signal?.throwIfAborted();
           if ((await this.status()).ready) break;
+          attempt = performance.now() - waited < this.busyRetryMs;
           if (performance.now() >= until)
             return {
               ...(await this.status()),
