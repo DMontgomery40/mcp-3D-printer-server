@@ -433,7 +433,7 @@ async function staleRuntime(t, { lockDrift = false, smokeOk = true, runtime, smo
             });
           return { stdout: JSON.stringify({ build123d: "0.13.0", watertight: smokeOk, manifold: true, step_valid: true, solid_count: 1 }) };
         }
-        return { stdout: "" };
+        return { stdout: args.includes("fit") ? JSON.stringify({ clear: true }) : "" };
       },
     },
   });
@@ -522,13 +522,25 @@ test("cad_run says why the engine is not ready when the automatic re-check faile
 });
 
 test("the first cad_run's automatic re-check stays inside its timeout_ms and is not cached when it runs out (#609)", async (t) => {
-  const { engine } = await staleRuntime(t, { smokeMs: 700 });
+  const { engine } = await staleRuntime(t, { smokeMs: 5000 });
   const started = performance.now();
   await assert.rejects(
     engine.run({ script: "P = {}\ndef build():\n  pass\n", output_dir: engine.dataDir, name: "x", timeout_ms: 100 }),
     (e) => ["cad-queue-timeout", "cad-not-ready"].includes(e.code),
   );
-  assert.ok(performance.now() - started < 500, `took ${Math.round(performance.now() - started)} ms`);
+  // The unbounded re-check waited out the whole 5 s smoke; under any load a bounded one returns well before it.
+  assert.ok(performance.now() - started < 2500, `took ${Math.round(performance.now() - started)} ms`);
   // Running out of one call's time is not a failed re-check: the next call without a deadline completes it.
   assert.equal((await engine.ensureReady()).ready, true);
+});
+
+test("cad_check_fit's automatic re-check and its fit share one timeout_ms (#609)", async (t) => {
+  const { engine, calls, root } = await staleRuntime(t, { smokeMs: 180 });
+  const model = path.join(root, "model.stl");
+  await fs.writeFile(model, "fixture");
+  const result = await engine.checkFit({ model, reference: model, timeout_ms: 2000 });
+  assert.equal(result.clear, true);
+  const fit = calls.find((c) => c.args.includes("fit"));
+  assert.ok(fit, "the fit ran after the re-check");
+  assert.ok(fit.options.timeoutMs <= 2000 - 150, `the fit was given ${fit.options.timeoutMs} ms of a 2000 ms call after a 180 ms re-check`);
 });

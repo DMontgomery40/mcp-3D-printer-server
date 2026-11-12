@@ -870,7 +870,9 @@ export class CadEngine {
       clearance > 100
     )
       throw new Error("clearance_mm must be finite, between 0 and 100.");
-    const before = await this.ensureReady(signal, performance.now() + milliseconds(args.timeout_ms));
+    // One deadline for the whole call: the automatic re-check and the fit share timeout_ms.
+    const deadline = performance.now() + milliseconds(args.timeout_ms);
+    const before = await this.ensureReady(signal, deadline);
     return this.exclusive(
       async () => {
         const status = await this.status();
@@ -900,7 +902,11 @@ export class CadEngine {
                   path.join(job, "model.stl"),
                   path.join(job, "reference.stl"),
                 ],
-                milliseconds(args.timeout_ms),
+                (() => {
+                  const left = Math.floor(deadline - performance.now());
+                  if (left <= 0) throw new Error("CAD fit timed out.");
+                  return left;
+                })(),
                 signal,
               )
             ).stdout,
