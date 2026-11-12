@@ -48,7 +48,7 @@ test("a sliced plate says so, and a plain 3MF is one plate", async (t) => {
     "Metadata/model_settings.config": `<config><plate><metadata key="plater_id" value="1"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>` });
   assert.deepEqual((await listModelPlates(sliced)).plates.map(p => [p.index, p.objects, p.sliced]), [[0, [], false], [1, ["Gear"], true]]);
   const plain = await write3mf(t, { "3D/3dmodel.model": MODEL });
-  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }], filaments_complete: true }], title: "3D scan platform", designer: "Kass 3D", project_filaments: [] });
+  assert.deepEqual(await listModelPlates(plain), { plate_count: 1, plates: [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }], filaments_complete: true, build_items: [0], parts: [{ object_id: 1, build_object_id: 1, name: "", filament: 1 }] }], title: "3D scan platform", designer: "Kass 3D", project_filaments: [] });
 });
 
 test("a file that isn't a 3MF is refused; a plate number out of range is skipped", async (t) => {
@@ -64,7 +64,7 @@ test("a plain 3MF with a large mesh is one plate", async (t) => {
   const big = `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${vertices}</vertices><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>`;
   assert.ok(big.length > 8 * 1024 * 1024);
   const file = await write3mf(t, { "3D/3dmodel.model": big });
-  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }], filaments_complete: true }]);
+  assert.deepEqual((await listModelPlates(file)).plates, [{ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [{ index: 1 }], filaments_complete: true, build_items: [0], parts: [{ object_id: 1, build_object_id: 1, name: "", filament: 1 }] }]);
 });
 
 // Bambu Studio 02.08.02.61 CLI slice of three cube copies (Nov 6 2026): model_settings.config gives each copy's
@@ -280,4 +280,40 @@ test("a sliced plate sharing an unread mesh with an unsliced plate keeps its own
   const listed = await listModelPlates(await write3mf(t, entries), { paintLimits: { meshBytes: 1024, totalBytes: 1024 * 1024 } });
   assert.deepEqual(filamentsOf(listed), [[0, [1, 2, 3, 4, 5]], [1, [2]]]);
   assert.deepEqual(listed.plates.map(plate => plate.filaments_complete), [false, true]);
+});
+
+// --- Each plate's build items and parts, for drawing a plate from the open 3MF standard (counterpart/1, #645) -----
+
+test("each plate lists its root build items (0-based) and its parts in their own filaments", async () => {
+  const result = await listModelPlates(STUDIO("two-plates-three-filaments-unsliced.3mf"));
+  assert.deepEqual(result.plates.map(plate => plate.build_items), [[0, 1], [2]]);
+  assert.deepEqual(result.plates.map(plate => plate.parts), [
+    [{ object_id: 1, build_object_id: 2, path: "/3D/Objects/object_1.model", name: "Body", filament: 1 },
+      { object_id: 3, build_object_id: 4, path: "/3D/Objects/object_2.model", name: "Trim", filament: 3 }],
+    [{ object_id: 5, build_object_id: 6, path: "/3D/Objects/object_3.model", name: "Lid", filament: 2 }]]);
+  const sliced = await listModelPlates(STUDIO("two-plates-three-filaments-sliced.3mf"));
+  assert.deepEqual(sliced.plates.map(plate => [plate.build_items, plate.parts]), result.plates.map(plate => [plate.build_items, plate.parts]));
+  // Three copies of one mesh: each copy is its own build item and its own root object.
+  const copies = await listModelPlates(STUDIO("p1s-three-copies.3mf"));
+  assert.deepEqual(copies.plates[0].build_items, [0, 1, 2]);
+  assert.equal(copies.plates[0].parts.length, 3);
+});
+
+test("painted parts say so, modifiers and negative parts are not drawn, and a plain 3MF is all its build items", async (t) => {
+  const file = await write3mf(t, paintedProject({
+    objects: [
+      { id: 10, name: "Painted", settings: { extruder: "2" }, parts: [{ id: 1, name: "shell" }, { id: 2, subtype: "negative_part" }, { id: 3, subtype: "modifier_part", settings: { extruder: "3" } }] },
+      { id: 11, name: "Plain", parts: [{ id: 1, name: "arm", settings: { extruder: "4" } }] },
+    ],
+    plates: [[11], [10]],
+    meshes: { "10/1": ['<triangle v1="0" v2="1" v3="2" paint_color="8"/>', '<triangle v1="0" v2="1" v3="2"/>'] },
+  }));
+  const result = await listModelPlates(file);
+  assert.deepEqual(result.plates.map(plate => plate.build_items), [[1], [0]]);
+  assert.deepEqual(result.plates.map(plate => plate.parts), [
+    [{ object_id: 1, build_object_id: 11, path: "/3D/Objects/object_11.model", name: "arm", filament: 4 }],
+    [{ object_id: 1, build_object_id: 10, path: "/3D/Objects/object_10.model", name: "shell", filament: 2, painted: true }]]);
+  const plain = await write3mf(t, { "3D/3dmodel.model": MODEL.replace('<item objectid="1"/>', '<item objectid="1"/><item objectid="1"/>') });
+  const one = await listModelPlates(plain);
+  assert.deepEqual([one.plates[0].build_items, one.plates[0].parts], [[0, 1], [{ object_id: 1, build_object_id: 1, name: "", filament: 1 }]]);
 });

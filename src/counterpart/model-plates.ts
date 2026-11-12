@@ -8,7 +8,7 @@
  * is one plate. Only bounded metadata is read; nothing is extracted or run.
  */
 import { readSafe3mfArchive } from "../safety/archive.js";
-import { PAINT_LIMITS, plateFilaments, type PaintLimits, type PlateFilament, type PlateLayout } from "./plate-filaments.js";
+import { PAINT_LIMITS, plateFilaments, type PaintLimits, type PlateFilament, type PlateLayout, type PlatePart } from "./plate-filaments.js";
 
 export interface ModelPlate {
   /** Zero-based, as inspect_print_file's plate_index; slice_stl's slice_plate is index + 1. */
@@ -34,6 +34,13 @@ export interface ModelPlate {
    * so every declared filament is listed rather than risk leaving out one that prints. A client offers them all.
    */
   filaments_complete: boolean;
+  /**
+   * The root 3D/3dmodel.model build items on this plate, 0-based in build order (counterpart/1): the copies a client
+   * places to draw this plate from the open 3MF standard alone. Empty for a sliced-only file without a model.
+   */
+  build_items: number[];
+  /** Each model part of this plate's objects once, with the filament it prints in (counterpart/1; see PlatePart). */
+  parts: PlatePart[];
   /** The plate's own preview from the file (Metadata/plate_N.png), when asked for and present. */
   thumbnail_png_base64?: string;
 }
@@ -108,7 +115,7 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
         const instanceId = Number(/<metadata\s+key="instance_id"\s+value="(\d+)"/.exec(instance[1])?.[1] ?? 0);
         return objectId ? [{ objectId, instanceId }] : [];
       }) });
-    plates.set(number, { index: number - 1, name: words(name?.[1] ?? "") || `Plate ${number}`, sliced: false, instances, filaments: [], filaments_complete: true,
+    plates.set(number, { index: number - 1, name: words(name?.[1] ?? "") || `Plate ${number}`, sliced: false, instances, filaments: [], filaments_complete: true, build_items: [], parts: [],
       objects: [...match[1].matchAll(/<metadata\s+key="object_id"\s+value="(\d+)"/g)].flatMap(item => objects.get(item[1]) ? [objects.get(item[1])!] : []) });
   }
   for (const name of Object.keys(zip.files)) {
@@ -116,7 +123,7 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
     if (!match) continue;
     const number = Number(match[1]);
     if (!valid(number)) continue;
-    const plate = plates.get(number) ?? { index: number - 1, name: `Plate ${number}`, objects: [], instances: [], sliced: false, filaments: [], filaments_complete: true };
+    const plate = plates.get(number) ?? { index: number - 1, name: `Plate ${number}`, objects: [], instances: [], sliced: false, filaments: [], filaments_complete: true, build_items: [], parts: [] };
     const layout = layouts.get(number) ?? { number, objectIds: [] };
     layouts.set(number, layout);
     if (match[2] === "gcode") plate.sliced = true;
@@ -134,9 +141,9 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
   result.plates = [...plates.values()].sort((a, b) => a.index - b.index);
   // A standard single-build 3MF has no Bambu plate metadata: it is one plate.
   if (!result.plates.length) {
-    result.plates.push({ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [], filaments_complete: true });
+    result.plates.push({ index: 0, name: "Plate 1", objects: [], instances: [], sliced: false, filaments: [], filaments_complete: true, build_items: [], parts: [] });
     // Without plates every object is on the one plate.
-    layouts.set(1, { number: 1, objectIds: [...settings.matchAll(/<object\b[^>]*\bid="(\d+)"/g)].map(match => match[1]) });
+    layouts.set(1, { number: 1, allItems: true, objectIds: [...settings.matchAll(/<object\b[^>]*\bid="(\d+)"/g)].map(match => match[1]) });
   }
   const geometry = has("item") && (has("mesh") || has("component"));
   if (!geometry) {
@@ -153,6 +160,11 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
   for (const plate of result.plates) {
     plate.filaments = filaments.plates.get(plate.index + 1) ?? [];
     plate.filaments_complete = !filaments.incomplete.has(plate.index + 1);
+    // A sliced-only file has no model to draw from.
+    if (geometry) {
+      plate.build_items = filaments.buildItems.get(plate.index + 1) ?? [];
+      plate.parts = filaments.parts.get(plate.index + 1) ?? [];
+    }
   }
   result.project_filaments = filaments.project;
   if (options.thumbnails) for (const plate of result.plates) {
