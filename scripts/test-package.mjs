@@ -41,6 +41,11 @@ try {
   const env = { ...process.env, PRINTER_CAMERA_SNAPSHOT_URL: `http://127.0.0.1:${camera.address().port}/still`, CAD_DATA_DIR: path.join(directory,"cad-data"), MCP_TRANSPORT: "stdio", PRINTER_TYPE: "octoprint", PRINTER_HOST: "127.0.0.1", BLENDER_MCP_COMMAND: "", BLENDER_MCP_BRIDGE_COMMAND: "", TEMP_DIR: path.join(directory, "scratch") };
   async function check(client) {
     assert.equal(client.getServerVersion().version, pkg.version);
+    // The installed tarball's own dependencies load, and npm metadata carries the counterpart field (Counterpart #644).
+    const self = (await client.callTool({name: "counterpart_self_check", arguments: {}})).structuredContent;
+    assert.equal(self.ok, true, JSON.stringify(self.checks.filter((check) => !check.ok)));
+    assert.deepEqual(pkg.counterpart, JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8")).counterpart);
+    assert.equal(pkg.counterpart.contract, "counterpart/1");
     const names = (await client.listTools()).tools.map((tool) => tool.name);
     for (const name of ["get_printer_status", "print_3mf", "blender_mcp_status", "blender_mcp_call", "blender_mcp_edit_model"]) assert.ok(names.includes(name));
     for (const name of ["camera_stream_start", "camera_frame", "camera_stream_stop"]) assert.ok(names.includes(name));

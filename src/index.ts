@@ -2,6 +2,7 @@
 
 // Must stay first: Node.js 18 needs the global crypto before any SDK transport code runs.
 import "./ensure-web-crypto.js";
+import { SELF_CHECK_OUTPUT_SCHEMA, selfCheck } from "./counterpart/self-check.js";
 import {FLIGHT_RECORD_PROPERTIES,FLIGHT_RECORD_DESCRIPTION,FLIGHT_RECORD_OUTPUT_SCHEMA,flightReadOptions,flightRecordResult,FLIGHT_ASSESS_PROPERTIES,FLIGHT_ASSESS_REQUIRED,FLIGHT_ASSESS_DESCRIPTION,PRINT_EVIDENCE_GUIDANCE,visualSubmission} from "./counterpart/flight-tools.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -568,7 +569,7 @@ const PRINTER_TARGET_PROPERTIES = {
 const OUTPUT_SCHEMA_TOOLS = new Set([
   "cad_status", "cad_setup", "cad_run", "cad_check_fit", "cad_examples",
   "counterpart_discover_printers", "counterpart_setup_fields", "counterpart_propose_filaments",
-  "counterpart_printer_info", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
+  "counterpart_printer_info", "counterpart_self_check", "counterpart_print_progress", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
   "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
   "blender_mcp_setup", "fusion_mcp_setup", "connect_printer", "octoprint_request_api_key",
@@ -1745,6 +1746,12 @@ class ThreeDPrinterMCPServer {
             outputSchema: PRINTER_INFO_OUTPUT_SCHEMA,
           },
           {
+            name: "counterpart_self_check",
+            description: "Counterpart contract (counterpart/1): whether this install's own runtime dependencies and its Web Crypto shim loaded, each with its installed version. Run it after an update; ok is false when a required check failed, with a message saying which. Contacts no printer.",
+            inputSchema: { type: "object", properties: {} },
+            outputSchema: SELF_CHECK_OUTPUT_SCHEMA,
+          },
+          {
             name:"counterpart_print_record",description:FLIGHT_RECORD_DESCRIPTION,
             inputSchema:{type:"object",properties:{...FLIGHT_RECORD_PROPERTIES,type:{type:"string",description:"Configured printer backend whose saved record is requested."},host:{type:"string",description:"Saved printer hostname or address; used only to select a local record."},port:{type:"string",description:"Configured printer API port; used only to select a local record."},bambu_serial:{type:"string",description:"Saved Bambu printer serial; used only to select a local record."}},additionalProperties:false},
             outputSchema:FLIGHT_RECORD_OUTPUT_SCHEMA
@@ -2826,6 +2833,9 @@ class ThreeDPrinterMCPServer {
             return structured({ ...found, printers: found.printers.map(({ model, ...printer }) =>
               ({ ...printer, ...(model && (VALID_BAMBU_MODELS as readonly string[]).includes(model) ? { model } : {}) })) });
           }
+
+          case "counterpart_self_check":
+            return structured(await selfCheck({ name: SERVER_NAME, version: SERVER_VERSION }));
 
           case "counterpart_setup_fields":
             return structured(genericSetupFields({ server: { name: SERVER_NAME, version: SERVER_VERSION }, models: VALID_BAMBU_MODELS, defaultKind: FALLBACK_PRINTER_TYPE, slicer: slicerSetupNow(),

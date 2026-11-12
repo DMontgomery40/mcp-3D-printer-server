@@ -16,6 +16,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { cameraNativeAvailable } from "../dist/counterpart/camera-stream.js";
 import { CounterpartService } from "../dist/counterpart/service.js";
+import { SELF_CHECK_OUTPUT_SCHEMA } from "../dist/counterpart/self-check.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURES = path.join(ROOT, "tests", "fixtures", "counterpart");
@@ -60,6 +61,49 @@ async function server(t, env) {
   await client.listTools(); // caches outputSchema validators
   return { client, temp };
 }
+
+// What auto-update reads (Counterpart #644): package.json's counterpart field before downloading, then the
+// initialize version and counterpart_self_check from the updated server.
+test("package.json's counterpart field names the contract, one sentence of notes and the auto-update choice", async () => {
+  const { counterpart } = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
+  assert.deepEqual(Object.keys(counterpart).sort(), ["autoUpdate", "contract", "notes"]);
+  assert.equal(counterpart.contract, "counterpart/1");
+  assert.equal(typeof counterpart.autoUpdate, "boolean");
+  assert.match(counterpart.notes, /^[A-Z][^\n]*[.!]$/);
+  assert.equal(counterpart.notes.split(/[.!?](?:\s|$)/).filter(Boolean).length, 1, "one sentence");
+});
+
+test("counterpart_self_check reports each runtime dependency and Web Crypto, and the server's version is the package's", async (t) => {
+  const { client } = await server(t, { PRINTER_TYPE: "octoprint" });
+  const { version, dependencies, optionalDependencies } = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
+  assert.equal(client.getServerVersion().version, version, "initialize reports the package version");
+  const tool = (await client.listTools()).tools.find((entry) => entry.name === "counterpart_self_check");
+  assert.deepEqual(tool?.outputSchema, JSON.parse(JSON.stringify(SELF_CHECK_OUTPUT_SCHEMA)));
+  const { contract, server: info, ok, checks } = (await call(client, "counterpart_self_check")).structuredContent;
+  assert.deepEqual([contract, info.version, ok], ["counterpart/1", version, true], JSON.stringify(checks.filter((check) => !check.ok)));
+  assert.deepEqual(checks.map((check) => check.name), ["package", ...Object.keys(dependencies), ...Object.keys(optionalDependencies), "web crypto"]);
+  assert.ok(checks.filter((check) => !check.optional).every((check) => check.ok));
+  assert.deepEqual(checks.filter((check) => check.optional).map((check) => check.name), Object.keys(optionalDependencies));
+  assert.equal(checks.find((check) => check.name === "bambu-node").version, dependencies["bambu-node"], "the pinned version is the one loaded");
+});
+
+test("the self-check judges installed versions against package.json's exact pins, ^ and ~ ranges", async () => {
+  const { meetsDeclared } = await import("../dist/counterpart/self-check.js");
+  for (const [version, declared, meets] of [["3.22.21", "3.22.21", true], ["3.22.22", "3.22.21", false], ["1.32.2", "^1.32.2", true], ["1.40.0", "^1.32.2", true],
+    ["1.10.0", "^1.32.2", false], ["2.0.0", "^1.32.2", false], ["0.173.1", "^0.173.0", true], ["0.174.0", "^0.173.0", false], ["16.3.9", "~16.3.1", true],
+    ["16.4.0", "~16.3.1", false], ["3.22.21-beta.1", "3.22.21", false], ["4.6.8-rc.0", "^4.6.7", false], ["1.0.0", ">=1", undefined]]) assert.equal(meetsDeclared(version, declared), meets, `${version} ${declared}`);
+});
+
+// A form the check cannot judge is reported, never passed (Muse P2 on #156/#110).
+test("the self-check fails a dependency whose declared version it cannot judge", async () => {
+  const { versionProblem } = await import("../dist/counterpart/self-check.js");
+  assert.equal(versionProblem("dep", "1.40.0", "^1.32.2"), undefined);
+  assert.match(versionProblem("dep", "1.10.0", "^1.32.2"), /needs dep \^1\.32\.2; 1\.10\.0 is installed/);
+  for (const declared of [">=1.0.0", "*", "1.x", "^1.2", "latest", "npm:other@1.0.0"]) {
+    assert.match(versionProblem("dep", "1.0.0", declared) ?? "", /cannot judge/, declared);
+  }
+  assert.match(versionProblem("dep", undefined, "^1.0.0"), /an unknown version/);
+});
 
 async function call(client, name, args = {}) {
   const result = await client.callTool({ name, arguments: args });
@@ -276,10 +320,22 @@ test("Bambu: counterpart_printer_info reports AMS filaments", async () => {
   const service = new CounterpartService(() => bambu, axios.create(), { name: "test", version: "0" });
   const info = await service.printerInfo({ type: "bambu", host: "192.0.2.1", port: "8883", apiKey: "S:T" });
   assert.equal(info.capabilities.filaments, "ams");
+  // The model with its maker, as Bambu names it, for a client to show as given (Counterpart #698).
+  assert.deepEqual([info.printer.model, info.printer.displayName], ["P1S", "Bambu Lab P1S"]);
   assert.deepEqual(info.capabilities.slicing, { supports: true, copies: true, orient: true }, "the Bambu-compatible CLI route takes all three");
   const orca = new CounterpartService(() => bambu, axios.create(), { name: "test", version: "0" }, undefined, () => ({ slicerType: "orcaslicer" }));
   assert.deepEqual((await orca.printerInfo({ type: "bambu", host: "192.0.2.1", port: "8883", apiKey: "S:T" })).capabilities.slicing,
     { supports: true, copies: true, orient: true }, "OrcaSlicer for a Bambu printer slices on the Bambu route");
+});
+
+test("Bambu: the display name comes from the serial's prefix, else the model, and is absent when neither is known", async () => {
+  const { bambuDisplayName } = await import("../dist/counterpart/service.js");
+  assert.equal(bambuDisplayName("A1M", "03900A000000000"), "Bambu Lab A1", "bambu-node's A1M for a 039 serial is a full-size A1");
+  assert.equal(bambuDisplayName("A1", "03000A000000000"), "Bambu Lab A1 Mini");
+  assert.equal(bambuDisplayName("h2d_pro", undefined), "Bambu Lab H2D Pro");
+  assert.equal(bambuDisplayName("x1c", "S"), "Bambu Lab X1C", "an unknown prefix falls back to the model");
+  assert.equal(bambuDisplayName("Unknown", undefined), undefined);
+  assert.equal(bambuDisplayName(undefined, undefined), undefined);
 });
 
 test("slice capabilities follow the slicer route", async () => {
