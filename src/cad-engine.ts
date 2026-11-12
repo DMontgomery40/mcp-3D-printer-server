@@ -359,7 +359,7 @@ export class CadEngine {
    * lock, still needs cad_setup with install: true. A failed re-verification is reported, not retried, until the
    * engine changes again or setup runs.
    */
-  async ensureReady(signal?: AbortSignal): Promise<CadStatus> {
+  async ensureReady(signal?: AbortSignal, deadline?: number): Promise<CadStatus> {
     const status = await this.status();
     if (status.ready || !status.configured) return status;
     const fingerprint = await this.fingerprint();
@@ -367,6 +367,15 @@ export class CadEngine {
     if (this.reverifyFailure?.fingerprint === fingerprint)
       return { ...status, error: this.reverifyFailure.error };
     const started = performance.now();
+    // A cad_run or cad_check_fit passes its own deadline: the re-check, its waiting included, stays inside timeout_ms.
+    const outOfTime = {
+      ...status,
+      error:
+        "The automatic re-check after this MCP's update did not finish within this call's timeout_ms; the next call runs it again.",
+    };
+    if (deadline !== undefined && deadline - started < 1) return outOfTime;
+    const limit = deadline === undefined ? undefined : AbortSignal.timeout(Math.ceil(deadline - started));
+    const bounded = limit ? (signal ? AbortSignal.any([signal, limit]) : limit) : signal;
     const recheck = () =>
       this.exclusive(
         async () => {
@@ -376,16 +385,16 @@ export class CadEngine {
           const previous = await fs
             .readFile(path.join(this.dataDir, "ready.json"), "utf8")
             .then((text) => JSON.parse(text).storage, () => undefined);
-          await this.verify({ env, cwd: this.dataDir, signal, timeoutMs: 600_000 }, signal, previous ?? null);
+          await this.verify({ env, cwd: this.dataDir, signal: bounded, timeoutMs: 600_000 }, bounded, previous ?? null);
         },
         "setup",
-        signal,
+        bounded,
       );
     try {
       // Another call may hold the engine, usually this same re-check from another process (Counterpart reading
       // cad_status while the design worker's first cad_run starts): wait for it and try again, never call it a failure.
       const waited = performance.now();
-      for (let attempt = true, until = waited + this.busyWaitMs; ; ) {
+      for (let attempt = true, until = Math.min(waited + this.busyWaitMs, deadline ?? Infinity); ; ) {
         try {
           if (attempt) {
             await recheck();
@@ -395,6 +404,7 @@ export class CadEngine {
         } catch (e) {
           if (!(e instanceof CadRefusal && e.code === "cad-setup-busy")) throw e;
           signal?.throwIfAborted();
+          if (limit?.aborted) return outOfTime;
           if ((await this.status()).ready) break;
           attempt = performance.now() - waited < this.busyRetryMs;
           if (performance.now() >= until)
@@ -408,6 +418,7 @@ export class CadEngine {
       }
     } catch (e) {
       signal?.throwIfAborted();
+      if (limit?.aborted) return outOfTime; // ran out of this call's time: not a failed re-check, never cached
       const reason = e instanceof Error ? e.message : String(e);
       this.reverifyFailure = {
         fingerprint,
@@ -659,8 +670,9 @@ export class CadEngine {
         inputs[alias] = await this.inputFile(value, ext);
       }
     }
-    // Re-check before queueing; a not-ready refusal still comes from inside the queue, after any queue timeout.
-    const before = await this.ensureReady(signal);
+    // Re-check before queueing, inside this run's deadline; a not-ready refusal still comes from inside the queue,
+    // after any queue timeout.
+    const before = await this.ensureReady(signal, deadline);
     return this.exclusive(
       async (queueWaitMs) => {
         const status = await this.status();
@@ -858,7 +870,7 @@ export class CadEngine {
       clearance > 100
     )
       throw new Error("clearance_mm must be finite, between 0 and 100.");
-    const before = await this.ensureReady(signal);
+    const before = await this.ensureReady(signal, performance.now() + milliseconds(args.timeout_ms));
     return this.exclusive(
       async () => {
         const status = await this.status();

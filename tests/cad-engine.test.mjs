@@ -399,7 +399,7 @@ test("fit scratch copies are removed after success and failure", async (t) => {
 
 // #609 (scan-to-make): an MCP update that changes only the engine's sources used to leave the code engine "not set up"
 // until someone pressed Set Up. With the installed runtime unchanged, status re-runs setup's proof by itself.
-async function staleRuntime(t, { lockDrift = false, smokeOk = true, runtime } = {}) {
+async function staleRuntime(t, { lockDrift = false, smokeOk = true, runtime, smokeMs = 0 } = {}) {
   const { CadEngine } = await import("../dist/cad-engine.js");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cad-reverify-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -425,8 +425,14 @@ async function staleRuntime(t, { lockDrift = false, smokeOk = true, runtime } = 
       platform: "linux",
       run: async (file, args, options) => {
         calls.push({ file, args, options });
-        if (args.includes("smoke"))
+        if (args.includes("smoke")) {
+          if (smokeMs)
+            await new Promise((resolve, reject) => {
+              const timer = setTimeout(resolve, smokeMs);
+              options.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(options.signal.reason); }, { once: true });
+            });
           return { stdout: JSON.stringify({ build123d: "0.13.0", watertight: smokeOk, manifold: true, step_valid: true, solid_count: 1 }) };
+        }
         return { stdout: "" };
       },
     },
@@ -513,4 +519,16 @@ test("cad_run says why the engine is not ready when the automatic re-check faile
     engine.run({ script: "P = {}\ndef build():\n  pass\n", output_dir: engine.dataDir, name: "x" }),
     (e) => e.code === "cad-not-ready" && /automatic re-check .* failed/.test(e.message),
   );
+});
+
+test("the first cad_run's automatic re-check stays inside its timeout_ms and is not cached when it runs out (#609)", async (t) => {
+  const { engine } = await staleRuntime(t, { smokeMs: 700 });
+  const started = performance.now();
+  await assert.rejects(
+    engine.run({ script: "P = {}\ndef build():\n  pass\n", output_dir: engine.dataDir, name: "x", timeout_ms: 100 }),
+    (e) => ["cad-queue-timeout", "cad-not-ready"].includes(e.code),
+  );
+  assert.ok(performance.now() - started < 500, `took ${Math.round(performance.now() - started)} ms`);
+  // Running out of one call's time is not a failed re-check: the next call without a deadline completes it.
+  assert.equal((await engine.ensureReady()).ready, true);
 });
