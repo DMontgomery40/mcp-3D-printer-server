@@ -148,15 +148,12 @@ class BambuClientStore {
 
   /**
    * bambu-node has merged changed into data, its own report object (printer.data). A new job's first pushes can carry
-   * its name and layer count before its layer number, so the previous job's progress is restarted here.
+   * its name and layer count before its layer number, so the previous job's progress is dropped here until the new job reports its own.
    */
   reportMerged(key: string, host: string, serial: string, data: Record<string, any>, changed?: Record<string, any>): void {
     if (!data) return;
     if (changed && typeof changed === "object") {
-      for (const [field, value] of Object.entries(newJobResets(this.jobIdentities.get(key), changed))) {
-        if (value === undefined) delete data[field];
-        else data[field] = value;
-      }
+      for (const field of newJobResets(this.jobIdentities.get(key), changed)) delete data[field];
       this.jobIdentities.set(key, jobIdentity(data));
     }
     if (!this.onReport) return;
