@@ -32,6 +32,7 @@ export interface HeightMeasurement {
   method: string;
 }
 export interface PhysicalEvidence {
+  observedLayer?: number;
   assessment?: {
     required: boolean;
     frameId: string;
@@ -175,6 +176,7 @@ export const PHYSICAL_EVIDENCE_SCHEMA = {
         "suspect_no_extrusion",
       ],
     },
+    observedLayer: { type: "integer", minimum: 1 },
     assessment: { type: "object", additionalProperties: true },
     evidence: { type: "array", items: { type: "string" } },
     limitations: { type: "array", items: { type: "string" } },

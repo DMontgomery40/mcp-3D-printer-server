@@ -428,12 +428,16 @@ test("public real-frame visual replay persists no-extrusion warning through FINI
   const { CounterpartService } = await import("../dist/counterpart/service.js");
   const bambu = new BambuImplementation({});
   Object.defineProperty(bambu, "flightRecords", {value:store});
-  let current = {subtask_name:"visual-job",gcode_state:"FINISH",layer_num:265};
+  let current = {subtask_name:"visual-job",gcode_state:"FINISH",layer_num:265,print_error:1};
   let connected = true;
   bambu.getStatus = async () => ({connected,raw:current});
   const service = new CounterpartService(()=>bambu,{}, {name:"fixture",version:"1"});
   const target={type:"bambu",host:"127.0.0.1",port:"8883",apiKey:"01PFIXTURE:fixture-token"};
-  assert.equal((await service.printProgress(target)).physical.status,"suspect_no_extrusion");
+  const progress=await service.printProgress(target);
+  assert.equal(progress.physical.status,"suspect_no_extrusion");
+  assert.equal(progress.problems[0].code,"physical-no-extrusion");
+  assert.match(progress.problems[0].message,/printer reports finished.*layer 1/i);
+  assert.ok(progress.problems.length>1,"firmware problems are preserved after the physical warning");
   current = {subtask_name:"external-next-print",gcode_state:"RUNNING",layer_num:1};
   const next=await service.printProgress(target);
   assert.equal(next.physical.status,"unknown");

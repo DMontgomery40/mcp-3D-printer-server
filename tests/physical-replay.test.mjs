@@ -21,7 +21,7 @@ const lowered = fs
     new URL("./fixtures/physical/bed-out-of-view.jpg", import.meta.url),
   )
   .toString("base64");
-async function replay(t, current = empty) {
+async function replay(t, current = empty, expected = fixture.expected) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "physical-replay-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new FlightRecords({ dir });
@@ -29,7 +29,7 @@ async function replay(t, current = empty) {
     sha256: fixture.artifactSha256,
     jobName: "offline-air.3mf",
     mapping: [2],
-    expected: fixture.expected,
+    expected,
   });
   const report = (state, layer) =>
     store.observe("printer", {
@@ -314,4 +314,62 @@ test("a separate live observer durably invalidates a reprint without overwriting
   assert.equal(restarted.physicalForReport("printer",{subtask_name:"offline-air",gcode_state:"FINISH"}).status,"unknown");
   assert.deepEqual(restarted.read("printer").record.reports,before);
   assert.equal(restarted.read("printer",{jobId:s.jobId}).physical.status,"suspect_no_extrusion");
+});
+
+
+test("unknown first-layer assessment still requests the layer-10 checkpoint and supplies phone-readable problems",async(t)=>{
+  const {physicalProblems}=await import('../dist/counterpart/visual-evidence.js');
+  const s=await replay(t);
+  s.store.submitVisual('printer',{...s.input,visibility:'unknown',deposition:'unknown'});
+  assert.equal(s.store.read('printer').physical.status,'unknown');
+  s.report('RUNNING',10);
+  // A mock later acquisition uses the saved empty-bed image; this is a checkpoint-protocol test, not a claim that the real image was taken at layer10.
+  await s.store.sample('printer',async()=>({base64:empty}));
+  const view=s.store.read('printer');const frame=view.record.frames.find(f=>f.layer===10);
+  assert.ok(frame,'layer10 captured despite the layer1 unknown observation');
+  assert.equal(view.physical.assessment.frameId,frame.id);
+  const assessed=s.store.submitVisual('printer',{...s.input,frameId:frame.id,imageSha256:frame.sha256});
+  assert.equal(assessed.physical.observedLayer,10);
+  const active=physicalProblems(assessed.physical)[0].message;
+  assert.match(active,/Nothing seems to be coming out of the nozzle/);
+  assert.match(active,/layer 10/);assert.match(active,/nozzle and (the )?filament path/);
+  const finished=physicalProblems(assessed.physical,true)[0].message;
+  assert.match(finished,/printer reports finished/i);assert.match(finished,/layer 10/);
+});
+
+
+test("no-extrusion stays sticky across unknown checkpoints and restart; only clear visible present at a higher layer supersedes it",async(t)=>{
+ // Later geometry/acquisitions are synthetic protocol fixtures, not claims about the real photo's capture layer.
+ const extra=Array.from({length:40},(_,i)=>({layer:(i+3)*10,zMm:(i+3)*2,boundsMm:fixture.expected.layers.at(-1).boundsMm}));
+ const s=await replay(t,empty,{...fixture.expected,heightMm:100,layers:[...fixture.expected.layers,...extra]});
+ s.store.submitVisual('printer',s.input);
+ // Relabeling the same image cannot erase a previously clear failure observation.
+ assert.equal(s.store.submitVisual('printer',{...s.input,deposition:'present'}).physical.status,'suspect_no_extrusion');
+ for(const layer of [2,10,21]){
+  s.report('RUNNING',layer);await s.store.sample('printer',async()=>({base64:empty}));
+  const frame=s.store.read('printer').record.frames.find(f=>f.layer===layer);
+  assert.ok(frame);
+  const input={...s.input,frameId:frame.id,imageSha256:frame.sha256};
+  const patch=layer===2?{visibility:'unknown',deposition:'unknown'}:layer===10?{visibility:'occluded',deposition:'present'}:{deposition:'present',footprintVisible:false};
+  assert.equal(s.store.submitVisual('printer',{...input,...patch}).physical.status,'suspect_no_extrusion');
+ }
+ const restarted=new FlightRecords({dir:s.dir}).read('printer');
+ assert.equal(restarted.physical.status,'suspect_no_extrusion');
+ assert.deepEqual(restarted.physical.evidence,[s.frame.id]);
+ assert.equal(restarted.physical.observedLayer,1);
+ const later=restarted.record.frames.find(f=>f.layer===21);
+ const cleared=s.store.submitVisual('printer',{...s.input,frameId:later.id,imageSha256:later.sha256,deposition:'present'});
+ assert.equal(cleared.physical.status,'unknown','visible material supersedes the empty observation but cannot prove physical success');
+ assert.match(cleared.physical.limitations.join(' '),/higher.layer.*supersed/i);
+ for(const geometry of extra){
+  s.report('RUNNING',geometry.layer);await s.store.sample('printer',async()=>({base64:empty}));
+  const frame=s.store.read('printer').record.frames.find(f=>f.layer===geometry.layer);
+  assert.ok(frame);
+  assert.equal(s.store.submitVisual('printer',{...s.input,frameId:frame.id,imageSha256:frame.sha256,visibility:'unknown',deposition:'unknown'}).physical.status,'unknown');
+ }
+ s.report('FINISH',500);
+ const retained=s.store.read('printer');
+ assert.ok(retained.record.frames.length<=32);
+ assert.ok(retained.record.frames.some(f=>f.id===later.id),'the superseding evidence must survive bounded frame pruning');
+ assert.equal(new FlightRecords({dir:s.dir}).read('printer').physical.status,'unknown');
 });

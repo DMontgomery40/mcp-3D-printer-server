@@ -433,14 +433,16 @@ export class FlightRecords {
                 .map((f) => f.id)
         ).slice(0, 4),
     );
-    const verify = new Set(
-      observations
+    const retainedVisual = assessVisual(result.frames, observations, result.expected);
+    const verify = new Set([
+      ...(retainedVisual?.evidence ?? []),
+      ...observations
         .slice(-1)
         .flatMap((o) => [
           o.frameId,
           ...(o.referenceFrameId ? [o.referenceFrameId] : []),
         ]),
-    );
+    ]);
     for (const frame of result.frames) {
       if (frame.status !== "captured") continue;
       try {
@@ -463,10 +465,12 @@ export class FlightRecords {
         frame.reason = "saved-frame-unavailable";
       }
     }
-    const physical = options.measurements?.length
-      ? assessPhysical(result.frames, options.measurements)
-      : (assessVisual(result.frames, observations, result.expected) ??
-        assessPhysical(result.frames));
+    const visual = assessVisual(result.frames, observations, result.expected);
+    const physical = visual?.status === "suspect_no_extrusion"
+      ? visual
+      : options.measurements?.length
+        ? assessPhysical(result.frames, options.measurements)
+        : (visual ?? assessPhysical(result.frames));
     physical.assessment = assessmentRequest(
       result.frames,
       observations,
@@ -537,6 +541,9 @@ export class FlightRecords {
       prior &&
       JSON.stringify(validateVisualSubmission(prior)) === JSON.stringify(value)
     )
+      return this.read(key, { jobId: record.id });
+    // Reinterpreting the same frame cannot clear a warning; recovery needs a higher-layer frame.
+    if (prior && assessVisual(record.frames, [prior], record.expected)?.status === "suspect_no_extrusion")
       return this.read(key, { jobId: record.id });
     const next = [
       ...observations.filter((o) => o.frameId !== value.frameId),
@@ -613,7 +620,9 @@ export class FlightRecords {
     }
   }
   private trimFrames(record: FlightRecord) {
-    const anomaly = this.visuals(record)
+    const observations = this.visuals(record);
+    const protectedFrames = new Set(assessVisual(record.frames, observations, record.expected)?.evidence ?? []);
+    const anomaly = observations
       .filter(
         (o) =>
           o.visibility === "clear" &&
@@ -625,7 +634,7 @@ export class FlightRecords {
     while (record.frames.length > 32) {
       const index = record.frames.findIndex(
         (f) =>
-          f.role !== "baseline" && f.role !== "first_layer" && f.id !== anomaly,
+          f.role !== "baseline" && f.role !== "first_layer" && f.id !== anomaly && !protectedFrames.has(f.id),
       );
       if (index < 0) break;
       const [removed] = record.frames.splice(index, 1);
@@ -690,17 +699,19 @@ export class FlightRecords {
         layer <= 2 &&
         attempts.length < 2 &&
         !attempts.some((f) => f.layer === layer);
-      const previous =
-        record.frames.filter((f) => f.role !== "baseline").at(-1)?.layer ?? 0;
+      const periodicCheckpoint = 100000 + Math.floor(layer / 10);
       const periodic =
         !record.frames.some((f) => f.role !== "baseline") ||
-        layer - previous >= 10;
+        (layer >= 10 &&
+          !record.sampledCheckpoints?.includes(periodicCheckpoint) &&
+          !record.frames.some(f => f.checkpoint === periodicCheckpoint));
       if (!first && !periodic && !due.length) return;
       const chosen = due.at(-1);
       checkpoint =
         chosen?.index ?? (first ? -10 : 100000 + Math.floor(layer / 10));
       record.skippedCheckpoints.push(...due.slice(0, -1).map((t) => t.index));
       if (chosen) (record.sampledCheckpoints ??= []).push(chosen.index);
+      if (periodic && layer >= 10) (record.sampledCheckpoints ??= []).push(periodicCheckpoint);
       zMm = geometry.zMm;
       role = first ? "first_layer" : periodic ? "periodic" : "height";
     }
