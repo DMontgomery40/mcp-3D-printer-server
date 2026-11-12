@@ -137,6 +137,25 @@ def case_defect_still_fails(folder):
     return {'ok': result['valid'] is False and result['checks']['watertight'] is False, **result}
 
 
+def case_negative_volume_refused(folder):
+    """A negative volume must not disappear from the inspection of an imported project."""
+    root = (f'<?xml version="1.0"?><model {CORE}><resources>{mesh_xml(1, box([0, 0, 0], [10, 10, 10]))}'
+            f'{mesh_xml(2, box([3, 3, -1], [7, 7, 11]))}'
+            '<object id="3" type="model"><components><component objectid="1"/><component objectid="2"/></components></object>'
+            '</resources><build><item objectid="3"/></build></model>')
+    settings = ('<config><object id="3"><metadata key="name" value="Body with a hole"/>'
+                '<part id="1" subtype="normal_part"/><part id="2" subtype="negative_part"/>'
+                '</object></config>')
+    try:
+        project = Project3mf('kit', write_3mf(folder, root, {}, settings))
+    except ValueError as error:
+        return {'ok': 'negative' in str(error).lower() and not (Path(folder) / 'design.stl').exists(), 'refused': str(error),
+                'output_written': (Path(folder) / 'design.stl').exists()}
+    project.set_part(project.objects[0].parts[0], name='Edited body')
+    out = run(project, folder)
+    return {'ok': False, 'refused': False, 'uncut_volume': float(load_mesh(str(out) + '.stl').volume)}
+
+
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory() as tmp:
         print(json.dumps(globals()['case_' + sys.argv[1]](tmp)))

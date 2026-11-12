@@ -425,3 +425,5 @@ inspection("placed_twice", "the inspection STL shows a replaced mesh an object p
 inspection("touching_new", "a new mesh project's colour parts stacked on one footprint inspect as one valid body");
 inspection("touching_edit", "an edited object's touching colour parts, placed twice, inspect as valid bodies");
 inspection("defect_still_fails", "a colour part with a hole still fails inspection when it touches a sound part");
+
+inspection("negative_volume_refused", "an imported project with a negative volume refuses inspection instead of reporting an uncut body");
