@@ -298,6 +298,9 @@ export async function makeCounterpart3mf(args: Record<string, unknown>): Promise
 // --- cad_run 3MF projects (project_3mf in a design script) --------------------------------------------------------
 
 const MAX_PLATES = 64;
+const MAX_EDIT_SETTINGS_BYTES = 8 * 1024 * 1024;
+const MAX_EDIT_MODEL_BYTES = 64 * 1024 * 1024;
+const MAX_EDIT_TOTAL_BYTES = 128 * 1024 * 1024;
 const IDENTITY_COMPONENT = "1 0 0 0 1 0 0 0 1 0 0 0";
 const IDENTITY_MATRIX = "1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1";
 type ProjectEdit =
@@ -402,12 +405,19 @@ export async function writeCadProject3mf(manifest: unknown, partsDir: string, in
   if (typeof alias !== "string" || !Object.prototype.hasOwnProperty.call(inputs, alias)) fail("The 3MF project's base is not one of this run's inputs.");
   const { zip } = await readSafe3mfArchive(inputs[alias]);
   if (Object.keys(zip.files).some(name => /^Metadata\/plate_\d+\.gcode$/.test(name))) fail("The base 3MF holds G-code: edit the project file, not a sliced .gcode.3mf.");
+  // The base's files the edit rewrites become strings in this process: each is capped as list_3mf_plates caps what it
+  // reads (settings 8 MiB, a model part 64 MiB), and all of them together at 128 MiB.
   const files = new Map<string, string>();
+  let textBytes = 0;
   const read = async (name: string) => {
     if (!files.has(name)) {
       const file = zip.file(name);
       if (!file) fail(`The base 3MF has no ${name}.`);
-      files.set(name, await file.async("string"));
+      const bytes = await file.async("nodebuffer");
+      const cap = name.toLowerCase().endsWith(".model") ? MAX_EDIT_MODEL_BYTES : MAX_EDIT_SETTINGS_BYTES;
+      if (bytes.length > cap || (textBytes += bytes.length) > MAX_EDIT_TOTAL_BYTES)
+        fail(`The base 3MF's ${name} is too large to edit (settings up to ${MAX_EDIT_SETTINGS_BYTES / 1024 / 1024} MiB, a model part up to ${MAX_EDIT_MODEL_BYTES / 1024 / 1024} MiB, ${MAX_EDIT_TOTAL_BYTES / 1024 / 1024} MiB in all).`);
+      files.set(name, bytes.toString("utf8"));
     }
     return files.get(name)!;
   };

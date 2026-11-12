@@ -249,3 +249,14 @@ test("replace_part finds a part by id and model file when two files reuse an obj
   assert.equal(await zip.file("3D/Objects/a.model").async("string"), sub(7), "a.model's part 1 is untouched");
   assert.match(await zip.file("3D/Objects/b.model").async("string"), /<vertex x="3" y="3" z="3"\/>/, "b.model's part 1 is replaced");
 });
+
+test("a base whose settings or model files are too large to edit is refused before they become strings", async (t) => {
+  const run = job(t, [[[0, 0, 0], [1, 1, 1]]]);
+  const kit = await JSZip.loadAsync(fs.readFileSync(KIT));
+  const entries = {};
+  for (const [name, entry] of Object.entries(kit.files)) if (!entry.dir) entries[name] = await entry.async("nodebuffer");
+  entries["Metadata/model_settings.config"] = Buffer.concat([entries["Metadata/model_settings.config"], Buffer.from(`<!--${"x".repeat(9 * 1024 * 1024)}-->`)]);
+  const base = await craftBase(run.directory, entries);
+  await assert.rejects(writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "set_part", object_id: 4, part_id: 3, filament: 1 }] }, run.parts, { kit: base }, run.out), /too large to edit/);
+  assert.equal(fs.existsSync(run.out), false);
+});
