@@ -10,13 +10,15 @@ import { BambuImplementation } from '../dist/printers/bambu.js';
 process.env.BAMBU_DISPATCH_CHECK_MS = '0';
 process.env.BAMBU_STUDIO_CONFIG = '';
 
-async function capture(t, options = {}, suffix = '.3mf') {
+async function capture(t, options = {}, suffix = '.3mf', model = 'p1s') {
+  const serial = model === 'h2d' ? '094TEST' : '01PTEST';
+  const nozzleDiameters = model === 'h2d' ? [0.4, 0.4] : [0.4];
   t.mock.method(net.Socket.prototype, 'connect', () => { throw new Error('Network forbidden in payload test'); });
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'calibration-payload-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, `plate${suffix}`);
   const zip = new JSZip();
-  zip.file('Metadata/plate_1.gcode', '; printer_model = p1s\n; nozzle_diameter = 0.4\n; filament_type = PLA\n; filament_colour = #FFFFFF\nM104 S220\nM140 S60\nG1 X0 Y0\n');
+  zip.file('Metadata/plate_1.gcode', `; printer_model = ${model}\n; nozzle_diameter = ${nozzleDiameters.join(';')}\n; filament_type = PLA\n; filament_colour = #FFFFFF\n${model === 'h2d' ? '; filament_map = 1\n; physical_extruder_map = 1,0\n' : ''}M104 S220\nM140 S60\nG1 X0 Y0\n`);
   zip.file('Metadata/plate_1.json', JSON.stringify({ filament_ids: [0] }));
   await fs.writeFile(file, await zip.generateAsync({ type: 'nodebuffer' }));
   const printer = new BambuImplementation(async () => true);
@@ -25,16 +27,17 @@ async function capture(t, options = {}, suffix = '.3mf') {
   printer.ftpUpload = async () => { uploads++; };
   printer.getSafetyStatus = async () => {
     const now = Date.now();
-    return { connected: true, model: 'p1s', serial: '01PTEST', status: 'IDLE',
-      raw: { model: 'p1s', serial: '01PTEST', gcode_state: 'IDLE', nozzle_diameter: '0.4',
+    return { connected: true, model, serial, status: 'IDLE',
+      raw: { model, serial, gcode_state: 'IDLE', nozzle_diameter: nozzleDiameters.map(String),
+        device: { nozzle: { info: nozzleDiameters.map((diameter,id)=>({id,diameter,type:'HH01',stat:0})) } },
         vt_tray: { id: '254', tray_type: 'PLA' }, nozzle_type: 'hardened_steel', print_error: 0, hms: [],
         ams: { tray_now: '254', ams: [{ id: '0', tray: [{ id: '2', tray_type: 'PLA' }] }] } },
       observation: { source: 'mqtt', requestedAt: now, receivedAt: now, identitySource: 'report' } };
   };
   printer.getPrinter = async () => ({ publish: async packet => packets.push(typeof packet === 'string' ? JSON.parse(packet) : packet),
     executeCommand: async command => packets.push(command) });
-  const result = await printer.print3mf('127.0.0.1', '01PTEST', 'DUMMY', {
-    projectName: 'plate', filePath: file, bambuModel: 'p1s', nozzleDiameters: [0.4],
+  const result = await printer.print3mf('127.0.0.1', serial, 'DUMMY', {
+    projectName: 'plate', filePath: file, bambuModel: model, nozzleDiameters,
     useAMS: true, amsSlots: [2], ...options,
   });
   assert.equal(uploads, 1);
@@ -87,4 +90,22 @@ test('P1S external-spool payload preserves Studio defaults and disables AMS', as
   assert.equal(packet.flow_cali, false);
   assert.equal(packet.vibration_cali, false);
   assert.equal(result.calibration.transmitted.auto_flow_cali, null);
+});
+
+for (const [label, options, expected] of [
+  ['default auto', {}, true],
+  ['explicit off', {bedLeveling:false}, false],
+  ['explicit on', {bedLeveling:true}, true],
+  ['mode off', {autoBedLeveling:0}, false],
+  ['mode on', {autoBedLeveling:1}, true],
+  ['unsupported automatic mode', {autoBedLeveling:2}, true],
+]) test(`H2D direct bed leveling preserves ${label}`, async t=>{
+  const {packet,result}=await capture(t,options,'.3mf','h2d');
+  assert.equal(packet.bed_leveling,expected);
+  assert.equal(result.calibration.transmitted.task_bed_leveling,expected);
+  assert.equal(result.calibration.transmitted.auto_bed_leveling,null);
+  if (options.autoBedLeveling === undefined && options.bedLeveling === undefined) {
+    assert.equal(result.calibration.resolved.auto_bed_leveling,2);
+    assert.equal(result.calibration.resolved.task_bed_leveling,false);
+  }
 });

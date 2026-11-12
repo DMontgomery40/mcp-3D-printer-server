@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Preserve the direct route's enabled bed-leveling fallback when Studio resolves to an automatic mode the packet cannot transmit; keep explicit on/off choices and expose resolved versus transmitted values. Cover H2D defaults and overrides with network-blocked payload tests.
+
 - Align direct P1S calibration booleans with the shared Studio option resolver, preserve explicit choices, and report requested/resolved/transmitted options and unsupported overrides without guessing SDK wire fields. Payload regressions use fake transports with network blocked; this parity work does not establish a cure for scan-to-make #605 or physical print success.
 
 ## [1.2.73] – 2026-11-12

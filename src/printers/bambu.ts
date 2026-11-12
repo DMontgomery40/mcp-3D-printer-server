@@ -657,7 +657,9 @@ export class BambuImplementation extends PrinterImplementation {
         flow_cali: studio.task_flow_cali,
         layer_inspect: studio.task_layer_inspect,
         vibration_cali: studio.task_vibration_cali,
-        bed_leveling: studio.task_bed_leveling,
+        // This packet has no verified integer auto-leveling field. Preserve
+        // its enabled fallback rather than treating an unsupported auto as off.
+        bed_leveling: studio.auto_bed_leveling === 2 ? (options.bedLeveling ?? true) : studio.task_bed_leveling,
         bed_type: options.bedType || "textured_plate",
         timelapse: options.timelapse ?? false,
         use_ams: useAMS,
