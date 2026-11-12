@@ -271,3 +271,91 @@ test("a base whose settings or model files are too large to edit is refused befo
   await assert.rejects(writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "set_part", object_id: 4, part_id: 3, filament: 1 }] }, run.parts, { kit: base }, run.out), /too large to edit/);
   assert.equal(fs.existsSync(run.out), false);
 });
+
+// --- Re-check of #157 / #111 (2026-11-12): a mesh shared by several root objects ---------------------------------
+
+const cubeMesh = (id, size) => {
+  const v = [[0, 0, 0], [size, 0, 0], [size, size, 0], [0, size, 0], [0, 0, size], [size, 0, size], [size, size, size], [0, size, size]];
+  const t = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+  return `<object id="${id}" type="model"><mesh><vertices>${v.map(([x, y, z]) => `<vertex x="${x}" y="${y}" z="${z}"/>`).join("")}</vertices><triangles>${t.map(([a, b, c]) => `<triangle v1="${a}" v2="${b}" v3="${c}"/>`).join("")}</triangles></mesh></object>`;
+};
+/** Each root object's parts as read back: [object, [part id, x extent]] (x extent from the part's own mesh). */
+async function partWidths(file) {
+  const zip = await JSZip.loadAsync(fs.readFileSync(file));
+  const texts = {};
+  const model = async name => (texts[name] ??= await zip.file(name).async("string"));
+  const root = await model("3D/3dmodel.model");
+  const result = [];
+  for (const object of root.matchAll(/<object id="(\d+)"[^>]*>\s*<components>([\s\S]*?)<\/components>/g)) {
+    const parts = [];
+    for (const component of object[2].matchAll(/<component\b([^>]*)\/>/g)) {
+      const id = /objectid="(\d+)"/.exec(component[1])[1];
+      const file = /p:path="\/([^"]+)"/.exec(component[1])?.[1] ?? "3D/3dmodel.model";
+      const mesh = new RegExp(`<object id="${id}"[^>]*>([\\s\\S]*?)</object>`).exec(await model(file))[1];
+      const xs = [...mesh.matchAll(/<vertex x="([^"]+)"/g)].map(m => Number(m[1]));
+      parts.push([Number(id), Math.max(...xs) - Math.min(...xs)]);
+    }
+    result.push([Number(object[1]), parts]);
+  }
+  return result;
+}
+
+test("replacing a mesh two root objects share changes only the selected object (copy on write)", async (t) => {
+  const run = job(t, [[[0, 0, 0], [2, 2, 2]]]);
+  const base = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS}><resources>${cubeMesh(1, 1)}<object id="2" type="model"><components><component objectid="1"/></components></object><object id="3" type="model"><components><component objectid="1"/></components></object></resources><build><item objectid="2"/><item objectid="3" transform="1 0 0 0 1 0 0 0 1 10 0 0"/></build></model>`,
+    "Metadata/model_settings.config": `<config><object id="2"><metadata key="name" value="A"/><metadata key="extruder" value="1"/><part id="1" subtype="normal_part"><metadata key="name" value="cube"/><metadata key="extruder" value="2"/></part></object><object id="3"><metadata key="name" value="B"/><metadata key="extruder" value="1"/><part id="1" subtype="normal_part"><metadata key="name" value="cube"/></part></object></config>`,
+    "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222"] }),
+  });
+  const before = await (await JSZip.loadAsync(fs.readFileSync(base))).file("3D/3dmodel.model").async("string");
+  await writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "replace_part", object_id: 2, part_id: 1, path: "/3D/3dmodel.model", stl: 0 }] }, run.parts, { kit: base }, run.out);
+  const widths = await partWidths(run.out);
+  assert.deepEqual(widths.find(([id]) => id === 3), [3, [[1, 1]]], "the unselected object keeps the 1 mm cube");
+  const [, [[edited, width]]] = widths.find(([id]) => id === 2);
+  assert.equal(width, 2, "the selected object has the 2 mm replacement");
+  assert.notEqual(edited, 1, "the selected object's part is a new resource, not the shared one");
+  const after = await (await JSZip.loadAsync(fs.readFileSync(run.out))).file("3D/3dmodel.model").async("string");
+  assert.equal(elementText(after, 1), elementText(before, 1), "the shared resource's bytes are unchanged");
+  assert.ok(after.indexOf(`<object id="${edited}"`) < after.indexOf('<object id="2"'), "the copy precedes the object that uses it");
+  // The edited object's settings follow its part to the new id; its part keeps its name and colour.
+  const plates = await listModelPlates(run.out);
+  assert.deepEqual(plates.plates[0].parts.map(part => [part.name, part.filament, part.object_id]), [["cube", 2, edited], ["cube", 1, 1]]);
+});
+
+const elementText = (xml, id) => new RegExp(`<object id="${id}"[^>]*>[\\s\\S]*?</object>`).exec(xml)?.[0];
+
+test("replacing a mesh three root objects share in a component file changes only the selected one, and a later edit still finds it", async (t) => {
+  const run = job(t, [[[0, 0, 0], [3, 3, 3]]]);
+  const base = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources>${[2, 3, 4].map(id => `<object id="${id}" p:UUID="0000000${id}-0000-0000-0000-000000000000" type="model"><components><component p:path="/3D/Objects/shared.model" objectid="1" p:UUID="1000000${id}-0000-0000-0000-000000000000"/></components></object>`).join("")}</resources><build>${[2, 3, 4].map(id => `<item objectid="${id}"/>`).join("")}</build></model>`,
+    "3D/Objects/shared.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources>${cubeMesh(1, 1).replace('type="model"', 'p:UUID="20000001-0000-0000-0000-000000000000" type="model"')}</resources><build/></model>`,
+    "Metadata/model_settings.config": `<config>${[2, 3, 4].map(id => `<object id="${id}"><metadata key="name" value="O${id}"/><metadata key="extruder" value="1"/><part id="1" subtype="normal_part"><metadata key="name" value="cube"/></part></object>`).join("")}</config>`,
+    "Metadata/project_settings.config": JSON.stringify({ filament_colour: ["#111111", "#222222"] }),
+  });
+  await writeCadProject3mf({ version: 1, base: "kit", edits: [
+    { op: "replace_part", object_id: 3, part_id: 1, path: "/3D/Objects/shared.model", stl: 0 },
+    { op: "set_part", object_id: 3, part_id: 1, filament: 2 },
+  ] }, run.parts, { kit: base }, run.out);
+  const widths = await partWidths(run.out);
+  assert.deepEqual(widths.filter(([id]) => id !== 3), [[2, [[1, 1]]], [4, [[1, 1]]]], "objects 2 and 4 keep the shared 1 mm cube");
+  const [, [[edited, width]]] = widths.find(([id]) => id === 3);
+  assert.deepEqual([edited !== 1, width], [true, 3]);
+  const shared = await (await JSZip.loadAsync(fs.readFileSync(run.out))).file("3D/Objects/shared.model").async("string");
+  assert.equal((shared.match(/p:UUID="20000001-/g) ?? []).length, 1, "the copy has its own UUID");
+  const plates = await listModelPlates(run.out);
+  assert.deepEqual(plates.plates[0].parts.map(part => [part.object_id, part.filament]), [[1, 1], [edited, 2], [1, 1]], "the recolour lands on the copy only");
+});
+
+test("an object that places a shared mesh twice takes the copy in both places; the other object keeps the original", async (t) => {
+  const run = job(t, [[[0, 0, 0], [2, 2, 2]]]);
+  const base = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS}><resources>${cubeMesh(1, 1)}<object id="2" type="model"><components><component objectid="1"/><component objectid="1" transform="1 0 0 0 1 0 0 0 1 5 0 0"/></components></object><object id="3" type="model"><components><component objectid="1"/></components></object></resources><build><item objectid="2"/><item objectid="3" transform="1 0 0 0 1 0 0 0 1 20 0 0"/></build></model>`,
+    "Metadata/model_settings.config": `<config><object id="2"><metadata key="name" value="Pair"/><part id="1" subtype="normal_part"><metadata key="name" value="cube"/></part></object><object id="3"><metadata key="name" value="One"/><part id="1" subtype="normal_part"><metadata key="name" value="cube"/></part></object></config>`,
+  });
+  await writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "replace_part", object_id: 2, part_id: 1, path: "/3D/3dmodel.model", stl: 0 }] }, run.parts, { kit: base }, run.out);
+  const widths = await partWidths(run.out);
+  const [, pair] = widths.find(([id]) => id === 2);
+  assert.equal(pair.length, 2);
+  assert.ok(pair.every(([id, width]) => id === pair[0][0] && id !== 1 && width === 2), JSON.stringify(pair));
+  assert.deepEqual(widths.find(([id]) => id === 3), [3, [[1, 1]]]);
+});

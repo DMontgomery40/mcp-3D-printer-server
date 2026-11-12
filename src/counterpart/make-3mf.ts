@@ -459,6 +459,21 @@ export async function writeCadProject3mf(manifest: unknown, partsDir: string, in
     if (!block) fail(`The base 3MF's model_settings.config does not describe object ${objectId}.`);
     return block;
   };
+  // Every reference to mesh resource `id` in model file `target`: components in the root model (and, inside a model
+  // part, its own components) and, in the root model, build items.
+  const usesOf = (target: string, id: number) => {
+    const sameId = (attributes: string) => Number(/\bobjectid="(\d+)"/.exec(attributes)?.[1]) === id;
+    let uses = [...files.get(ROOT)!.matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)]
+      .filter(match => sameId(match[1]) && ((/\b(?:\w+:)?path="\/?([^"]+)"/.exec(match[1])?.[1]) ?? ROOT) === target).length;
+    if (target === ROOT) uses += [...files.get(ROOT)!.matchAll(/<(?:\w+:)?item\b([^>]*)\/?>/g)].filter(match => sameId(match[1])).length;
+    else uses += [...files.get(target)!.matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)].filter(match => sameId(match[1]) && !/\bpath="/.test(match[1])).length;
+    return uses;
+  };
+  // A part given its own copy of a shared mesh: (object, model file, original part id) -> the copy's id, so a later edit
+  // of the same part finds it.
+  const copies = new Map<string, number>();
+  const partKey = (objectId: number, file: string, partId: number) => `${objectId}\n${file}\n${partId}`;
+  const currentId = (objectId: number, file: string, partId: number) => copies.get(partKey(objectId, file, partId)) ?? partId;
   for (const [index, value] of project.edits.entries()) {
     const edit = value as ProjectEdit;
     if (!edit || typeof edit !== "object" || !isId(edit.object_id)) fail(`edits[${index}] is malformed.`);
@@ -493,20 +508,58 @@ export async function writeCadProject3mf(manifest: unknown, partsDir: string, in
     } else if (edit.op === "replace_part" || edit.op === "set_part") {
       if (!isId(edit.part_id)) fail(`edits[${index}].part_id is malformed.`);
       // A part is its (objectid, model file): two model files may reuse an object id.
-      const component = componentsOf(edit.object_id).find(entry => entry.id === edit.part_id && (edit.op !== "replace_part" || `/${entry.path}` === edit.path));
+      const component = componentsOf(edit.object_id).find(entry => entry.id === currentId(edit.object_id, entry.path, edit.part_id)
+        && (edit.op !== "replace_part" || `/${entry.path}` === edit.path));
       if (!component) fail(`Object ${edit.object_id} has no part ${edit.part_id}${edit.op === "replace_part" ? ` in ${String(edit.path).slice(0, 200)}` : ""}.`);
       if (edit.op === "replace_part") {
-        const model = await readModel(component.path);
-        const mesh = elementById(model, "object", edit.part_id);
+        let model = await readModel(component.path);
+        const mesh = elementById(model, "object", component.id);
         if (!mesh || !/<(?:\w+:)?mesh\b/.test(mesh.text)) fail(`Part ${edit.part_id} of object ${edit.object_id} has no mesh to replace.`);
         const fresh = meshText(await partMesh(edit.stl, `edits[${index}]`)).trim();
         const next = mesh.text.replace(/<((?:\w+:)?mesh)\b[\s\S]*<\/\1>/, () => fresh);
-        files.set(component.path, model.slice(0, mesh.start) + next + model.slice(mesh.end));
-        changed.push(`replaced part ${edit.part_id} of object ${edit.object_id} (its painting, if any, went with the old mesh)`);
+        // The edited object's own uses of the mesh (an object may place one mesh twice) all take the replacement.
+        const own = componentsOf(edit.object_id).filter(entry => entry.id === component.id && entry.path === component.path).length;
+        const others = usesOf(component.path, component.id) - own;
+        if (others <= 0) {
+          files.set(component.path, model.slice(0, mesh.start) + next + model.slice(mesh.end));
+          changed.push(`replaced part ${edit.part_id} of object ${edit.object_id} (its painting, if any, went with the old mesh)`);
+          continue;
+        }
+        // Other objects use this mesh too: the edited object gets its own copy under a new id, and every other use
+        // keeps the original bytes. The copy follows the original, so it still precedes the objects that use it.
+        // Its id is new in its model file and among the root objects, so no settings entry can mistake it for another.
+        const ids = [model, files.get(ROOT)!].flatMap(xml => [...xml.matchAll(/<(?:\w+:)?object\b[^>]*\bid="(\d+)"/g)].map(match => Number(match[1])));
+        const id = Math.max(0, ...ids, ...componentsOf(edit.object_id).map(entry => entry.id)) + 1;
+        const copy = next.replace(/^<[^>]*>/, open => open
+          .replace(/\bid="\d+"/, `id="${id}"`)
+          .replace(/\b((?:\w+:)?UUID)="[^"]*"/g, (_, attribute) => `${attribute}="${randomUUID()}"`));
+        model = model.slice(0, mesh.end) + "\n  " + copy + model.slice(mesh.end);
+        files.set(component.path, model);
+        // Point the edited object's components at the copy.
+        const root = files.get(ROOT)!;
+        const object = elementById(root, "object", edit.object_id)!;
+        const objectText = object.text.replace(/<(?:\w+:)?component\b[^>]*\/?>/g, tag => {
+          const attributes = tag.replace(/^<(?:\w+:)?component\b/, "");
+          const file = (/\b(?:\w+:)?path="\/?([^"]+)"/.exec(attributes)?.[1]) ?? ROOT;
+          if (file !== component.path || Number(/\bobjectid="(\d+)"/.exec(attributes)?.[1]) !== component.id) return tag;
+          return tag.replace(/\bobjectid="\d+"/, `objectid="${id}"`);
+        });
+        files.set(ROOT, root.slice(0, object.start) + objectText + root.slice(object.end));
+        // Its part settings (name, filament) move to the copy's id; other objects' settings stay as they were.
+        const settings = files.get(SETTINGS)!;
+        const block = elementById(settings, "object", edit.object_id);
+        const part = block && elementById(block.text, "part", component.id);
+        if (block && part) {
+          const renamed = part.text.replace(/^(<(?:\w+:)?part\b[^>]*?\bid=")\d+"/, `$1${id}"`);
+          const updated = block.text.slice(0, part.start) + renamed + block.text.slice(part.end);
+          files.set(SETTINGS, settings.slice(0, block.start) + updated + settings.slice(block.end));
+        }
+        copies.set(partKey(edit.object_id, component.path, edit.part_id), id);
+        changed.push(`replaced part ${edit.part_id} of object ${edit.object_id} with its own copy, now part ${id}: ${others} other use${others === 1 ? "" : "s"} of the shared mesh keep the original (its painting, if any, went with the old mesh)`);
       } else {
         const settings = files.get(SETTINGS)!;
         const block = settingsObject(edit.object_id);
-        const part = elementById(block.text, "part", edit.part_id);
+        const part = elementById(block.text, "part", component.id);
         if (!part) fail(`model_settings.config has no part ${edit.part_id} in object ${edit.object_id}.`);
         let next = part.text;
         if (edit.name !== undefined) next = setMetadata(next, "name", text(edit.name, "part name"));
