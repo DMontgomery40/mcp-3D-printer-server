@@ -9,6 +9,10 @@
 - `counterpart_make_3mf` (counterpart/1), ported from bambu-printer-mcp with the same contract: it combines separately exported STL parts into one new 3MF assembly for multi-colour printing. The parts keep their relative positions and each prints with its own filament number (default: part order); the assembly is centred on the `BAMBU_MODEL` bed, else a 256 mm bed. It refuses existing files, missing directories, unknown arguments and invalid meshes, and never overwrites. Declares an outputSchema; its errors are text only. Covered by unit tests on generated STLs and an MCP stdio call; the written 3MF has not been sliced or printed from this server. Refs DMontgomery40/scan-to-make#643.
 - `list_3mf_plate_objects`, ported from bambu-printer-mcp: lists a sliced plate's skippable object copies with their `identify_id` from `slice_info.config`, name, `skipped` state and `labelObjectEnabled`, plus first-layer area and box where the name is unique. Read-only. Tested against the existing Bambu Studio GUI and 02.08.02.61 CLI fixtures; no printer is contacted. Refs DMontgomery40/scan-to-make#643.
 
+### Fixed
+
+- Refuse CAD inspection of imported 3MF projects with negative volumes until subtraction is supported, rather than return an uncut inspection STL that differs from the preserved project. A real Python fixture reproduces the 1000 mm³ uncut body before the fix and verifies a clear refusal with no inspection output afterwards; no printer contact.
+
 ## [1.2.75] – 2026-11-12
 
 ### Added

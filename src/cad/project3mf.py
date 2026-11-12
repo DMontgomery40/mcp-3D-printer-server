@@ -149,6 +149,9 @@ def _read(path):
                 part_id = component.get('objectid')
                 part = part_config.get(part_id)
                 part_meta = _metadata(part) if part is not None else {}
+                if part is not None and part.get('subtype') == 'negative_part':
+                    raise ValueError('CAD inspection of a 3MF project with negative volumes is not supported; '
+                                     'the inspection mesh cannot yet apply their subtraction. Use a project with the cut baked into its mesh.')
                 if part is not None and part.get('subtype', 'normal_part') in SKIPPED_SUBTYPES:
                     continue
                 target = next((o for o in model(path).iter(CORE + 'object') if o.get('id') == part_id), None)
