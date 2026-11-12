@@ -40,6 +40,8 @@ export class CadEngine {
   private readonly system: CadSystem;
   readonly dataDir: string;
   private reverifyFailure?: { fingerprint: string; error: string };
+  /** How long a re-check waits for another CAD operation to let go of the engine. */
+  busyWaitMs = 25_000;
   constructor(private readonly options: CadOptions) {
     this.system = options.system ?? defaultCadSystem;
     this.dataDir = path.resolve(
@@ -362,8 +364,8 @@ export class CadEngine {
     if (this.reverifyFailure?.fingerprint === fingerprint)
       return { ...status, error: this.reverifyFailure.error };
     const started = performance.now();
-    try {
-      await this.exclusive(
+    const recheck = () =>
+      this.exclusive(
         async () => {
           if ((await this.status()).ready) return;
           const env = this.environment(this.dataDir);
@@ -376,6 +378,26 @@ export class CadEngine {
         "setup",
         signal,
       );
+    try {
+      // Another call may hold the engine, usually this same re-check from another process (Counterpart reading
+      // cad_status while the design worker's first cad_run starts): wait for it and try again, never call it a failure.
+      for (const until = performance.now() + this.busyWaitMs; ; ) {
+        try {
+          await recheck();
+          break;
+        } catch (e) {
+          if (!(e instanceof CadRefusal && e.code === "cad-setup-busy")) throw e;
+          signal?.throwIfAborted();
+          if ((await this.status()).ready) break;
+          if (performance.now() >= until)
+            return {
+              ...(await this.status()),
+              error:
+                "Another CAD operation is running; this MCP re-checks its unchanged runtime by itself when that finishes. Ask again shortly.",
+            };
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
     } catch (e) {
       signal?.throwIfAborted();
       const reason = e instanceof Error ? e.message : String(e);
@@ -406,8 +428,10 @@ export class CadEngine {
         return false;
       const runtime = await this.runtimeIdentity();
       if (!runtime.matchesLock) return false;
-      // Markers written before 1.1.90 / 1.2.72 carry no interpreter: the exact package match and the re-run proof decide.
-      if (marker.runtime && marker.runtime.interpreter !== runtime.interpreter) return false;
+      // Markers from engines without the runtime record (bambu-printer-mcp 1.1.89, mcp-3D-printer-server 1.2.71 and
+      // earlier) qualify by the exact package match; the re-run proof decides the rest.
+      if (marker.runtime && (marker.runtime.interpreter !== runtime.interpreter || marker.runtime.lock_sha256 !== runtime.lock_sha256))
+        return false;
       return true;
     } catch {
       return false;
@@ -627,7 +651,8 @@ export class CadEngine {
         inputs[alias] = await this.inputFile(value, ext);
       }
     }
-    await this.ensureReady(signal);
+    const before = await this.ensureReady(signal);
+    if (!before.ready) throw new CadRefusal("cad-not-ready", before.error!);
     return this.exclusive(
       async (queueWaitMs) => {
         const status = await this.status();
@@ -825,7 +850,8 @@ export class CadEngine {
       clearance > 100
     )
       throw new Error("clearance_mm must be finite, between 0 and 100.");
-    await this.ensureReady(signal);
+    const before = await this.ensureReady(signal);
+    if (!before.ready) throw new CadRefusal("cad-not-ready", before.error!);
     return this.exclusive(
       async () => {
         const status = await this.status();

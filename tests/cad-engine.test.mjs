@@ -399,7 +399,7 @@ test("fit scratch copies are removed after success and failure", async (t) => {
 
 // #609 (scan-to-make): an MCP update that changes only the engine's sources used to leave the code engine "not set up"
 // until someone pressed Set Up. With the installed runtime unchanged, status re-runs setup's proof by itself.
-async function staleRuntime(t, { lockDrift = false, smokeOk = true } = {}) {
+async function staleRuntime(t, { lockDrift = false, smokeOk = true, runtime } = {}) {
   const { CadEngine } = await import("../dist/cad-engine.js");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cad-reverify-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -431,11 +431,12 @@ async function staleRuntime(t, { lockDrift = false, smokeOk = true } = {}) {
       },
     },
   });
-  // The marker an earlier engine (1.1.89 / 1.2.71) wrote: same runtime and data device, another engine fingerprint, no
+  // The marker an earlier engine (bambu-printer-mcp 1.1.89 / mcp-3D-printer-server 1.2.71) wrote: same runtime and data device, another engine fingerprint, no
   // runtime identity.
   await fs.writeFile(path.join(root, "ready.json"), JSON.stringify({
     build123d: "0.13.0", platform: "linux", verifiedAt: "2026-11-11T00:00:00.000Z",
     fingerprint: "an-earlier-engine", dataDevice: (await fs.stat(root)).dev, storage: { installed_bytes: 1, measured_at: "x" },
+    ...(runtime ? { runtime: runtime(lock, await fs.realpath(path.join(root, "runtime", "bin", "python"))) } : {}),
   }));
   return { engine, calls, root };
 }
@@ -475,4 +476,41 @@ test("a failed automatic re-check is reported once and not retried on every stat
   const count = calls.length;
   assert.match((await engine.ensureReady()).error, /automatic re-check/);
   assert.equal(calls.length, count);
+});
+
+test("a newer marker's lock hash or interpreter that no longer matches needs a real setup, not a re-check (#609)", async (t) => {
+  const { createHash } = await import("node:crypto");
+  const sha = (text) => createHash("sha256").update(text).digest("hex");
+  for (const [what, runtime] of [
+    ["the lock changed", (lock, python) => ({ interpreter: `3.12.9 ${python}`, lock_sha256: sha(lock + "# an older lock\n") })],
+    ["the interpreter changed", (lock) => ({ interpreter: "3.12.8 /elsewhere/python3.12", lock_sha256: sha(lock) })],
+  ]) {
+    const { engine, calls } = await staleRuntime(t, { runtime });
+    const status = await engine.ensureReady();
+    assert.equal(status.ready, false, what);
+    assert.equal(calls.length, 0, `${what}: nothing ran`);
+  }
+  // The same newer marker with the shipped lock and interpreter re-checks.
+  const { engine } = await staleRuntime(t, { runtime: (lock, python) => ({ interpreter: `3.12.9 ${python}`, lock_sha256: sha(lock) }) });
+  assert.equal((await engine.ensureReady()).ready, true);
+});
+
+test("a re-check that finds another CAD operation running waits for it instead of failing (#609)", async (t) => {
+  const { engine, calls, root } = await staleRuntime(t);
+  engine.busyWaitMs = 10_000;
+  const lock = path.join(root, "operation.lock");
+  await fs.writeFile(lock, JSON.stringify({ pid: process.pid, operation: "run" }));
+  const release = setTimeout(() => fs.unlink(lock).catch(() => {}), 1200);
+  t.after(() => clearTimeout(release));
+  const status = await engine.ensureReady();
+  assert.equal(status.ready, true, status.error);
+  assert.ok(calls.some((c) => c.args.includes("smoke")));
+});
+
+test("cad_run says why the engine is not ready when the automatic re-check failed (#609)", async (t) => {
+  const { engine } = await staleRuntime(t, { smokeOk: false });
+  await assert.rejects(
+    engine.run({ script: "P = {}\ndef build():\n  pass\n", output_dir: engine.dataDir, name: "x" }),
+    (e) => e.code === "cad-not-ready" && /automatic re-check .* failed/.test(e.message),
+  );
 });
