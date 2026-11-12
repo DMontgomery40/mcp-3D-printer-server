@@ -1,3 +1,4 @@
+import { directPrintOptionReport, resolveStudioPrintOptions, usedNozzleCount, type CallerPrintOptions } from "../studio-print-options.js";
 import {flightKey,type PrintGeometry} from "../counterpart/flight-record.js";
 import {geometryFromGcode,geometryFromFile} from "../counterpart/print-geometry.js";
 import { PrinterRefusal, markPrintCommandSent } from "../refusal.js";
@@ -33,7 +34,7 @@ import { requireHumanConfirmation, type ConfirmHardware } from "../safety/confir
 import { assertExpectedPeaks, validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "../safety/expected-peaks.js";
 import { controlReply, refusedControlMessage, type ControlReply } from "../control-reply.js";
 
-export interface BambuPrintOptionsInternal {
+export interface BambuPrintOptionsInternal extends CallerPrintOptions {
   /** Bytes sent to the printer so far over FTPS, and the file's size (LAN route). */
   onUploadProgress?: (sent: number, total: number) => void;
   projectName: string;
@@ -611,6 +612,7 @@ export class BambuImplementation extends PrinterImplementation {
       model, nozzleDiameters: options.nozzleDiameters, plateIndex: options.plateIndex ?? 0, bedType: options.bedType,
     });
     assertExpectedPeaks(options.expectedPeaks, { nozzle: inspection.maxNozzleTemperature, bed: inspection.maxBedTemperature });
+    const studio = resolveStudioPrintOptions(model, options, { usedNozzles: usedNozzleCount(inspection) });
     const projectMetadata = await this.resolveProjectFileMetadata(options.filePath, options.plateIndex, inspection.plateInternalPath);
     const md5 = projectMetadata.md5;
     if (options.md5 !== undefined && options.md5 !== md5) {
@@ -652,10 +654,12 @@ export class BambuImplementation extends PrinterImplementation {
         // The printer reports this back as subtask_name, which identifies the checked job for resume.
         subtask_name: subtaskName,
         md5,
-        flow_cali: options.flowCalibration ?? true,
-        layer_inspect: options.layerInspect ?? true,
-        vibration_cali: options.vibrationCalibration ?? true,
-        bed_leveling: options.bedLeveling ?? true,
+        flow_cali: studio.task_flow_cali,
+        layer_inspect: studio.task_layer_inspect,
+        vibration_cali: studio.task_vibration_cali,
+        // This packet has no verified integer auto-leveling field. Preserve
+        // its enabled fallback rather than treating an unsupported auto as off.
+        bed_leveling: studio.auto_bed_leveling === 2 ? (options.bedLeveling ?? true) : studio.task_bed_leveling,
         bed_type: options.bedType || "textured_plate",
         timelapse: options.timelapse ?? false,
         use_ams: useAMS,
@@ -668,6 +672,7 @@ export class BambuImplementation extends PrinterImplementation {
       },
     };
 
+    const calibration = directPrintOptionReport(options, studio, projectFileCmd.print);
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
     this.recordFlightDispatch(host,serial,remoteProjectPath,requirements,resumeFile);
     markPrintCommandSent();
@@ -678,6 +683,7 @@ export class BambuImplementation extends PrinterImplementation {
 
     return {
       status: "success",
+      calibration,
       dispatch,
       message: dispatch === "started"
         ? `The printer accepted and started the checked 3MF print: ${options.projectName}`

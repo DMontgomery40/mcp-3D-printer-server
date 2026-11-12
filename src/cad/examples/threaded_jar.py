@@ -1,4 +1,5 @@
 """Screw-top jar and lid with a standard 70-400 neck
+Use for: a jar, tub or canister with a screw lid; any printed screw thread, cap or threaded collar
 Pattern: revolve a wall profile for the body, sweep a thread section along a helix for the screw thread (same pitch on both parts, clearance as a radial offset), pattern a cutter round the lid for grip
 Modelled on: wide-mouth jars with a GPI/SPI 70-400 continuous-thread finish (https://www.ebottles.com/blogs/articles/guide-for-fitting-closures-on-bottles)
 Published sizes used: 70-400 finish, converted from the chart's inches: T (thread outside diameter) 68.61 to 69.49 mm; E (neck at the thread root) 66.22 to 67.11 mm; H (finish height) 9.98 to 10.74 mm; S (rim to thread start) 0.79 to 1.55 mm; 6 threads per inch = 4.233 mm pitch; thread depth (T - E)/2 = 1.19 mm (retailer's chart of the standard, URL above). The thread's flank angle is not in the chart: 45 degree flanks are a choice made so it prints.

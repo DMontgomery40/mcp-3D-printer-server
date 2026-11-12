@@ -1,4 +1,5 @@
 """Bag-sealing clip: two hinged bars, ridge into groove, snap latch, printed in place
+Use for: closing a bag of food or sealing film; any clip with two hinged bars and a latch
 Pattern: bar cross-section drawn in YZ and extruded along the bar; revolved waisted pin in a C-socket; ridge and its offset as the groove; modelled SHUT, then one bar swung open for printing
 Modelled on: Linden Sweden Twixit! bag clip (https://www.webstaurantstore.com/linden-sweden-411-8-twixit-blue-4-1-4-pastry-bag-clips-pack/534411.8.html); mechanism as in the hinged-bar clip patent US 4656697, Naslund (https://patents.google.com/patent/US4656697)
 Published sizes used: 108 mm (4 1/4 in) = overall length (retailer, https://www.webstaurantstore.com/linden-sweden-411-8-twixit-blue-4-1-4-pastry-bag-clips-pack/534411.8.html); nothing else is published, the other sizes are design choices

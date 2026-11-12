@@ -131,7 +131,13 @@ def bodies(step, request, budget_s=20.0):
                 exact = exact_calls < EXACT_CAP and not over()
                 if exact:
                     exact_calls += 1
+                    screened = d
                     d, pa, pb = solids[i].distance_to_with_closest_points(solids[j])
+                    if d <= 1e-6 and screened > 1e-3 and not over() and getattr(solids[i] & solids[j], 'volume', 0.0) <= 1e-6:
+                        # The B-rep distance can call a shaft in its threaded hole "inside" the other solid and return 0
+                        # where the tessellations are apart and the solids share no volume (a printed screw in its nut,
+                        # desk_clamp_hook at opening 31): measure the surfaces, which have no inside.
+                        d, pa, pb = Compound(solids[i].faces()).distance_to_with_closest_points(Compound(solids[j].faces()))
                     at = mid(pa, pb)
                     holds = lambda x, y: all(getattr(x.min, c) <= getattr(y.min, c) and getattr(y.max, c) <= getattr(x.max, c) for c in 'XYZ')
                     if d > 1e-6 and (holds(a, b) or holds(b, a)) and not over() and getattr(solids[i] & solids[j], 'volume', 0.0) > 1e-6:

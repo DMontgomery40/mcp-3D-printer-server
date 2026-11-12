@@ -1,7 +1,7 @@
 /**
  * The print options Bambu Studio's Send dialog sends, resolved the way it
- * resolves them, so every print route sends what Bambu's own Print button
- * would. Source: Bambu Studio v02.08.02.61 (commit 926a7192574b), the version
+ * resolves them, for the vendor SDK. Direct routes report which options their verified
+ * wire format can carry; this does not establish SDK packet equivalence. Source: Bambu Studio v02.08.02.61 (commit 926a7192574b), the version
  * the hidden-HMS and stage tables are pinned to:
  *
  * - SelectMachine.cpp:3344-3356 `set_print_config(bed_type,
@@ -198,4 +198,35 @@ export function resolveStudioPrintOptions(model: string, caller: CallerPrintOpti
 export function usedNozzleCount(inspection: { usedFilamentPositions: number[]; filamentNozzleIndices?: Array<number | undefined> }): number | undefined {
   const nozzles = inspection.usedFilamentPositions.map(position => inspection.filamentNozzleIndices?.[position]).filter((value): value is number => Number.isInteger(value));
   return nozzles.length === inspection.usedFilamentPositions.length && nozzles.length ? new Set(nozzles).size : undefined;
+}
+
+/** Report only verified direct-wire fields. A task boolean is not an SDK mode.
+ * null means this route does not transmit that option, not off/auto/unknown hardware state. */
+export function directPrintOptionReport(caller: CallerPrintOptions, resolved: StudioPrintOptions, packet: Record<string, unknown>) {
+  const fields = {
+    bedLeveling: ["task_bed_leveling", "bed_leveling"],
+    flowCalibration: ["task_flow_cali", "flow_cali"],
+    vibrationCalibration: ["task_vibration_cali", "vibration_cali"],
+    layerInspect: ["task_layer_inspect", "layer_inspect"],
+    autoBedLeveling: ["auto_bed_leveling", "auto_bed_leveling"],
+    autoFlowCali: ["auto_flow_cali", "auto_flow_cali"],
+    autoOffsetCali: ["auto_offset_cali", "nozzle_offset_cali"],
+    extruderCaliManualMode: ["extruder_cali_manual_mode", "extrude_cali_manual_mode"],
+  } as const;
+  const requested: CallerPrintOptions = {};
+  const transmitted: Record<string, boolean | number | null> = {};
+  const unsupported: string[] = [];
+  for (const key of Object.keys(fields) as Array<keyof CallerPrintOptions>) {
+    const [sdk, wire] = fields[key];
+    if (caller[key] !== undefined) Object.assign(requested, { [key]: caller[key] });
+    const value = packet[wire];
+    transmitted[sdk] = typeof value === "boolean" || typeof value === "number" ? value : null;
+    if (caller[key] !== undefined && transmitted[sdk] === null) unsupported.push(key);
+  }
+  const omitted = Object.keys(transmitted).filter(key => transmitted[key] === null);
+  const warning = omitted.length
+    ? `Direct print options not transmitted: ${omitted.join(", ")}. Task booleans are not equivalent to Studio integer modes.` +
+      (unsupported.length ? ` Requested overrides unsupported by this route: ${unsupported.join(", ")}. Use a vendor bridge/native route that supports these options if required.` : "")
+    : undefined;
+  return { requested, resolved, transmitted, unsupported, ...(warning ? { warning } : {}) };
 }
