@@ -97,7 +97,7 @@ test("project manifests the sandbox could forge are refused before anything is w
   await assert.rejects(edit([{ op: "add_part", object_id: 2, name: "X", filament: 65, stl: 0 }]), /filament/);
   await assert.rejects(edit([{ op: "add_part", object_id: 2, name: "X", filament: 1, stl: "../../etc/passwd" }]), /names no part file/);
   await assert.rejects(edit([{ op: "add_part", object_id: 2, name: "X", filament: 1, stl: 3 }]), /does not exist|not readable/);
-  await assert.rejects(edit([{ op: "replace_part", object_id: 6, part_id: 5, path: "/3D/Objects/object_1.model", stl: 0 }]), /another model file/);
+  await assert.rejects(edit([{ op: "replace_part", object_id: 6, part_id: 5, path: "/3D/Objects/object_1.model", stl: 0 }]), /no part 5 in \/3D\/Objects\/object_1\.model/);
   await assert.rejects(edit([{ op: "set_part", object_id: 6, part_id: 9, name: "X" }]), /no part 9/);
   await assert.rejects(edit([{ op: "explode", object_id: 6 }]), /op is unknown/);
   await assert.rejects(edit([{ op: "add_part", object_id: 2, name: "X", filament: 4, stl: 0 }]), /not one of the 3 filaments/);
@@ -234,4 +234,18 @@ test("recolouring a self-closing <part/> writes its metadata inside that part, n
   assert.equal((settings.match(/<metadata key="extruder"/g) ?? []).length, 2, "one for the object, one for part 1");
   assert.match(settings, /<part id="1" subtype="normal_part">\s*<metadata key="extruder" value="2"\/>\s*<\/part>/);
   assert.deepEqual((await listModelPlates(run.out)).plates[0].parts.map(part => [part.object_id, part.filament]), [[1, 2], [2, 1]]);
+});
+
+test("replace_part finds a part by id and model file when two files reuse an object id", async (t) => {
+  const run = job(t, [[[0, 0, 0], [3, 3, 3]]]);
+  const sub = z => `<?xml version="1.0"?><model ${CORE_NS}><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="${z}"/><vertex x="1" y="0" z="${z}"/><vertex x="0" y="1" z="${z}"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources></model>`;
+  const base = await craftBase(run.directory, {
+    "3D/3dmodel.model": `<?xml version="1.0"?><model ${CORE_NS} ${PROD_NS}><resources><object id="2" type="model"><components><component p:path="/3D/Objects/a.model" objectid="1"/><component p:path="/3D/Objects/b.model" objectid="1"/></components></object></resources><build><item objectid="2"/></build></model>`,
+    "3D/Objects/a.model": sub(7), "3D/Objects/b.model": sub(9),
+    "Metadata/model_settings.config": settingsFor(2, `<part id="1" subtype="normal_part"><metadata key="name" value="p"/></part>`),
+  });
+  await writeCadProject3mf({ version: 1, base: "kit", edits: [{ op: "replace_part", object_id: 2, part_id: 1, path: "/3D/Objects/b.model", stl: 0 }] }, run.parts, { kit: base }, run.out);
+  const zip = await JSZip.loadAsync(fs.readFileSync(run.out));
+  assert.equal(await zip.file("3D/Objects/a.model").async("string"), sub(7), "a.model's part 1 is untouched");
+  assert.match(await zip.file("3D/Objects/b.model").async("string"), /<vertex x="3" y="3" z="3"\/>/, "b.model's part 1 is replaced");
 });
