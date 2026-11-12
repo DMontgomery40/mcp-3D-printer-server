@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { parseStringPromise } from 'xml2js';
 import { ThreeMFData, BambuSlicerConfig, ThreeMFMetadata, ThreeMFObject, ThreeMFBuildItem, AMSFilamentMapping, ThreeMFPlateObjects } from './types.js';
 import * as fs from 'fs/promises';
+import { readSafe3mfArchive } from './safety/archive.js';
 
 // Parses Bambu Studio's JSON config data
 function parseBambuJSONConfig(jsonData: any): Partial<BambuSlicerConfig> {
@@ -241,8 +242,8 @@ export async function analyze3MFPlateObjects(
     filePath: string,
     plateIndex: number = 0
 ): Promise<ThreeMFPlateObjects> {
-    const data = await fs.readFile(filePath);
-    const zip = await JSZip.loadAsync(data);
+    // Bounded, with colliding or inconsistent entry names refused, as the other 3MF reads here.
+    const { zip } = await readSafe3mfArchive(filePath);
     const plateNumber = plateIndex + 1;
     const sliceInfo = zip.file('Metadata/slice_info.config');
     if (!sliceInfo) {
