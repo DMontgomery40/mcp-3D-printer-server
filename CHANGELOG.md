@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- An update that changes only the code engine's own files no longer leaves it "not set up" until someone runs setup again (scan-to-make #609). When the installed runtime still matches `requirements.lock` exactly with the same interpreter, `cad_status`, `cad_setup` without `install`, and the first `cad_run` or `cad_check_fit` re-run setup's proof by themselves: the runtime's imports and the confined build, STL and STEP round trip, with nothing installed or downloaded. Then they report ready with `reverified`. Markers from earlier versions qualify by the exact package match. A runtime that no longer matches the lock still needs `cad_setup` with `install: true`, and a failed re-check is reported once rather than retried on every status read. Tested with a stubbed runtime and confinement, and on a real pinned runtime verified by the previous engine.
 - `cad_setup` on Linux with bubblewrap 0.11 (Ubuntu 26.04) failed with "CAD confinement did not reject write": bubblewrap makes the folders above each bind on its own root tmpfs, which was writable inside the sandbox (never on the host). The sandbox's root is now remounted read-only, and the forbidden-write proof accepts a read-only-filesystem refusal.
 
 ## [1.2.71] – 2026-11-11

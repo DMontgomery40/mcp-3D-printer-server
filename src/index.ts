@@ -3706,7 +3706,7 @@ class ThreeDPrinterMCPServer {
 
           case "cad_status":
             if (args && Object.keys(args).length) throw new Error("cad_status takes no arguments.");
-            return structured(await this.cad.status());
+            return structured(await this.cad.ensureReady(extra.signal));
           case "cad_setup":
           case "cad_run":
           case "cad_check_fit": {

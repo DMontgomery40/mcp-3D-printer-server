@@ -396,3 +396,83 @@ test("fit scratch copies are removed after success and failure", async (t) => {
   );
   assert.equal(await fs.readFile(model, "utf8"), "fixture");
 });
+
+// #609 (scan-to-make): an MCP update that changes only the engine's sources used to leave the code engine "not set up"
+// until someone pressed Set Up. With the installed runtime unchanged, status re-runs setup's proof by itself.
+async function staleRuntime(t, { lockDrift = false, smokeOk = true } = {}) {
+  const { CadEngine } = await import("../dist/cad-engine.js");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cad-reverify-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const lock = await fs.readFile(new URL("../src/cad/requirements.lock", import.meta.url), "utf8");
+  const site = path.join(root, "runtime", "lib", "python3.12", "site-packages");
+  await fs.mkdir(site, { recursive: true });
+  await fs.mkdir(path.join(root, "runtime", "bin"), { recursive: true });
+  await fs.writeFile(path.join(root, "runtime", "bin", "python"), "stub");
+  await fs.writeFile(path.join(root, "runtime", "pyvenv.cfg"), "home = /x\nversion_info = 3.12.9\n");
+  let first = true;
+  for (const line of lock.split("\n")) {
+    const m = line.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)\s*(;.*)?$/);
+    if (!m || m[3]) continue; // pins behind environment markers may be absent
+    const version = lockDrift && first ? `${m[2]}.post1` : m[2];
+    first = false;
+    await fs.mkdir(path.join(site, `${m[1].replace(/-/g, "_")}-${version}.dist-info`));
+  }
+  const calls = [];
+  const engine = new CadEngine({
+    dataDir: root,
+    outputRoots: [root],
+    system: {
+      platform: "linux",
+      run: async (file, args, options) => {
+        calls.push({ file, args, options });
+        if (args.includes("smoke"))
+          return { stdout: JSON.stringify({ build123d: "0.13.0", watertight: smokeOk, manifold: true, step_valid: true, solid_count: 1 }) };
+        return { stdout: "" };
+      },
+    },
+  });
+  // The marker an earlier engine (1.1.89 / 1.2.71) wrote: same runtime and data device, another engine fingerprint, no
+  // runtime identity.
+  await fs.writeFile(path.join(root, "ready.json"), JSON.stringify({
+    build123d: "0.13.0", platform: "linux", verifiedAt: "2026-11-11T00:00:00.000Z",
+    fingerprint: "an-earlier-engine", dataDevice: (await fs.stat(root)).dev, storage: { installed_bytes: 1, measured_at: "x" },
+  }));
+  return { engine, calls, root };
+}
+
+test("after an engine-only update, status re-verifies the unchanged runtime by itself and reports ready (#609)", async (t) => {
+  const { engine, calls, root } = await staleRuntime(t);
+  assert.equal((await engine.status()).ready, false, "the plain status read never runs anything");
+  assert.equal(calls.length, 0);
+  const status = await engine.ensureReady();
+  assert.equal(status.ready, true);
+  assert.match(status.reverified, /runtime was unchanged/);
+  assert.ok(calls.some((c) => c.file === "bwrap" && c.args.includes("smoke")), "the confined round trip ran again");
+  assert.ok(!calls.some((c) => c.file === "uv"), "nothing was installed or downloaded");
+  const marker = JSON.parse(await fs.readFile(path.join(root, "ready.json"), "utf8"));
+  assert.notEqual(marker.fingerprint, "an-earlier-engine");
+  assert.match(marker.runtime.interpreter, /^3\.12\.9 /);
+  const count = calls.length;
+  assert.equal((await engine.ensureReady()).ready, true);
+  assert.equal(calls.length, count, "once ready, status runs nothing");
+  // cad_setup without install is the same read.
+  assert.equal((await engine.setup({})).ready, true);
+});
+
+test("a runtime that no longer matches requirements.lock still needs a real setup (#609)", async (t) => {
+  const { engine, calls } = await staleRuntime(t, { lockDrift: true });
+  const status = await engine.ensureReady();
+  assert.equal(status.ready, false);
+  assert.match(status.error, /cad_setup with install: true/);
+  assert.equal(calls.length, 0, "nothing ran: a changed runtime is setup's job");
+});
+
+test("a failed automatic re-check is reported once and not retried on every status call (#609)", async (t) => {
+  const { engine, calls } = await staleRuntime(t, { smokeOk: false });
+  const status = await engine.ensureReady();
+  assert.equal(status.ready, false);
+  assert.match(status.error, /automatic re-check .* failed .*round trip failed.*cad_setup with install: true/);
+  const count = calls.length;
+  assert.match((await engine.ensureReady()).error, /automatic re-check/);
+  assert.equal(calls.length, count);
+});
