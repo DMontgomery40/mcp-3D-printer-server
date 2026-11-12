@@ -43,6 +43,8 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   list_3mf_plates: "read",
   check_fulu_orca_setup: "read",
   cad_status: "read",
+  cad_examples: "read",
+  design_guidance: "read",
   cad_setup: "read",
   cad_run: "design",
   cad_check_fit: "design",
