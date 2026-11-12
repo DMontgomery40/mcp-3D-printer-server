@@ -1,4 +1,5 @@
 """One-piece desk phone stand (swan neck, leaning back, two hooks, cable opening)
+Use for: propping a phone or tablet on a desk or bedside; any stand that leans a flat device back at a viewing angle
 Pattern: loft rounded sections of changing width along a filleted spine (waisted neck into a broad back), then add parts in a tilted Plane
 Modelled on: Lamicall S1 desk phone stand (https://thegadgetflow.com/product/lamicall-s1-smartphone-dock/)
 Published sizes used: 0.74 in (18.8 mm) = S1 cradle depth (press listing, URL above); iPhone 18 Pro Max 163.4 x 78.0 x 8.75 mm, 249 g (maker, https://support.apple.com/148591); iPhone Duo closed 117.8 x 84.1 x 11.3 mm, open 117.8 x 164.6 x 5.2 mm, 254 g (maker, https://support.apple.com/en-us/148588); every other size is a design choice

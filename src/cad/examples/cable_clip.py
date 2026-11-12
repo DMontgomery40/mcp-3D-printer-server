@@ -1,4 +1,5 @@
 """Adhesive desk cable clip (single cable, snap-in C channel on a taped pad)
+Use for: holding one cable, cord or charger lead on a desk, wall or bedside; any small stick-on snap-in clip
 Pattern: sweep a rounded (slot) section along an arc for the C ring + loft the pad up into it, fillet the lip tips
 Modelled on: 3M Command Clear Round Cord Clips 17017CLR (https://argo.webstaurantstore.com/3m-command-8482-7100027385-clear-round-cord-clips-pack/39917017CLRES.html)
 Published sizes used: 13/16 in (20.6 mm) = clip width, 1/2 in (12.7 mm) = clip depth (retailer, URL above); cable diameter, mouth and wall are design choices

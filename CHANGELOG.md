@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Seven more cookbook examples for everyday requests a design worker had nothing close to (scan-to-make #734): `desk_clamp_hook` (a rounded S-frame headphone hook that clamps an 18 to 30 mm desk with a printed thumbscrew), `desk_edge_cable_holder` (a five-slot stick-on cable rail with sprung arms), `drawer_divider` (slotted strips that cross in half-laps, sized from the drawer), `organizer_tray` (a tapered bin with round corners and a scooped floor), `plant_pot` (a revolved pot with a ribbed saucer), `shelf_bracket` (a 6 x 8 in bracket with a curved brace) and `broom_grip` (a one-screw spring clip for a handle). Each builds valid through `cad_run` in the confined runtime on Linux, and its renders were looked at and judged against the bought product it cites; none has been printed. The cookbook now holds nineteen.
+- Every cookbook example has a "Use for:" line naming the requests it suits. `cad_examples` returns it as `use_for` in the list and in each record, and `cad_design` lists the cookbook by it (about 2.5 KB for the nineteen), so a worker chooses by purpose.
+- `cad_run` returns `next`, beside the render paths: read the perspective view before the next change, and say what it shows is wrong against what is being made.
+- `cad_run` returns `printed`: whatever the script wrote with `print()`, up to 4000 characters (`build.log` keeps the rest). A design can report a number it computed, such as a spring's strain, without making a run fail to read it. It is the script's own words, not a measurement by the engine. `broom_grip` and `desk_edge_cable_holder` print their arm strain this way.
+
+### Changed
+
+- `cad_design` starts a new design from the product, in order: name two or three products a person would buy and say which the design follows; choose from the cookbook by purpose and read the example whose use is nearest; only then choose the mechanism. The concept, with the product it is modelled on, goes in the script's opening docstring, as in the cookbook, so the choice can be seen. In a test with Sonnet 5.5 the worker chose a clamp and a screw first and never listed the cookbook, and built a bracket with the mechanism bolted on.
+- `cad_design` requires a look after every run: read the perspective view before the next `cad_run` or any other change, and before the final run list what the views show is wrong against the named product.
+- `cad_check_fit` waits for the engine's execution slot up to its `timeout_ms`, as `cad_run` does, and returns `queue_wait_ms`. It refused with `cad-operation-busy` whenever another CAD operation was running, so a worker that sent four checks at once lost three. A wait that outlasts the timeout ends with `cad-queue-timeout`; `cad-operation-busy` is no longer returned.
+
+### Fixed
+
+- `cad_run` no longer reports a printed screw in its nut as touching. The exact B-rep distance could call a shaft in its threaded hole "inside" the other solid and return 0 where the tessellations were apart and the solids shared no volume (`desk_clamp_hook` clamped at a 31 mm opening, 0.28 mm clear). In that case the surfaces are measured instead. Real contact and real overlap still read 0.
+
 ## [1.2.73] – 2026-11-12
 
 ### Added

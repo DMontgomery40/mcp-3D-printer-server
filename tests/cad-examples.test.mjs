@@ -10,7 +10,7 @@ import { cadExamples, cadExampleLines, cadExamplesTool, CAD_EXAMPLE_ORDER } from
 import { CAD_DESIGN_PROMPT } from "../dist/cad/contracts.js";
 import { designGuidance, FDM_FIT_GUIDANCE, FDM_FLEXURES, FDM_CORE } from "../dist/design-guidance.js";
 
-// Its own switch, not CAD_E2E_DATA_DIR: the twelve builds hold the engine's one execution slot for about 80 s,
+// Its own switch, not CAD_E2E_DATA_DIR: the nineteen builds hold the engine's one execution slot for about two minutes,
 // which would starve cad-real.test.mjs's deadline checks if both ran against the same runtime at once.
 const data = process.env.CAD_COOKBOOK_DATA_DIR;
 const entry = fileURLToPath(new URL("../dist/index.js", import.meta.url));
@@ -19,10 +19,12 @@ test("every cookbook example carries its whole record and a script the engine ac
   const all = cadExamples();
   assert.deepEqual(all.map((e) => e.name), CAD_EXAMPLE_ORDER);
   for (const e of all) {
-    for (const field of ["title", "pattern", "modelled_on", "published_sizes", "concept", "what_makes_this_good"])
+    for (const field of ["title", "use_for", "pattern", "modelled_on", "published_sizes", "concept", "what_makes_this_good"])
       assert.ok(e[field] && !/TODO/.test(e[field]), `${e.name}: ${field}`);
     // a concept names what it is for, how it prints, and the bought product has a source to read
     assert.match(e.concept, /print/i, e.name);
+    // the purpose line is one line a worker can choose by, not the mechanism again
+    assert.ok(e.use_for.length >= 40 && e.use_for.length <= 220, `${e.name}: use_for is ${e.use_for.length} characters`);
     assert.match(e.modelled_on + e.published_sizes, /https?:\/\//, `${e.name}: cites a page`);
     assert.equal((e.script.match(/^P = \{/gm) ?? []).length, 1, `${e.name}: one literal P`);
     assert.match(e.script, /^def build\(\):/m, e.name);
@@ -31,17 +33,32 @@ test("every cookbook example carries its whole record and a script the engine ac
   }
 });
 
-test("the engine prompt names every example in one line each, and the tool returns the list or one script", () => {
+test("the engine prompt names every example by purpose in one line each, and the tool returns the list or one script", () => {
   const lines = cadExampleLines().split("\n");
   assert.equal(lines.length, CAD_EXAMPLE_ORDER.length);
-  for (const name of CAD_EXAMPLE_ORDER) assert.ok(CAD_DESIGN_PROMPT.text.includes(`\n${name}: `), name);
+  for (const e of cadExamples()) assert.ok(CAD_DESIGN_PROMPT.text.includes(`\n${e.name}: ${e.use_for}\n`), e.name);
+  // the order the Sonnet test asked for: the bought product, then the cookbook by purpose, then the mechanism
+  const text = CAD_DESIGN_PROMPT.text;
+  const at = (s) => { const i = text.indexOf(s); assert.ok(i >= 0, s); return i; };
+  assert.ok(at("A new design starts from the product") < at("name two or three products a person would buy"));
+  assert.ok(at("name two or three products a person would buy") < at("choose from the cookbook by purpose"));
+  assert.ok(at("choose from the cookbook by purpose") < at("only then, choose the mechanism"));
+  assert.ok(at("only then, choose the mechanism") < at("Form first:"));
+  // the product is named where a reviewer can see it: in the script's header, as the cookbook's are
+  assert.match(text, /write the concept as the script's opening docstring, the way every cookbook example does: what it is, then "Modelled on:" the bought product you named/);
+  assert.match(text, /After every cad_run, Read its perspective view \(renders\.perspective/);
+  assert.match(text, /Before the final run, list what the views show is wrong against the bought product you named \(for a scan, the object in its photos\)/);
+  assert.match(text, /print\(\) it in the script: the result returns it as printed/);
   assert.match(CAD_DESIGN_PROMPT.text, /Form first: build the product's shape, not a profile pushed up\./);
   assert.match(CAD_DESIGN_PROMPT.text, /perspective view/);
   // the cost of the cookbook in the prompt stays a line per example
-  assert.ok(cadExampleLines().length < 3200, `pattern lines are ${cadExampleLines().length} bytes`);
+  assert.ok(cadExampleLines().length < 3200, `purpose lines are ${cadExampleLines().length} bytes`);
   const list = cadExamplesTool({});
   assert.deepEqual(list.examples.map((e) => e.name), CAD_EXAMPLE_ORDER);
   assert.ok(!("script" in list.examples[0]));
+  for (const e of list.examples) assert.ok(e.use_for, `${e.name}: the list reads by purpose`);
+  assert.match(list.examples.find((e) => e.name === "desk_clamp_hook").use_for, /headphones/);
+  assert.match(list.usage, /^Choose by use_for/);
   const capo = cadExamplesTool({ name: "trigger_capo" });
   assert.match(capo.script, /def build\(\):/);
   assert.match(capo.concept, /pivot/);
@@ -107,5 +124,16 @@ test("every cookbook example builds valid through cad_run, with the bodies its c
       assert.ok(s.solid_count >= 1 && s.solid_count === s.mesh_components, `${e.name}: ${s.solid_count} solids, ${s.mesh_components} mesh components`);
       assert.ok(s.seconds < 60, `${e.name}: ${s.seconds} s`);
       await fs.access(s.renders.perspective);
+      assert.match(s.next, /^Read renders\.perspective/, e.name);
+      // a design reports a number it computed through print(), without failing the run to read it
+      if (e.name === "broom_grip") assert.match(s.printed, /arm strain while the handle passes the mouth: \d\.\d %/);
     }
+    // A printed screw in its nut is 0.28 mm clear at every opening. The exact B-rep distance called it "inside" the
+    // frame at opening 31 and reported a touch (scan-to-make #734, Sonnet re-run); the surfaces are measured instead.
+    const hook = cadExamples().find((e) => e.name === "desk_clamp_hook");
+    const clamped = (await c.callTool({ name: "cad_run", arguments: { script: hook.script, parameters: { pose: "assembled", opening: 31 },
+      output_dir: dir, name: "hook_clamped", timeout_ms: 240000 } }, undefined, { timeout: 300000 })).structuredContent;
+    assert.equal(clamped.valid, true);
+    assert.ok(clamped.bodies.closest.gap_mm > 0.2 && clamped.bodies.closest.gap_mm < 0.4, JSON.stringify(clamped.bodies.closest));
+    assert.ok(!clamped.problems.some((p) => /touch or overlap/.test(p)), clamped.problems.join("; "));
   });

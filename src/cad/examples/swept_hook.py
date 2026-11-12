@@ -1,4 +1,5 @@
 """Under-desk headphone hook (swept arm with a broad saddle, tape or two screws)
+Use for: hanging headphones, a bag or a cable coil under a desk or shelf by tape or screws (no clamp); any bent-rod hook with a broad saddle
 Pattern: sweep a rounded section along a filleted Polyline path; sweep a second, wider section along part of the same path
 Modelled on: ElevationLab AnchorPro under-desk headphone mount (https://www.elevationlab.com/products/the-anchor-pro); screw is SPAX 4.0 mm flat countersunk (https://www.ahlsell.se/en/products/mounting/wood-screw/wood-screw-spax/71333788---traskruv-tft-spax-svart-4.0x25h-200fp-eta-120114)
 Published sizes used: 4.0 mm = screw thread diameter, 8.0 mm = head diameter, 2.4 mm = head height (retailer listing for SPAX, URL above); the maker publishes no hook dimensions, so every hook size is a design choice
