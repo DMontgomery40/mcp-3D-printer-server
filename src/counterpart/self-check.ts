@@ -82,6 +82,14 @@ export function meetsDeclared(version: string, declared: string): boolean | unde
   return w0 > 0 ? h0 === w0 : w1 > 0 ? h0 === 0 && h1 === w1 : h0 === 0 && h1 === 0 && h2 === w2;
 }
 
+/** Why the installed version does not meet package.json's, or undefined when it does. A form not judged is a failure. */
+export function versionProblem(name: string, version: string | undefined, declared: string): string | undefined {
+  const meets = meetsDeclared(version ?? "", declared);
+  if (meets === true) return undefined;
+  if (meets === undefined && version !== undefined) return `This check cannot judge ${name}'s declared version "${declared}"; ${version} is installed.`;
+  return `This server needs ${name} ${declared}; ${version ?? "an unknown version"} is installed.`;
+}
+
 /** One dependency: it resolves from this install, loads, and its installed version meets package.json's. */
 async function dependencyCheck(name: string, declared: string): Promise<SelfCheck> {
   const specifier = ENTRIES[name] ?? name;
@@ -89,9 +97,8 @@ async function dependencyCheck(name: string, declared: string): Promise<SelfChec
     const file = resolveFromHere(specifier);
     const version = installedVersion(file, name);
     await import(specifier);
-    if (meetsDeclared(version ?? "", declared) === false || (version === undefined && /^[~^]?\d/.test(declared))) {
-      return { name, ok: false, ...(version ? { version } : {}), message: `This server needs ${name} ${declared}; ${version ?? "an unknown version"} is installed.` };
-    }
+    const problem = versionProblem(name, version, declared);
+    if (problem) return { name, ok: false, ...(version ? { version } : {}), message: problem };
     return { name, ok: true, ...(version ? { version } : {}) };
   } catch (error) {
     return { name, ok: false, message: `${name} did not load: ${message(error)}` };
