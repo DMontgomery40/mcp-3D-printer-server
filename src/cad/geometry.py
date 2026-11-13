@@ -66,6 +66,7 @@ def inspect(request):
 
 def use_view(step, folder, eye=None):
     """The design as it is used, held objects and the surfaces it meets included, seen from the user's eye when given."""
+    user = eye is not None
     from build123d import Box, Compound, Pos, import_step
     from purpose import _mesh
     shape = import_step(str(step))
@@ -79,11 +80,17 @@ def use_view(step, folder, eye=None):
         shape = Compound(children=[c for c in kids if c not in world] + [c for c in clipped if c.solids()])
     m = _mesh(shape, 0.1)
     az, el = 35.0, 26.0
+    if eye is None and world and len(world) < len(kids):
+        # No eye given: look from the part's side of the surface it meets, so a wall or armrest never hides it.
+        towards = np.array(list(rest.center()), float) - np.array(list(Compound(children=world).bounding_box().center()), float)
+        if np.linalg.norm(towards) > 1e-6:
+            default = np.array([math.sin(math.radians(az)) * math.cos(math.radians(el)), -math.cos(math.radians(az)) * math.cos(math.radians(el)), math.sin(math.radians(el))])
+            eye = m.bounds.mean(axis=0) + 1000 * (towards / np.linalg.norm(towards) + 0.7 * default)
     if eye is not None:
         d = np.asarray(eye, float) - m.bounds.mean(axis=0)
         az, el = math.degrees(math.atan2(d[0], -d[1])), max(-75.0, min(75.0, math.degrees(math.atan2(d[2], math.hypot(d[0], d[1])))))
     im = perspective(m, 1200, az, el)
-    label = 'in use' + (', from the user\'s eye' if eye is not None else ', from the front right and above')
+    label = 'in use' + (', from the user\'s eye' if user else ', from the side it is used from' if eye is not None else ', from the front right and above')
     ImageDraw.Draw(im).text((24, 20), label, fill='black', font=ImageFont.load_default(size=28))
     file = folder / 'use.png'; im.resize((800, 800), Image.LANCZOS).save(file)
     return str(file)
