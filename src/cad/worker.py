@@ -123,6 +123,13 @@ def main():
                 raise ValueError('build() must return a valid build123d Shape containing solids.')
             cad.export_stl(shape, str(out) + '.stl', tolerance=0.01, angular_tolerance=0.1)
             cad.export_step(shape, str(out) + '.step')
+            # The design as it is used: the part with what it holds (held:<name>) and what it meets (world:<name>),
+            # Z up. Exported for the inspection process, which computes its loads; the script never reports them.
+            if callable(namespace.get('use')):
+                used = namespace['use']()
+                if not isinstance(used, cad.Shape) or not used.solids():
+                    raise ValueError('use() must return a build123d Shape: a Compound of the part with labelled held:<name> and world:<name> solids.')
+                cad.export_step(used, str(out) + '.use.step')
     elif mode == 'inspect':
         from geometry import inspect
         print(json.dumps(inspect(request), allow_nan=False))

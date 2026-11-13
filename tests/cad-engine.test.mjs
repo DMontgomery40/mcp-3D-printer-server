@@ -583,3 +583,47 @@ test("cad_check_fit's automatic re-check and its fit share one timeout_ms (#609)
   assert.ok(fit, "the fit ran after the re-check");
   assert.ok(fit.options.timeoutMs <= 2000 - 150, `the fit was given ${fit.options.timeoutMs} ms of a 2000 ms call after a 180 ms re-check`);
 });
+
+test("final is recorded only when the engine finds the design ready; the designer's word alone no longer selects it (scan-to-make #608)", async (t) => {
+  const { CadEngine } = await import("../dist/cad-engine.js");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cad-final-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  let verdict;
+  const system = {
+    platform: "linux",
+    run: async (file, args) => {
+      if (args[0] === "venv") {
+        await fs.mkdir(path.join(root, "runtime", "bin"), { recursive: true });
+        await fs.writeFile(path.join(root, "runtime", "bin", "python"), "stub");
+      }
+      if (args.includes("smoke"))
+        return { stdout: JSON.stringify({ build123d: "0.13.0", watertight: true, manifold: true, step_valid: true, solid_count: 1 }) };
+      if (args.includes("parameters")) return { stdout: "{}" };
+      if (args.includes("build")) {
+        const q = JSON.parse(await fs.readFile(args.at(-1), "utf8"));
+        for (const ext of ["stl", "step"]) await fs.writeFile(path.join(q.output, `${q.name}.${ext}`), ext);
+        return { stdout: "" };
+      }
+      if (args.includes("inspect"))
+        return { stdout: JSON.stringify({ valid: true, bounds_mm: [[0, 0, 0], [1, 1, 1]], solid_count: 1, checks: {}, renders: {}, ...verdict }) };
+      return { stdout: "" };
+    },
+  };
+  const engine = new CadEngine({ dataDir: root, outputRoots: [root], system });
+  await engine.setup({ install: true });
+  const run = (name) => engine.run({ script: "P={}\ndef build(): pass", output_dir: root, name, final: true });
+  verdict = { ready: false, purpose: { blocked: ["faces user (phone): 35 deg off the line to the user's eye (allowed 25)"] } };
+  const refused = await run("refused");
+  assert.equal(refused.final, false);
+  assert.equal(refused.final_requested, true);
+  assert.deepEqual(refused.final_refused, verdict.purpose.blocked);
+  assert.match(refused.next, /final_refused/);
+  const receipt = JSON.parse(await fs.readFile(refused.result_manifest, "utf8"));
+  assert.equal(receipt.final, false, "the app collects only final runs, so it never takes this one as the model");
+  verdict = { ready: true, purpose: { blocked: [] } };
+  const ready = await run("ready");
+  assert.equal(ready.final, true);
+  assert.equal(ready.final_refused, undefined);
+  verdict = {};                                  // mesh mode and 3MF projects carry no verdict: today's path
+  assert.equal((await run("mesh")).final, true);
+});

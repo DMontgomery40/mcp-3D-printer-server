@@ -493,6 +493,7 @@ export class CadEngine {
       "geometry.py",
       "scan_touchup.py",
       "project3mf.py",
+      "purpose.py",
       "process.ts",
       "storage.ts",
       "serial.ts",
@@ -807,15 +808,25 @@ export class CadEngine {
           );
           const printed = built.stdout.trim();
           const project = await this.project3mf(job, name, snapshots);
+          // final is the designer's selection, and it no longer stands on its own word (scan-to-make #608): a solid
+          // design is selected only when the engine found it ready, its purpose evaluated on the design as used.
+          const refused: string[] | undefined =
+            args.final === true && checked.ready === false
+              ? (Array.isArray(checked.purpose?.blocked) && checked.purpose.blocked.length ? checked.purpose.blocked : ["the engine did not find this design ready"])
+              : undefined;
           const result = {
             ...checked,
             ...project,
             // Beside the image paths, where the next step is decided.
-            next: "Read renders.perspective before the next cad_run or any other change: say what it shows is wrong against what you are making (the bought product you named, or the object in the photos), then fix that.",
+            next: refused
+              ? "Not selected as final: fix each entry in final_refused (purpose.requirements has the numbers), then run again with final: true. Read renders.perspective and renders.use first."
+              : "Read renders.perspective before the next cad_run or any other change: say what it shows is wrong against what you are making (the bought product you named, or the object in the photos), then fix that." +
+                (checked.purpose && checked.ready === false ? " Before final: fix what purpose.blocked lists; final: true is refused until the design is ready." : ""),
             // The script's own print() output: its words, not a measurement by this engine.
             ...(printed ? { printed: printed.length > 4000 ? printed.slice(0, 4000) + "\n[cut at 4000 characters; build.log has the rest]" : printed } : {}),
             status: "completed",
-            final: args.final === true,
+            final: args.final === true && !refused,
+            ...(refused ? { final_requested: true, final_refused: refused } : {}),
             completed_at: new Date().toISOString(),
             lineage_id: lineage,
             result_manifest: resultManifest,

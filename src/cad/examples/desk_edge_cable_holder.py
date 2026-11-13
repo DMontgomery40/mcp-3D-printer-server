@@ -25,6 +25,15 @@ P = {
     "edge": 0.6,          # chamfer round both faces of the comb: no sharp edge on a cable jacket
 }
 
+# What it is for, as data: cad_run compiles it into requirements and evaluates them on use() below.
+PURPOSE = {
+    "for": "an organizer that parks five charging cables at the edge of my desk so the plugs don't fall behind it",
+    "modelled_on": "Orico CBS5 5-slot self-adhesive desk cable holder",
+    "holds": [{"body": "cables", "mass_g": 40}],   # the five cable ends it carries, about 8 g each
+    "mounts": [{"body": "desk", "by": "tape"}],
+    "material": "PETG",
+}
+
 
 def build():
     seat_r = (P["cable_max"] + P["seat_clear"]) / 2
@@ -53,3 +62,18 @@ def build():
 
     rail = extrude(comb, P["depth"])
     return chamfer(rail.edges().group_by(Axis.Z)[0] + rail.edges().group_by(Axis.Z)[-1], P["edge"])
+
+
+def use():
+    """As used: the taped base on the desk top (Z = 0), a 4 mm cable lying in each seat. cad_run computes the tape's
+    load from this, so the rail's size is checked against what it carries, not asserted."""
+    seat_r = (P["cable_max"] + P["seat_clear"]) / 2
+    rail = Rot(90, 0, 0) * build()                           # the comb's up (Y) becomes Z; its depth runs along -Y
+    rail.label = "rail"
+    z = P["base_t"] - P["cradle"] + 2.0                      # a 4 mm cable resting in the bottom of its seat
+    cables = Compound([Pos((i - (P["slots"] - 1) / 2) * P["pitch"], -P["depth"] / 2, z) * (Rot(90, 0, 0) * Cylinder(2.0, 60))
+                       for i in range(P["slots"])])
+    cables.label = "held:cables"
+    desk = Pos(0, -P["depth"] / 2, -10) * Box(300, 200, 20)
+    desk.label = "world:desk"
+    return Compound(children=[rail, cables, desk])
