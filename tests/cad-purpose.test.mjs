@@ -52,7 +52,8 @@ test("round 7b's holder, square to the cabin on a taped strip, is not ready: it 
   const faces = find(r, "faces user");
   assert.equal(faces.status, "fail");
   assert.ok(faces.angle_deg > 30, String(faces.angle_deg));
-  assert.ok(r.purpose.blocked.some((b) => b.startsWith("faces user")));
+  // what blocks it reads as the next step, not a verdict (cad_run's next quotes it)
+  assert.ok(r.purpose.blocked.some((b) => /^Turn the phone toward the user: its face is \d+ deg off/.test(b)), r.purpose.blocked.join(" | "));
   assert.ok(r.purpose.loads.length >= 8, "gravity, six jolts and a press");
   assert.ok(r.useRendered);
 });
@@ -74,18 +75,21 @@ test("a stand that tips when its phone is pressed is not ready", runtime, () => 
   const rests = find(r, "rests on desk");
   assert.equal(rests.status, "fail");
   assert.match(rests.says, /tips over/);
+  assert.match(r.purpose.blocked[0], /^Widen or lengthen the base under the load/);
 });
 
 test("a mount the purpose names but use() never models blocks ready as not modelled", runtime, () => {
   const r = inspect("no_world.py");
   assert.equal(r.ready, false);
   assert.equal(find(r, "mounts desk").status, "not_modelled");
+  assert.deepEqual(r.purpose.blocked, ["Model the desk as world:desk in use(): a solid slab where it really is, touching the part where it is taped, so the tape mount can be checked."]);
 });
 
 test("a solid design with no PURPOSE is not ready; one that holds nothing needs no use()", runtime, () => {
   const none = inspect("plain_box.py");
   assert.equal(none.ready, false);
   assert.equal(none.purpose.declared, false);
+  assert.match(none.purpose.blocked[0], /^Add PURPOSE = \{"for": \.\.\., "modelled_on": \.\.\.\} beside P/);
   const pot = inspect("plain_purpose.py");
   assert.equal(pot.ready, true, JSON.stringify(pot.purpose.blocked));
   assert.equal(pot.useRendered, false);

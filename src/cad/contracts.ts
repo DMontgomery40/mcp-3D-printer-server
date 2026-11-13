@@ -245,7 +245,7 @@ export const CAD_TOOLS = [
         final_refused: {
           type: "array",
           items: { type: "string" },
-          description: "Why final: true was not recorded: the purpose requirements that failed or are not modelled.",
+          description: "Why final: true was not recorded, each as the step that fixes it (for example: model the dash as world:dash in use() so the tape mount can be checked). next quotes the first ones; the run is not the model until a run with final: true is ready.",
         },
         three_mf: {
           type: "string",

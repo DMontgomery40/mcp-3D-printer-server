@@ -612,12 +612,13 @@ test("final is recorded only when the engine finds the design ready; the designe
   const engine = new CadEngine({ dataDir: root, outputRoots: [root], system });
   await engine.setup({ install: true });
   const run = (name) => engine.run({ script: "P={}\ndef build(): pass", output_dir: root, name, final: true });
-  verdict = { ready: false, purpose: { blocked: ["faces user (phone): 35 deg off the line to the user's eye (allowed 25)"] } };
+  verdict = { ready: false, purpose: { blocked: ["Model the dash as world:dash in use(): a solid slab where it really is, touching the part where it is taped, so the tape mount can be checked."] } };
   const refused = await run("refused");
   assert.equal(refused.final, false);
   assert.equal(refused.final_requested, true);
   assert.deepEqual(refused.final_refused, verdict.purpose.blocked);
-  assert.match(refused.next, /final_refused/);
+  // the refusal is the next step, in the place the worker reads after every run
+  assert.equal(refused.next, `Not selected as final, so it is not yet the model. To make it final: ${verdict.purpose.blocked[0]} Then run again with final: true. Read renders.perspective and renders.use first.`);
   const receipt = JSON.parse(await fs.readFile(refused.result_manifest, "utf8"));
   assert.equal(receipt.final, false, "the app collects only final runs, so it never takes this one as the model");
   verdict = { ready: true, purpose: { blocked: [] } };

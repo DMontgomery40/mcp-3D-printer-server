@@ -150,11 +150,12 @@ def evaluate(use_step, compiled):
     from build123d import Compound, import_step, CenterOf
     results, loads, notes = [], [], []
     for name, problem in compiled['requirements']:
-        results.append({'requirement': name, 'status': 'fail' if problem else 'pass', 'says': problem or 'stated'})
+        results.append({'requirement': name, 'status': 'fail' if problem else 'pass', 'says': problem or 'stated', **({'fix': problem} if problem else {})})
     needs = compiled['holds'] or compiled['mounts'] or compiled['user'] is not None
     if not use_step.exists():
         if needs:
-            results.append({'requirement': 'use', 'status': 'not_modelled', 'says': 'define use(): the part as it is used (Z up, gravity -Z) with each held:<name> object and world:<name> surface it meets, so the loads can be computed'})
+            results.append({'requirement': 'use', 'status': 'not_modelled', 'says': 'no use(): the loads cannot be computed',
+                            'fix': 'Define use() beside build(): return Compound(children=[...]) of the part as it is used (Z up, gravity -Z) with each held object as held:<name> and each surface it meets as world:<name>, touching where they really touch, so the loads can be computed'})
         return results, loads, notes
     shape = import_step(str(use_step))
     kids = list(shape.children) if isinstance(shape, Compound) else []
@@ -163,7 +164,8 @@ def evaluate(use_step, compiled):
     world = {role(c)[1]: c for c in kids if role(c)[0] == 'world' and len(role(c)) == 2}
     part = [s for c in kids if role(c)[0] not in ('held', 'world') for s in c.solids()] or ([] if kids else list(shape.solids()))
     if not part:
-        results.append({'requirement': 'use', 'status': 'not_modelled', 'says': 'use() returned no part bodies besides held: and world: ones'})
+        results.append({'requirement': 'use', 'status': 'not_modelled', 'says': 'use() returned no part bodies besides held: and world: ones',
+                        'fix': 'Return the part itself in use() too, beside its held: and world: bodies (label it anything else)'})
         return results, loads, notes
     part_shape = Compound(children=part) if len(part) > 1 else part[0]
     part_mesh = _mesh(part_shape)
@@ -175,12 +177,14 @@ def evaluate(use_step, compiled):
     for h in compiled['holds']:
         body = held.get(h['body'])
         if body is None:
-            results.append({'requirement': f'holds {h["body"]}', 'status': 'not_modelled', 'says': f'use() has no held:{h["body"]} body: model the object at its real size where it sits'})
+            results.append({'requirement': f'holds {h["body"]}', 'status': 'not_modelled', 'says': f'use() has no held:{h["body"]} body',
+                            'fix': f'Model the {h["body"]} at its real size where it sits on the part, as held:{h["body"]} in use(), so its weight is carried through the part'})
             continue
         gap = float(body.distance_to(part_shape))
         ok = gap <= TOUCH_MM
         results.append({'requirement': f'holds {h["body"]}', 'status': 'pass' if ok else 'fail',
-                        'says': f'held:{h["body"]} sits on the part ({gap:.2f} mm)' if ok else f'held:{h["body"]} is {gap:.1f} mm from the part: nothing carries it'})
+                        'says': f'held:{h["body"]} sits on the part ({gap:.2f} mm)' if ok else f'held:{h["body"]} is {gap:.1f} mm from the part: nothing carries it',
+                        **({} if ok else {'fix': f'Put held:{h["body"]} where it really rests on the part in use() (it is {gap:.1f} mm away), or make the part reach it'})})
         n, face, com = _held_face(body, part_com)
         masses.append((h['body'], float(h['mass_g']), com))
         held_faces.append((h['body'], n, face))
@@ -188,11 +192,13 @@ def evaluate(use_step, compiled):
     for mnt in compiled['mounts']:
         body = world.get(mnt['body'])
         if body is None:
-            results.append({'requirement': f'mounts {mnt["body"]}', 'status': 'not_modelled', 'says': f'use() has no world:{mnt["body"]} body: model the surface it meets ({mnt["by"]}) where it really is'})
+            results.append({'requirement': f'mounts {mnt["body"]}', 'status': 'not_modelled', 'says': f'use() has no world:{mnt["body"]} body',
+                            'fix': f'Model the {mnt["body"]} as world:{mnt["body"]} in use(): a solid slab where it really is, touching the part where it {"is taped" if mnt["by"] == "tape" else "rests" if mnt["by"] == "rests" else "meets it"}, so the {mnt["by"]} mount can be checked'})
             continue
         p = _patch(part_mesh, _mesh(body, 0.1))
         if p is None:
-            results.append({'requirement': f'mounts {mnt["body"]}', 'status': 'not_modelled', 'says': f'the part does not touch world:{mnt["body"]} in use(): no contact, so no load path'})
+            results.append({'requirement': f'mounts {mnt["body"]}', 'status': 'not_modelled', 'says': f'the part does not touch world:{mnt["body"]} in use(): no contact, so no load path',
+                            'fix': f'Move the part or world:{mnt["body"]} in use() so they touch where the part is {"taped" if mnt["by"] == "tape" else "held"} to it (within {PATCH_MM} mm)'})
             continue
         results.append({'requirement': f'mounts {mnt["body"]}', 'status': 'pass', 'says': f'{p["area"]:.0f} mm^2 of the part touches world:{mnt["body"]} ({mnt["by"]})'})
         patches.append((mnt, p))
@@ -209,11 +215,13 @@ def evaluate(use_step, compiled):
                 ang = math.degrees(math.acos(max(-1.0, min(1.0, float(n @ to) / max(dist, 1e-9)))))
                 ok = ang <= compiled['within_deg']
                 results.append({'requirement': f'faces user ({name})', 'status': 'pass' if ok else 'fail', 'angle_deg': round(ang, 1),
-                                'says': f'{name}\'s exposed face is {ang:.0f} deg off the line to the user\'s eye (allowed {compiled["within_deg"]:.0f})'})
+                                'says': f'{name}\'s exposed face is {ang:.0f} deg off the line to the user\'s eye (allowed {compiled["within_deg"]:.0f})',
+                                **({} if ok else {'fix': f'Turn the {name} toward the user: its face is {ang:.0f} deg off the line to their eye (allowed {compiled["within_deg"]:.0f}). Aim it the way the bought products do, with a joint or an angled base, and show it aimed in use()'})})
             if isinstance(compiled['reach_mm'], (int, float)):
                 ok = dist <= compiled['reach_mm']
                 results.append({'requirement': f'reach ({name})', 'status': 'pass' if ok else 'fail', 'distance_mm': round(dist),
-                                'says': f'{name} is {dist:.0f} mm from the user (allowed {compiled["reach_mm"]})'})
+                                'says': f'{name} is {dist:.0f} mm from the user (allowed {compiled["reach_mm"]})',
+                                **({} if ok else {'fix': f'Bring the {name} within reach: it is {dist:.0f} mm from the user (allowed {compiled["reach_mm"]})'})})
     if not patches or not compiled['mounts']:
         return results, loads, notes
     # Loads: gravity on everything, jolts along each axis, and a hand pressing each held object's exposed face.
@@ -277,13 +285,15 @@ def evaluate(use_step, compiled):
                 continue
             ok = stress(row) <= limit
             results.append({'requirement': f'tape on {names}, {word}', 'status': 'pass' if ok else 'fail',
-                            'says': f'{row["case"]}: peak tension {row["peak_tension_kpa"]} kPa, shear {row["shear_kpa"]} kPa over {area:.0f} mm^2 (allowed {limit:g} kPa {word}; 3M VHB)'})
+                            'says': f'{row["case"]}: peak tension {row["peak_tension_kpa"]} kPa, shear {row["shear_kpa"]} kPa over {area:.0f} mm^2 (allowed {limit:g} kPa {word}; 3M VHB)',
+                            **({} if ok else {'fix': f'Spread the tape or bring the load closer to it: {row["case"]} puts {stress(row)} kPa on the tape (allowed {limit:g} kPa {word}). A broader or taller pad, a shorter stand-off or a lighter part lowers it'})})
     elif kind == 'rests' and plane is not None:
         bad = [f'{row["case"]}: ' + ' and '.join(w for w, flag in (('lifts off', row.get('lifts')), ('tips over', row.get('tips')), ('slides', row.get('slides'))) if flag)
                for row in loads if row.get('lifts') or row.get('tips') or row.get('slides')]
         least = min((row.get('tip_margin_mm', 0) for row in loads), default=0)
         results.append({'requirement': f'rests on {names}', 'status': 'fail' if bad else 'pass',
-                        'says': '; '.join(bad) if bad else f'stays put in every case, the load at least {least} mm inside its footprint'})
+                        'says': '; '.join(bad) if bad else f'stays put in every case, the load at least {least} mm inside its footprint',
+                        **({'fix': 'Widen or lengthen the base under the load, move the load over it, or add weight: ' + '; '.join(bad)} if bad else {})})
     else:
         notes.append(f'the strength of the {kind} interface on {names}: its loads are computed (purpose.loads), its capacity is not')
     return results, loads, notes
@@ -296,17 +306,19 @@ def inspect_purpose(request):
         return None
     p, error = read(request['script'])
     if p is None:
-        why = error or 'no PURPOSE: say what the part is for (PURPOSE = {"for": ..., "modelled_on": ...}) so its use can be checked'
-        return {'declared': False, 'requirements': [{'requirement': 'purpose', 'status': 'not_modelled', 'says': why}],
-                'loads': [], 'not_checked': [], 'blocked': [why], 'ready': False}
+        why = (f'Fix PURPOSE: {error}' if error else 'Add PURPOSE = {"for": ..., "modelled_on": ...} beside P: what the part is for in the person\'s words and the bought product it follows (plus holds, mounts and use() when it carries something), so its use can be checked')
+        return {'declared': False, 'requirements': [{'requirement': 'purpose', 'status': 'not_modelled', 'says': error or 'no PURPOSE', 'fix': why}],
+                'loads': [], 'not_checked': [], 'blocked': [why + '.'], 'ready': False}
     compiled = compile_purpose(p)
     try:
         results, loads, notes = evaluate(Path(str(base) + '.use.step'), compiled)
     except Exception as e:   # a measurement that failed proves nothing: reported, and it blocks ready
         loads, notes = [], []
         results = [{'requirement': n, 'status': 'fail' if pr else 'pass', 'says': pr or 'stated'} for n, pr in compiled['requirements']]
-        results.append({'requirement': 'use', 'status': 'not_modelled', 'says': f'the use() assembly could not be measured ({type(e).__name__}: {e})'[:300]})
-    blocked = [f'{r["requirement"]}: {r["says"]}' for r in results if r['status'] != 'pass']
+        results.append({'requirement': 'use', 'status': 'not_modelled', 'says': f'the use() assembly could not be measured ({type(e).__name__}: {e})'[:300],
+                        'fix': 'Return use() as a Compound of closed solids labelled with the part, held:<name> and world:<name>; the engine could not measure it as returned'})
+    # Each entry is an instruction the designer can act on, as a sentence: cad_run's next quotes the first ones.
+    blocked = [(lambda t: t if t.endswith('.') else t + '.')(r.get('fix') or f'{r["requirement"]}: {r["says"]}') for r in results if r['status'] != 'pass']
     return {'declared': True, 'for': str(p.get('for') or ''), 'modelled_on': str(p.get('modelled_on') or ''),
             'classes': compiled['classes'], 'user': compiled['user'], 'material': compiled['material'], 'jolt_g': compiled['jolt_g'], 'press_n': compiled['press_n'],
             'requirements': results, 'loads': loads, 'not_checked': notes, 'blocked': blocked, 'ready': not blocked}

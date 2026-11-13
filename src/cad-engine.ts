@@ -819,9 +819,11 @@ export class CadEngine {
             ...project,
             // Beside the image paths, where the next step is decided.
             next: refused
-              ? "Not selected as final: fix each entry in final_refused (purpose.requirements has the numbers), then run again with final: true. Read renders.perspective and renders.use first."
+              ? `Not selected as final, so it is not yet the model. To make it final: ${refused.slice(0, 3).join(" ")}${refused.length > 3 ? ` (and ${refused.length - 3} more in final_refused)` : ""} Then run again with final: true. Read renders.perspective and renders.use first.`
               : "Read renders.perspective before the next cad_run or any other change: say what it shows is wrong against what you are making (the bought product you named, or the object in the photos), then fix that." +
-                (checked.purpose && checked.ready === false ? " Before final: fix what purpose.blocked lists; final: true is refused until the design is ready." : ""),
+                (checked.purpose && checked.ready === false && Array.isArray(checked.purpose.blocked)
+                  ? ` Not ready yet, so final: true would be refused. To make it ready: ${checked.purpose.blocked.slice(0, 3).join(" ")}`
+                  : ""),
             // The script's own print() output: its words, not a measurement by this engine.
             ...(printed ? { printed: printed.length > 4000 ? printed.slice(0, 4000) + "\n[cut at 4000 characters; build.log has the rest]" : printed } : {}),
             status: "completed",
