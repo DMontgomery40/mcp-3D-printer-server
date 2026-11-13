@@ -30,6 +30,10 @@ TAPE_SHORT_KPA = 85.0
 FRICTION = 0.4          # printed plastic, or its pads, resting on wood, laminate or painted metal
 TOUCH_MM = 0.5          # a held object within this of the part sits on it
 PATCH_MM = 0.2          # part surface within this of a world body is in contact with it
+HELD_DENSITY = (0.15, 8.0)  # g/cm^3: foam and paper rolls to steel tools; outside it the held body is not the object
+FLAT = 0.9              # a patch whose mean normal is shorter than this is not one plane
+WORLD_AREA = 3.0        # a tape or rest surface reaches this many times the contact's area in its plane
+WORLD_DEPTH_MM = 3.0    # and at least this far behind it
 
 
 def read(script):
@@ -53,7 +57,9 @@ def read(script):
 def compile_purpose(p):
     """The requirements a purpose implies: [(name, problem or None)] plus the load settings to evaluate."""
     text = str(p.get('for') or '')
-    classes = [c for c, rx in (('holder', HOLDER), ('vehicle', VEHICLE), ('screen', SCREEN)) if rx.search(text)]
+    bodies = [e.get('body') for key in ('holds', 'mounts') for e in (p.get(key) if isinstance(p.get(key), list) else [p.get(key)]) if isinstance(e, dict) and isinstance(e.get('body'), str)]
+    words = ' '.join([text, str(p.get('modelled_on') or '')] + bodies).replace('_', ' ')   # what it is, read from everything that names it
+    classes = [c for c, rx in (('holder', HOLDER), ('vehicle', VEHICLE), ('screen', SCREEN)) if rx.search(words)]
     out, req = {'classes': classes}, []
     req.append(('for', None if text.strip() else 'PURPOSE["for"] is missing: say who uses it, where, doing what, in the person\'s words'))
     req.append(('modelled_on', None if str(p.get('modelled_on') or '').strip() else 'PURPOSE["modelled_on"] is missing: name the bought product the design follows'))
@@ -61,14 +67,18 @@ def compile_purpose(p):
     mounts = p.get('mounts') or []
     holds = holds if isinstance(holds, list) else [holds]
     mounts = mounts if isinstance(mounts, list) else [mounts]
-    good_hold = lambda h: isinstance(h, dict) and isinstance(h.get('body'), str) and isinstance(h.get('mass_g'), (int, float)) and not isinstance(h.get('mass_g'), bool) and h['mass_g'] >= 0
+    good_hold = lambda h: isinstance(h, dict) and isinstance(h.get('body'), str) and isinstance(h.get('mass_g'), (int, float)) and not isinstance(h.get('mass_g'), bool) and h['mass_g'] > 0
     bad = [h for h in holds if not good_hold(h)]
-    if bad:
-        req.append(('holds', 'each PURPOSE["holds"] entry is {"body": name, "mass_g": grams}'))
+    for h in bad:
+        named = isinstance(h, dict) and isinstance(h.get('body'), str)
+        req.append(('holds', f'The {h["body"]} in PURPOSE["holds"] needs its real mass: give "mass_g" in grams, more than 0' if named
+                    else 'Write each PURPOSE["holds"] entry as {"body": name, "mass_g": grams}'))
     good_mount = lambda m: isinstance(m, dict) and isinstance(m.get('body'), str) and m.get('by') in KINDS
     bad = [m for m in mounts if not good_mount(m)]
     if bad:
         req.append(('mounts', 'each PURPOSE["mounts"] entry is {"body": name, "by": one of ' + ', '.join(KINDS) + '}'))
+    if holds and any(good_mount(m) and m['by'] == 'other' for m in mounts):
+        req.append(('mounts', 'A mount that carries a held body must say how it holds: in PURPOSE["mounts"] pick the nearest real kind: tape, rests, screw, clamp or hook (not "other")'))
     if 'holder' in classes and not holds:
         req.append(('holds', f'"{text[:60]}" holds something: list it in PURPOSE["holds"] with its mass and model it in use() as held:<name>'))
     if (holds or 'holder' in classes) and not mounts:
@@ -88,9 +98,13 @@ def compile_purpose(p):
         jolt = max(jolt, 1.5)
     press = p.get('press_n', 1.5 if holds else 0.0)   # a finger on a screen or on what it holds
     press = float(press) if isinstance(press, (int, float)) and not isinstance(press, bool) and press >= 0 else 1.5
+    if holds:
+        press = max(press, 1.5)                        # floors, like the jolt's: the designer may raise them, never lower
     material = str(p.get('material') or 'PLA').lower()
     within = (faces or {}).get('within_deg', 25) if isinstance(faces, dict) else 25
     within = float(within) if isinstance(within, (int, float)) and not isinstance(within, bool) and 0 < within <= 90 else 25.0
+    if 'screen' in classes:
+        within = min(within, 25.0)
     out.update(requirements=req, holds=[h for h in holds if good_hold(h)], mounts=[m for m in mounts if good_mount(m)],
                user=list(map(float, user)) if good_point else None, faces=faces if isinstance(faces, dict) else None,
                within_deg=within,
@@ -140,6 +154,17 @@ def _plane(patch):
     iyy = float((A / 6 * (y0 * y0 + y1 * y1 + y2 * y2 + y0 * y1 + y1 * y2 + y2 * y0)).sum())
     ixy = float((A / 12 * (2 * x0 * y0 + 2 * x1 * y1 + 2 * x2 * y2 + x0 * y1 + x1 * y0 + x0 * y2 + x2 * y0 + x1 * y2 + x2 * y1)).sum())
     return n, e1, e2, x.ravel(), y.ravel(), ixx, iyy, ixy
+
+
+def _surface(world, patch):
+    """How far a world body reaches in the plane of a contact (convex hull area) and how far behind it (depth)."""
+    from shapely.geometry import MultiPoint
+    n = patch['normal'] / np.linalg.norm(patch['normal'])
+    e1 = np.cross(n, [0, 0, 1.0]) if abs(n[2]) < 0.9 else np.cross(n, [1.0, 0, 0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n, e1)
+    q = np.asarray(world.vertices, float) - patch['centroid']
+    return {'area': float(MultiPoint(list(zip((q @ e1).tolist(), (q @ e2).tolist()))).convex_hull.area), 'depth': float((q @ n).max())}
 
 
 def _held_face(held, part_com):
@@ -202,6 +227,11 @@ def evaluate(use_step, compiled, build_volume=None):
         results.append({'requirement': f'holds {h["body"]}', 'status': 'pass' if ok else 'fail',
                         'says': f'held:{h["body"]} sits on the part ({gap:.2f} mm)' if ok else f'held:{h["body"]} is {gap:.1f} mm from the part: nothing carries it',
                         **({} if ok else {'fix': f'Put held:{h["body"]} where it really rests on the part in use() (it is {gap:.1f} mm away), or make the part reach it'})})
+        cm3 = float(body.volume) / 1000.0
+        density = float(h['mass_g']) / cm3 if cm3 > 0 else float('inf')
+        if not HELD_DENSITY[0] <= density <= HELD_DENSITY[1]:
+            results.append({'requirement': f'held {h["body"]} size and mass', 'status': 'fail', 'says': f'{h["mass_g"]:g} g in {cm3:.1f} cm^3 of held:{h["body"]} is {density:.2f} g/cm^3',
+                            'fix': f'Model the {h["body"]} at its real size and mass: {h["mass_g"]:g} g in the {cm3:.1f} cm^3 held:{h["body"]} is {density:.2f} g/cm^3, outside {HELD_DENSITY[0]} to {HELD_DENSITY[1]:g} g/cm^3 for real objects'})
         n, face, com = _held_face(body, part_com)
         masses.append((h['body'], float(h['mass_g']), com))
         held_faces.append((h['body'], n, face))
@@ -218,6 +248,18 @@ def evaluate(use_step, compiled, build_volume=None):
                             'fix': f'Move the part or world:{mnt["body"]} in use() so they touch where the part is {"taped" if mnt["by"] == "tape" else "held"} to it (within {PATCH_MM} mm)'})
             continue
         results.append({'requirement': f'mounts {mnt["body"]}', 'status': 'pass', 'says': f'{p["area"]:.0f} mm^2 of the part touches world:{mnt["body"]} ({mnt["by"]})'})
+        if mnt['by'] in ('tape', 'rests'):
+            if p['flat'] < FLAT:
+                if mnt['by'] == 'tape':     # tape fails closed: a curved or folded contact has no stress the engine can compute
+                    results.append({'requirement': f'tape on {mnt["body"]}', 'status': 'not_modelled', 'says': f'the taped contact on world:{mnt["body"]} is not one flat patch',
+                                    'fix': f'Model the taped contact as one flat patch per mount, on a flat world body: the part meets world:{mnt["body"]} on surfaces that are not one plane, so the tape cannot be checked'})
+                    continue
+            else:
+                q = _surface(_mesh(body, 0.1), p)
+                if q['area'] < WORLD_AREA * p['area'] or q['depth'] < WORLD_DEPTH_MM:
+                    results.append({'requirement': f'world {mnt["body"]} is a surface', 'status': 'fail',
+                                    'says': f'world:{mnt["body"]} spans {q["area"]:.0f} mm^2 in the contact plane and {q["depth"]:.1f} mm behind it, for a {p["area"]:.0f} mm^2 contact',
+                                    'fix': f'Model the {mnt["body"]} as one slab where it really is, not a block shaped to the part: it spans {q["area"]:.0f} mm^2 in the contact\'s plane (needs at least {WORLD_AREA:g} times the {p["area"]:.0f} mm^2 contact) and {q["depth"]:.1f} mm behind it (needs {WORLD_DEPTH_MM:g})'})
         patches.append((mnt, p))
     # The faces requirement: the held object's exposed face turned toward the person's eye.
     if compiled['user'] is not None:
@@ -255,66 +297,94 @@ def evaluate(use_step, compiled, build_volume=None):
     if compiled['press_n'] > 0:
         for name, n, face in held_faces:
             cases.append((f'gravity + {compiled["press_n"]:g} N pressing {name}', np.array([0, 0, -G]), (face, -n * compiled['press_n'])))
-    tri = np.concatenate([p['tri'] for _, p in patches])
-    area = sum(p['area'] for _, p in patches)
-    group = {'tri': tri, 'area': area, 'centroid': sum(p['centroid'] * p['area'] for _, p in patches) / area,
-             'normal': sum(p['normal'] * p['area'] for _, p in patches) / area}
-    kinds = {m['by'] for m, _ in patches}
-    flat = float(np.linalg.norm(group['normal'])) >= 0.9
-    kind = next(iter(kinds)) if len(kinds) == 1 else 'mixed'
-    c = group['centroid']
-    plane = _plane(group) if flat else None
-    for label, g, press in cases:
-        F, M = np.zeros(3), np.zeros(3)
-        for _, mass, com in masses:
-            f = g * mass / 1000.0                                       # N
-            F += f; M += np.cross(com - c, f) / 1000.0                  # N m
-        if press is not None:
-            F += press[1]; M += np.cross(press[0] - c, press[1]) / 1000.0
-        R, MR = -F, -M * 1000.0                                         # the mount's reaction on the part (N, N mm)
-        row = {'case': label, 'force_n': round(float(np.linalg.norm(F)), 2), 'moment_nm': round(float(np.linalg.norm(M)), 3)}
-        if plane is not None:
-            n, e1, e2, x, y, ixx, iyy, ixy = plane
-            N = float(R @ n)                                            # + pulls the part onto the surface: the tape in tension
-            shear = float(np.linalg.norm(R - N * n))
-            if kind == 'tape':
-                det = ixy * ixy - iyy * ixx
-                a, b = ((np.linalg.solve([[ixy, iyy], [ixx, ixy]], [MR @ e1, -(MR @ e2)])) if abs(det) > 1e-9 else (0.0, 0.0))
-                peak = (N / area + a * x + b * y).max() * 1000.0          # kPa
-                twist = abs(float(MR @ n)) * float(np.sqrt(x * x + y * y).max()) / max(ixx + iyy, 1e-9) * 1000.0
-                row.update(peak_tension_kpa=round(float(max(peak, 0.0)), 1), shear_kpa=round(shear / area * 1000.0 + twist, 1))
-            elif kind == 'rests':
-                press_in = -N                                           # the surface pushes back: positive when resting
-                if press_in <= 1e-9:
-                    row.update(lifts=True)
-                else:
-                    from shapely.geometry import MultiPoint, Point
-                    xc, yc = -float(MR @ e2) / N, float(MR @ e1) / N
-                    hull = MultiPoint(list(zip(x.tolist(), y.tolist()))).convex_hull
-                    inside = hull.buffer(1e-6).contains(Point(xc, yc))
-                    margin = hull.exterior.distance(Point(xc, yc)) if hasattr(hull, 'exterior') else 0.0
-                    row.update(tips=not inside, tip_margin_mm=round(float(margin if inside else -margin), 1),
-                               slides=bool(shear > FRICTION * press_in + 1e-9))
-        loads.append(row)
-    names = ', '.join(m['body'] for m, _ in patches)
-    if kind == 'tape' and plane is not None:
-        stress = lambda r: max(r['peak_tension_kpa'], r['shear_kpa'])
-        sustained, short = loads[0], max(loads[1:], key=stress, default=None)
-        for row, limit, word in ((sustained, TAPE_SUSTAINED_KPA[compiled['environment']], 'sustained'), (short, TAPE_SHORT_KPA, 'short-term')):
-            if row is None:
-                continue
-            ok = stress(row) <= limit
-            results.append({'requirement': f'tape on {names}, {word}', 'status': 'pass' if ok else 'fail',
-                            'says': f'{row["case"]}: peak tension {row["peak_tension_kpa"]} kPa, shear {row["shear_kpa"]} kPa over {area:.0f} mm^2 (allowed {limit:g} kPa {word}; 3M VHB)',
-                            **({} if ok else {'fix': f'Spread the tape or bring the load closer to it: {row["case"]} puts {stress(row)} kPa on the tape (allowed {limit:g} kPa {word}). A broader or taller pad, a shorter stand-off or a lighter part lowers it'})})
-    elif kind == 'rests' and plane is not None:
-        bad = [f'{row["case"]}: ' + ' and '.join(w for w, flag in (('lifts off', row.get('lifts')), ('tips over', row.get('tips')), ('slides', row.get('slides'))) if flag)
-               for row in loads if row.get('lifts') or row.get('tips') or row.get('slides')]
-        least = min((row.get('tip_margin_mm', 0) for row in loads), default=0)
-        results.append({'requirement': f'rests on {names}', 'status': 'fail' if bad else 'pass',
-                        'says': '; '.join(bad) if bad else f'stays put in every case, the load at least {least} mm inside its footprint',
-                        **({'fix': 'Widen or lengthen the base under the load, move the load over it, or add weight: ' + '; '.join(bad)} if bad else {})})
-    else:
+
+    def group(items):
+        area = sum(p['area'] for _, p in items)
+        return {'tri': np.concatenate([p['tri'] for _, p in items]), 'area': area,
+                'centroid': sum(p['centroid'] * p['area'] for _, p in items) / area,
+                'normal': sum(p['normal'] * p['area'] for _, p in items) / area}
+
+    def rows(g, kind):
+        """The reaction at one group of contacts for every case, carried by that group alone."""
+        c, area = g['centroid'], g['area']
+        plane = _plane(g) if float(np.linalg.norm(g['normal'])) >= FLAT else None
+        out = []
+        for label, gv, press in cases:
+            F, M = np.zeros(3), np.zeros(3)
+            for _, mass, com in masses:
+                f = gv * mass / 1000.0                                      # N
+                F += f; M += np.cross(com - c, f) / 1000.0                  # N m
+            if press is not None:
+                F += press[1]; M += np.cross(press[0] - c, press[1]) / 1000.0
+            R, MR = -F, -M * 1000.0                                         # the mount's reaction on the part (N, N mm)
+            row = {'case': label, 'force_n': round(float(np.linalg.norm(F)), 2), 'moment_nm': round(float(np.linalg.norm(M)), 3)}
+            if plane is not None:
+                n, e1, e2, x, y, ixx, iyy, ixy = plane
+                N = float(R @ n)                                            # + pulls the part onto the surface: the tape in tension
+                shear = float(np.linalg.norm(R - N * n))
+                if kind == 'tape':
+                    det = ixy * ixy - iyy * ixx
+                    a, b = ((np.linalg.solve([[ixy, iyy], [ixx, ixy]], [MR @ e1, -(MR @ e2)])) if abs(det) > 1e-9 else (0.0, 0.0))
+                    peak = (N / area + a * x + b * y).max() * 1000.0          # kPa
+                    twist = abs(float(MR @ n)) * float(np.sqrt(x * x + y * y).max()) / max(ixx + iyy, 1e-9) * 1000.0
+                    row.update(peak_tension_kpa=round(float(max(peak, 0.0)), 1), shear_kpa=round(shear / area * 1000.0 + twist, 1))
+                elif kind == 'rests':
+                    press_in = -N                                           # the surface pushes back: positive when resting
+                    if press_in <= 1e-9:
+                        row.update(lifts=True)
+                    else:
+                        from shapely.geometry import MultiPoint, Point
+                        xc, yc = -float(MR @ e2) / N, float(MR @ e1) / N
+                        hull = MultiPoint(list(zip(x.tolist(), y.tolist()))).convex_hull
+                        inside = hull.buffer(1e-6).contains(Point(xc, yc))
+                        margin = hull.exterior.distance(Point(xc, yc)) if hasattr(hull, 'exterior') else 0.0
+                        row.update(tips=not inside, tip_margin_mm=round(float(margin if inside else -margin), 1),
+                                   slides=bool(shear > FRICTION * press_in + 1e-9))
+            out.append(row)
+        return out, plane is not None
+
+    by = {}
+    for m, p in patches:
+        by.setdefault(m['by'], []).append((m, p))
+    alone = len(by) > 1             # other kinds share the load in reality; each kind checked here carries all of it
+    tape = by.get('tape', [])
+    if tape:
+        g = group(tape)
+        sets = [tape] if float(np.linalg.norm(g['normal'])) >= FLAT else [[t] for t in tape]   # mounts in different planes: each alone
+        for items in sets:
+            names = ', '.join(m['body'] for m, _ in items)
+            got, _ = rows(group(items), 'tape')
+            loads.extend(got if len(sets) == 1 else [dict(r, mount=names) for r in got])
+            area = sum(p['area'] for _, p in items)
+            stress = lambda r: max(r['peak_tension_kpa'], r['shear_kpa'])
+            sustained, short = got[0], max(got[1:], key=stress, default=None)
+            whole = ' (the whole load on the tape: the other mounts are not counted)' if alone or len(sets) > 1 else ''
+            for row, limit, word in ((sustained, TAPE_SUSTAINED_KPA[compiled['environment']], 'sustained'), (short, TAPE_SHORT_KPA, 'short-term')):
+                if row is None:
+                    continue
+                ok = stress(row) <= limit
+                results.append({'requirement': f'tape on {names}, {word}', 'status': 'pass' if ok else 'fail',
+                                'says': f'{row["case"]}: peak tension {row["peak_tension_kpa"]} kPa, shear {row["shear_kpa"]} kPa over {area:.0f} mm^2 (allowed {limit:g} kPa {word}; 3M VHB){whole}',
+                                **({} if ok else {'fix': f'Spread the tape or bring the load closer to it: {row["case"]} puts {stress(row)} kPa on the tape (allowed {limit:g} kPa {word}). A broader or taller pad, a shorter stand-off or a lighter part lowers it'})})
+    if 'rests' in by and not alone:
+        names = ', '.join(m['body'] for m, _ in by['rests'])
+        got, flat = rows(group(by['rests']), 'rests')
+        loads.extend(got)
+        if flat:
+            bad = [f'{row["case"]}: ' + ' and '.join(w for w, flag in (('lifts off', row.get('lifts')), ('tips over', row.get('tips')), ('slides', row.get('slides'))) if flag)
+                   for row in got if row.get('lifts') or row.get('tips') or row.get('slides')]
+            least = min((row.get('tip_margin_mm', 0) for row in got), default=0)
+            results.append({'requirement': f'rests on {names}', 'status': 'fail' if bad else 'pass',
+                            'says': '; '.join(bad) if bad else f'stays put in every case, the load at least {least} mm inside its footprint',
+                            **({'fix': 'Widen or lengthen the base under the load, move the load over it, or add weight: ' + '; '.join(bad)} if bad else {})})
+        else:
+            notes.append(f'whether the part tips on {names}: it rests on surfaces that are not one plane')
+    elif 'rests' in by:
+        notes.append('whether the part tips or slides where it rests: it also has other kinds of mount, which share the load')
+    for kind in [k for k in by if k not in ('tape', 'rests')]:
+        names = ', '.join(m['body'] for m, _ in by[kind])
+        if not loads:
+            loads.extend(rows(group(by[kind]), kind)[0])
         notes.append(f'the strength of the {kind} interface on {names}: its loads are computed (purpose.loads), its capacity is not')
     return results, loads, notes
 
@@ -341,4 +411,5 @@ def inspect_purpose(request, build_volume=None):
     blocked = [(lambda t: t if t.endswith('.') else t + '.')(r.get('fix') or f'{r["requirement"]}: {r["says"]}') for r in results if r['status'] != 'pass']
     return {'declared': True, 'for': str(p.get('for') or ''), 'modelled_on': str(p.get('modelled_on') or ''),
             'classes': compiled['classes'], 'user': compiled['user'], 'material': compiled['material'], 'jolt_g': compiled['jolt_g'], 'press_n': compiled['press_n'],
+            'within_deg': compiled['within_deg'],
             'requirements': results, 'loads': loads, 'not_checked': notes, 'blocked': blocked, 'ready': not blocked}

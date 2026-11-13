@@ -7,5 +7,5 @@ def build():
     return Pos(0, 0, 5) * Box(40, 20, 10)
 def use():
     hook = Box(40, 20, 10); hook.label = "hook"
-    cans = Pos(0, 0, 20) * Box(30, 30, 30); cans.label = "held:headphones"
+    cans = Pos(0, 0, 20) * Box(60, 60, 30); cans.label = "held:headphones"
     return Compound(children=[hook, cans])

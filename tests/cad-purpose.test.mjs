@@ -34,6 +34,7 @@ function inspect(fixture, mode = "solid") {
       if (step === "inspect") {
         const result = JSON.parse(r.stdout);
         result.useRendered = !!result.renders.use && fs.existsSync(result.renders.use);
+        result.files = fs.readdirSync(dir);
         return result;
       }
     }
@@ -107,4 +108,79 @@ test("use() must show the part build() exports, not another one", runtime, () =>
   assert.equal(r.ready, false);
   assert.equal(find(r, "use is the built part").status, "fail");
   assert.match(r.purpose.blocked.join(" "), /^Build the part in use\(\) from build\(\)/);
+});
+
+const status = (r, prefix) => find(r, prefix)?.status;
+const peak = (r, kase) => r.purpose.loads.find((l) => l.case === kase).peak_tension_kpa;
+
+test("tape that cannot carry the load is refused, with the stress computed from the geometry", runtime, () => {
+  const r = inspect("tape_overload.py");
+  assert.equal(r.ready, false);
+  assert.equal(status(r, "tape on wall, sustained"), "fail");
+  assert.ok(peak(r, "gravity") > 30, String(peak(r, "gravity")));
+  assert.match(r.purpose.blocked.join(" "), /Spread the tape or bring the load closer to it/);
+});
+
+test("the 30 mm strip puts more tension on its tape than the 60 mm pad does, under the same phone", runtime, () => {
+  const strip = inspect("strip_square.py"), pad = inspect("ball_aimed.py");
+  assert.ok(peak(strip, "gravity") > peak(pad, "gravity"), `${peak(strip, "gravity")} vs ${peak(pad, "gravity")}`);
+  const worst = (r) => Math.max(...r.purpose.loads.map((l) => l.peak_tension_kpa));
+  assert.ok(worst(strip) > worst(pad), `${worst(strip)} vs ${worst(pad)}`);
+});
+
+test("tape whose contact is not one flat patch fails closed", runtime, () => {
+  const r = inspect("tape_curved.py");
+  assert.equal(r.ready, false);
+  assert.match(r.purpose.blocked.join(" "), /Model the taped contact as one flat patch per mount, on a flat world body/);
+});
+
+test("a mount declared 'other' that carries a held body blocks ready", runtime, () => {
+  const r = inspect("other_kind.py");
+  assert.equal(r.ready, false);
+  assert.match(r.purpose.blocked.join(" "), /pick the nearest real kind: tape, rests, screw, clamp or hook/);
+});
+
+test("a mix of mount kinds still checks its tape", runtime, () => {
+  const r = inspect("mixed_tape.py");
+  assert.ok(find(r, "tape on wall"), JSON.stringify(r.purpose.requirements.map((q) => q.requirement)));
+  assert.match(find(r, "tape on wall").says, /kPa/);
+});
+
+test("the designer's numbers have floors: a held mass, a press, a facing allowance", runtime, () => {
+  const r = inspect("floors.py");
+  assert.equal(r.ready, false);
+  assert.match(r.purpose.blocked.join(" "), /phone in PURPOSE\["holds"\] needs its real mass/);
+  assert.equal(r.purpose.press_n, 1.5);
+  assert.equal(r.purpose.within_deg, 25);
+});
+
+test("a held object whose mass does not fit its size is refused", runtime, () => {
+  const r = inspect("dense_held.py");
+  assert.equal(r.ready, false);
+  assert.match(r.purpose.blocked.join(" "), /Model the keys at its real size and mass/);
+});
+
+test("a world surface shaped to the part is not a surface: tape and rests need a real slab", runtime, () => {
+  const r = inspect("shaped_world.py");
+  assert.equal(r.ready, false);
+  assert.match(r.purpose.blocked.join(" "), /Model the cabinet as one slab where it really is, not a block shaped to the part/);
+});
+
+test("the product class reads modelled_on and the body names too, not for alone", runtime, () => {
+  const classes = (purpose) => {
+    const r = spawnSync(python, ["-I", "-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(path.dirname(worker))}); from purpose import compile_purpose; print(json.dumps(compile_purpose(json.loads(sys.argv[1]))["classes"]))`, JSON.stringify(purpose)], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  // "for" alone names none of these; the bought product and the bodies do
+  assert.deepEqual(classes({ for: "something to keep my maps in view while I drive", modelled_on: "iOttie dash mount",
+    holds: [{ body: "phone", mass_g: 200 }], mounts: [{ body: "dashboard", by: "tape" }] }), ["holder", "vehicle", "screen"]);
+  assert.deepEqual(classes({ for: "a small pot for a succulent", modelled_on: "a terracotta cactus pot" }), []);
+});
+
+test("mesh mode evaluates no purpose and never calls use()", runtime, () => {
+  const r = inspect("mesh_use.py", "mesh");
+  assert.equal(r.purpose, undefined);
+  assert.equal(r.ready, undefined);
+  assert.ok(!r.files.some((f) => /\.use\.(step|error)$/.test(f)), r.files.join(", "));
 });
