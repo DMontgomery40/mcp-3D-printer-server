@@ -35,6 +35,15 @@ P = {
     "edge_r": 1.9,         # rounding on hooks and panel top (the 4 mm lip becomes a full round)
 }
 
+# What it is for, as data: cad_run compiles it into requirements and evaluates them on use() below.
+PURPOSE = {
+    "for": "a stand that holds my phone on my desk at a reading angle while it charges",
+    "modelled_on": "Lamicall S1 desk phone stand",
+    "holds": [{"body": "phone", "mass_g": 249}],    # the tallest iPhone it takes
+    "mounts": [{"body": "desk", "by": "rests"}],
+    "user": [0.0, -450.0, 330.0],                   # a seated person's eye, in front of the stand
+}
+
 
 def build():
     lean, neck, t = radians(P["lean_deg"]), radians(P["neck_deg"]), P["thick"]
@@ -91,3 +100,20 @@ def build():
     rest = Plane(seat, x_dir=(1, 0, 0), z_dir=out)
     slot = extrude(SlotOverall(P["slot_len"], P["cable_gap"] - 6, rotation=90), 2 * t, both=True)
     return body - rest * Pos(0, 3 - P["slot_len"] / 2) * slot
+
+
+def use():
+    """As used: on the desk (Z = 0) with the tallest iPhone (163.4 x 78.0 x 8.75 mm) on the hooks and against the back.
+    cad_run checks from this that the stand neither tips nor slides when the screen is pressed, and that the screen
+    faces the user's eye."""
+    lean = radians(P["lean_deg"])
+    up = Vector(0, sin(lean), cos(lean))
+    out = Vector(0, -cos(lean), sin(lean))
+    seat = Vector(0, P["nose_y"], P["nose_h"]) + up * P["seat_up"] + out * (P["thick"] / 2)
+    stand = build()
+    stand.label = "stand"
+    phone = Pos(*(seat + up * (163.4 / 2) + out * (8.75 / 2))) * (Rot(-P["lean_deg"], 0, 0) * Box(78.0, 8.75, 163.4))
+    phone.label = "held:phone"
+    desk = Pos(0, P["foot_y"], -10) * Box(300, 300, 20)
+    desk.label = "world:desk"
+    return Compound(children=[stand, phone, desk])

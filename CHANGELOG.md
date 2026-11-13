@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A design's purpose is now data the code engine evaluates (scan-to-make #608). A `cad_run` script declares `PURPOSE` (what it is for, the bought product it follows, what it holds, what carries the load, where its user's eye is) and `use()`, which returns the part as used with `held:<name>` and `world:<name>` bodies. The inspection process compiles the purpose into requirements, adding those its words imply (a holder must name what it holds and mounts to; a vehicle takes 1.5 g jolts; a held screen faces the user), computes the force and moment at each mount from the geometry, and checks tape against 3M VHB's published stresses and that a resting part does not tip, lift or slide. It returns `purpose`, `ready` and `renders.use`. `final: true` is recorded only when the design is ready; otherwise `final_refused` gives the reasons. Mesh mode and 3MF projects are unchanged. Three cookbook examples (`desk_edge_cable_holder`, `desk_clamp_hook`, `phone_stand`) carry a purpose and `use()`. Tested with build123d fixtures of the Nov 11 phone holder (a phone square to the cabin on a 30 mm taped strip is refused; the same phone aimed on a 60 mm pad is ready), a stand that tips, a mount not modelled and no purpose, and with a Sonnet-class capability test; nothing was printed or sliced.
+
 ## [1.2.76] – 2026-11-12
 
 ### Added

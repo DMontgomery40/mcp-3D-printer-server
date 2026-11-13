@@ -28,7 +28,9 @@ test("every cookbook example carries its whole record and a script the engine ac
     assert.match(e.modelled_on + e.published_sizes, /https?:\/\//, `${e.name}: cites a page`);
     assert.equal((e.script.match(/^P = \{/gm) ?? []).length, 1, `${e.name}: one literal P`);
     assert.match(e.script, /^def build\(\):/m, e.name);
-    assert.doesNotMatch(e.script, /__main__|export_st|children=/, e.name);
+    // use() returns the design as used, a labelled Compound of the part, what it holds and what it meets
+    assert.doesNotMatch(e.script.split(/^def use\(\):/m)[0], /__main__|export_st|children=/, e.name);
+    assert.doesNotMatch(e.script, /__main__|export_st/, e.name);
     assert.ok(e.script.length < 12000, `${e.name}: short enough to hand to a worker (${e.script.length} bytes)`);
   }
 });
@@ -51,6 +53,18 @@ test("the engine prompt names every example by purpose in one line each, and the
   assert.match(text, /print\(\) it in the script: the result returns it as printed/);
   assert.match(CAD_DESIGN_PROMPT.text, /Form first: build the product's shape, not a profile pushed up\./);
   assert.match(CAD_DESIGN_PROMPT.text, /perspective view/);
+  // the purpose as data and the design as used, before geometry; final only when ready (scan-to-make #608)
+  assert.ok(at("only then, choose the mechanism") < at("Then state the purpose as data, before any geometry: a literal PURPOSE = {...}"));
+  assert.match(text, /define use\(\) beside build\(\)/);
+  assert.match(text, /"held:<body>"/);
+  assert.match(text, /"world:<body>"/);
+  assert.match(text, /final: true is recorded only when ready is true/);
+  // the examples that teach it carry both, one per kind of interface the engine models
+  for (const name of ["desk_edge_cable_holder", "desk_clamp_hook", "phone_stand"]) {
+    const { script } = cadExamples().find((e) => e.name === name);
+    assert.match(script, /^PURPOSE = \{/m, name);
+    assert.match(script, /^def use\(\):/m, name);
+  }
   // the cost of the cookbook in the prompt stays a line per example
   assert.ok(cadExampleLines().length < 3200, `purpose lines are ${cadExampleLines().length} bytes`);
   const list = cadExamplesTool({});

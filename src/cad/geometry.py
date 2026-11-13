@@ -39,12 +39,62 @@ def inspect(request):
         assembly = bodies(step, request) if step is not None else None
     except Exception as e:   # a failed measurement must not cost the person the export; it is reported, not passed
         assembly = {'error': f'{type(e).__name__}: {e}'[:300]}
+    # What the part is for, evaluated on the design as it is used (purpose.py): ready, and why not.
+    from purpose import inspect_purpose
+    try:
+        purpose = inspect_purpose(request, float(step.volume) if step is not None else None)
+    except Exception as e:
+        why = f'the purpose could not be evaluated: {type(e).__name__}: {e}'[:300]
+        purpose = {'declared': None, 'requirements': [], 'loads': [], 'not_checked': [], 'blocked': [why], 'ready': False}
+    renders = render(m, base.parent / (base.name + '.renders'))
+    if purpose is not None and Path(str(base) + '.use.step').exists():
+        try:
+            renders['use'] = use_view(Path(str(base) + '.use.step'), base.parent / (base.name + '.renders'), purpose.get('user'))
+        except Exception as e:
+            purpose['not_checked'].append(f'the view of the design in use could not be drawn: {type(e).__name__}')
+    found = evidence(assembly)
+    if purpose is not None:
+        found['checked'].append('what PURPOSE says it is for, compiled into requirements and evaluated on use(): the held objects, the mounts, the loads at each mount and whether it faces its user (purpose; anything not passing is in purpose.blocked)')
+        found['not_checked'] += purpose['not_checked']
     return {'valid': all(v for v in checks.values() if v is not None), 'units': 'mm', 'bounds_mm': bounds,
             'size_mm': m.extents.tolist(), 'volume_mm3': float(m.volume) if m.is_volume else None,
             'step_volume_mm3': float(step.volume) if step is not None else None, 'solid_count': len(step.solids()) if step is not None else len(m.split(only_watertight=True)),
             'mesh_components': len(m.split(only_watertight=False)), 'checks': checks,
-            **evidence(assembly),
-            'renders': render(m, base.parent / (base.name + '.renders'))}
+            **found, 'renders': renders,
+            # ready needs sound geometry too; problems (body gaps) stay advisory, as they were
+            **({'purpose': purpose, 'ready': purpose['ready'] and all(v for v in checks.values() if v is not None)} if purpose is not None else {})}
+
+
+def use_view(step, folder, eye=None):
+    """The design as it is used, held objects and the surfaces it meets included, seen from the user's eye when given."""
+    user = eye is not None
+    from build123d import Box, Compound, Pos, import_step
+    from purpose import _mesh
+    shape = import_step(str(step))
+    kids = list(shape.children) if isinstance(shape, Compound) else []
+    world = [c for c in kids if (c.label or '').startswith('world:')]
+    if world and len(world) < len(kids):
+        # Only the part of a wall, desk or dash near the design: a whole slab would fill the picture.
+        rest = Compound(children=[c for c in kids if c not in world]).bounding_box()
+        near = Pos(*rest.center()) * Box(rest.size.X + 50, rest.size.Y + 50, rest.size.Z + 50)
+        clipped = [c & near for c in world]
+        shape = Compound(children=[c for c in kids if c not in world] + [c for c in clipped if c.solids()])
+    m = _mesh(shape, 0.1)
+    az, el = 35.0, 26.0
+    if eye is None and world and len(world) < len(kids):
+        # No eye given: look from the part's side of the surface it meets, so a wall or armrest never hides it.
+        towards = np.array(list(rest.center()), float) - np.array(list(Compound(children=world).bounding_box().center()), float)
+        if np.linalg.norm(towards) > 1e-6:
+            default = np.array([math.sin(math.radians(az)) * math.cos(math.radians(el)), -math.cos(math.radians(az)) * math.cos(math.radians(el)), math.sin(math.radians(el))])
+            eye = m.bounds.mean(axis=0) + 1000 * (towards / np.linalg.norm(towards) + 0.7 * default)
+    if eye is not None:
+        d = np.asarray(eye, float) - m.bounds.mean(axis=0)
+        az, el = math.degrees(math.atan2(d[0], -d[1])), max(-75.0, min(75.0, math.degrees(math.atan2(d[2], math.hypot(d[0], d[1])))))
+    im = perspective(m, 1200, az, el)
+    label = 'in use' + (', from the user\'s eye' if user else ', from the side it is used from' if eye is not None else ', from the front right and above')
+    ImageDraw.Draw(im).text((24, 20), label, fill='black', font=ImageFont.load_default(size=28))
+    file = folder / 'use.png'; im.resize((800, 800), Image.LANCZOS).save(file)
+    return str(file)
 
 
 # Starting print-in-place gap between separate bodies: Prusa's first value for movable parts is "at least 0.3 mm"

@@ -35,6 +35,15 @@ P = {
     "print_in_place": False,  # two parts assembled by hand: only touching is a problem
 }
 
+# What it is for, as data: cad_run compiles it into requirements and evaluates them on use() below.
+PURPOSE = {
+    "for": "a hook that clamps under my 25 mm desk to hang my headphones",
+    "modelled_on": "Brainwavz Hoist headphone hanger with adjustable clamp",
+    "holds": [{"body": "headphones", "mass_g": 350}],
+    "mounts": [{"body": "desk", "by": "clamp"}],
+    "material": "PETG",
+}
+
 
 def thread(root_r, crest_r, z0, length):
     """A 45 degree trapezoid swept along a helix about Z, from z0. root_r > crest_r makes the nut's thread."""
@@ -89,3 +98,26 @@ def build():
     turn = 360 * (lift + kh + 1 - z_nut) / P["pitch"] + 180
     used = Rot(90, 0, 0) * Compound([frame, to_frame * Pos(0, 0, lift) * Rot(0, 0, turn) * screw])
     return Pos(0, 0, -used.bounding_box().min.Z) * used
+
+
+def use():
+    """As used: clamped on a desk_t desk whose top is the plane the top jaw lies on, a headband resting on the hook.
+    A clamp's strength is not computed; its loads are, from where the headphones hang."""
+    pose = P["pose"]
+    P["pose"] = "assembled"
+    try:
+        shown = build()
+    finally:
+        P["pose"] = pose
+    desk_top = shown.bounding_box().max.Z - P["bar_t"]       # the top jaw lies on the desk
+    parts = shown.solids()
+    for k, s in enumerate(parts):
+        s.label = f"body {k + 1}"
+    w = P["width"]
+    desk = Pos(150, -w / 2, desk_top - P["desk_t"] / 2) * Box(300, 300, P["desk_t"])
+    desk.label = "world:desk"
+    hook_top = desk_top - P["opening"] - P["drop"]           # top of the hook arm
+    x = P["reach"] + P["bend_r"] - P["hook_len"] / 2
+    band = Pos(x, -w / 2, hook_top + 15) * Box(30, 60, 30)   # the headband where it rests
+    band.label = "held:headphones"
+    return Compound(children=[*parts, band, desk])
