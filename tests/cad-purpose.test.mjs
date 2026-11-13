@@ -94,3 +94,17 @@ test("a solid design with no PURPOSE is not ready; one that holds nothing needs 
   assert.equal(pot.ready, true, JSON.stringify(pot.purpose.blocked));
   assert.equal(pot.useRendered, false);
 });
+
+test("a use() that raises keeps the export and blocks ready with what to fix", runtime, () => {
+  const r = inspect("use_raises.py");
+  assert.equal(r.valid, true);
+  assert.equal(r.ready, false);
+  assert.match(r.purpose.blocked[0], /^Fix use\(\) \(it raised NameError/);
+});
+
+test("use() must show the part build() exports, not another one", runtime, () => {
+  const r = inspect("use_not_built.py");
+  assert.equal(r.ready, false);
+  assert.equal(find(r, "use is the built part").status, "fail");
+  assert.match(r.purpose.blocked.join(" "), /^Build the part in use\(\) from build\(\)/);
+});

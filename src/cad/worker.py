@@ -125,11 +125,15 @@ def main():
             cad.export_step(shape, str(out) + '.step')
             # The design as it is used: the part with what it holds (held:<name>) and what it meets (world:<name>),
             # Z up. Exported for the inspection process, which computes its loads; the script never reports them.
+            # A use() that fails costs the run its readiness, never the export build() already made.
             if callable(namespace.get('use')):
-                used = namespace['use']()
-                if not isinstance(used, cad.Shape) or not used.solids():
-                    raise ValueError('use() must return a build123d Shape: a Compound of the part with labelled held:<name> and world:<name> solids.')
-                cad.export_step(used, str(out) + '.use.step')
+                try:
+                    used = namespace['use']()
+                    if not isinstance(used, cad.Shape) or not used.solids():
+                        raise ValueError('use() must return a build123d Shape: a Compound of the part with labelled held:<name> and world:<name> solids.')
+                    cad.export_step(used, str(out) + '.use.step')
+                except Exception as e:
+                    Path(str(out) + '.use.error').write_text(f'{type(e).__name__}: {e}'[:300])
     elif mode == 'inspect':
         from geometry import inspect
         print(json.dumps(inspect(request), allow_nan=False))

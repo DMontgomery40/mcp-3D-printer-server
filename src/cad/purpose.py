@@ -61,10 +61,12 @@ def compile_purpose(p):
     mounts = p.get('mounts') or []
     holds = holds if isinstance(holds, list) else [holds]
     mounts = mounts if isinstance(mounts, list) else [mounts]
-    bad = [h for h in holds if not (isinstance(h, dict) and isinstance(h.get('body'), str) and isinstance(h.get('mass_g'), (int, float)) and not isinstance(h.get('mass_g'), bool) and h['mass_g'] >= 0)]
+    good_hold = lambda h: isinstance(h, dict) and isinstance(h.get('body'), str) and isinstance(h.get('mass_g'), (int, float)) and not isinstance(h.get('mass_g'), bool) and h['mass_g'] >= 0
+    bad = [h for h in holds if not good_hold(h)]
     if bad:
         req.append(('holds', 'each PURPOSE["holds"] entry is {"body": name, "mass_g": grams}'))
-    bad = [m for m in mounts if not (isinstance(m, dict) and isinstance(m.get('body'), str) and m.get('by') in KINDS)]
+    good_mount = lambda m: isinstance(m, dict) and isinstance(m.get('body'), str) and m.get('by') in KINDS
+    bad = [m for m in mounts if not good_mount(m)]
     if bad:
         req.append(('mounts', 'each PURPOSE["mounts"] entry is {"body": name, "by": one of ' + ', '.join(KINDS) + '}'))
     if 'holder' in classes and not holds:
@@ -75,7 +77,8 @@ def compile_purpose(p):
     good_point = isinstance(user, (list, tuple)) and len(user) == 3 and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in user)
     faces = p.get('faces')
     if 'screen' in classes and holds and faces is None:
-        faces = {'body': holds[0].get('body') if isinstance(holds[0], dict) else None}
+        named = [h.get('body') for h in holds if isinstance(h, dict) and isinstance(h.get('body'), str)]
+        faces = {'body': next((n for n in named if SCREEN.search(n.replace('_', ' '))), named[0] if named else None)}
     if faces is not None or p.get('reach_mm') is not None:
         if not good_point:
             req.append(('user', 'a screen held for a person must face them: give PURPOSE["user"], their eye point [x, y, z] mm in the use() frame'))
@@ -86,9 +89,11 @@ def compile_purpose(p):
     press = p.get('press_n', 1.5 if holds else 0.0)   # a finger on a screen or on what it holds
     press = float(press) if isinstance(press, (int, float)) and not isinstance(press, bool) and press >= 0 else 1.5
     material = str(p.get('material') or 'PLA').lower()
-    out.update(requirements=req, holds=[h for h in holds if isinstance(h, dict)], mounts=[m for m in mounts if isinstance(m, dict)],
+    within = (faces or {}).get('within_deg', 25) if isinstance(faces, dict) else 25
+    within = float(within) if isinstance(within, (int, float)) and not isinstance(within, bool) and 0 < within <= 90 else 25.0
+    out.update(requirements=req, holds=[h for h in holds if good_hold(h)], mounts=[m for m in mounts if good_mount(m)],
                user=list(map(float, user)) if good_point else None, faces=faces if isinstance(faces, dict) else None,
-               within_deg=float((faces or {}).get('within_deg', 25)) if isinstance(faces, dict) else 25.0,
+               within_deg=within,
                reach_mm=p.get('reach_mm'), jolt_g=jolt, press_n=press,
                density=DENSITY.get(material, DENSITY['pla']), material=material,
                environment='vehicle' if 'vehicle' in classes else 'indoor')
@@ -107,8 +112,12 @@ def _patch(part, world):
     """Part triangles lying on a world body: area, centroid, outward normal (part into world) and plane moments."""
     import trimesh
     tri = part.triangles
-    d = np.abs(trimesh.proximity.ProximityQuery(world).signed_distance(tri.reshape(-1, 3))).reshape(-1, 3)
-    on = (d <= PATCH_MM).all(axis=1)
+    lo, hi = world.bounds[0] - PATCH_MM - 1e-6, world.bounds[1] + PATCH_MM + 1e-6
+    near = np.flatnonzero(((part.vertices >= lo) & (part.vertices <= hi)).all(axis=1))    # only vertices by the surface
+    d = np.full(len(part.vertices), np.inf)
+    if len(near):
+        d[near] = trimesh.proximity.closest_point(world, part.vertices[near])[1]
+    on = (d[part.faces] <= PATCH_MM).all(axis=1)
     if not on.any():
         return None
     t, n, a = tri[on], part.face_normals[on], part.area_faces[on]
@@ -145,13 +154,18 @@ def _held_face(held, part_com):
     return n, com + n * half, com
 
 
-def evaluate(use_step, compiled):
+def evaluate(use_step, compiled, build_volume=None):
     """Each requirement's status on the use() assembly, the computed loads at the mounts, and what blocks ready."""
     from build123d import Compound, import_step, CenterOf
     results, loads, notes = [], [], []
     for name, problem in compiled['requirements']:
         results.append({'requirement': name, 'status': 'fail' if problem else 'pass', 'says': problem or 'stated', **({'fix': problem} if problem else {})})
     needs = compiled['holds'] or compiled['mounts'] or compiled['user'] is not None
+    failed = Path(str(use_step)[:-len('.use.step')] + '.use.error')
+    if failed.exists():
+        results.append({'requirement': 'use', 'status': 'not_modelled', 'says': 'use() failed: ' + failed.read_text()[:300],
+                        'fix': 'Fix use() (it raised ' + failed.read_text()[:200] + '); it must return a Compound of the part with labelled held:<name> and world:<name> solids'})
+        return results, loads, notes
     if not use_step.exists():
         if needs:
             results.append({'requirement': 'use', 'status': 'not_modelled', 'says': 'no use(): the loads cannot be computed',
@@ -171,6 +185,9 @@ def evaluate(use_step, compiled):
     part_mesh = _mesh(part_shape)
     vol = sum(s.volume for s in part)
     part_mass = vol * compiled['density'] / 1000.0                     # g
+    if build_volume and abs(vol - build_volume) > 0.02 * build_volume + 1.0:
+        results.append({'requirement': 'use is the built part', 'status': 'fail', 'says': f'the part in use() is {vol:.0f} mm^3, the part build() exports {build_volume:.0f} mm^3',
+                        'fix': f'Build the part in use() from build() (the same bodies, moved into the pose it is used in): its {vol:.0f} mm^3 is not the {build_volume:.0f} mm^3 build() exports, so nothing checked in use() is the part that prints'})
     part_com = np.array(list(part_shape.center(CenterOf.MASS)), float) if vol > 0 else part_mesh.center_mass
     masses = [('the part', part_mass, part_com)]
     held_faces = []
@@ -206,6 +223,9 @@ def evaluate(use_step, compiled):
     if compiled['user'] is not None:
         eye = np.array(compiled['user'], float)
         want = (compiled['faces'] or {}).get('body')
+        if compiled['faces'] is not None and want is not None and want not in [h['body'] for h in compiled['holds']]:
+            results.append({'requirement': f'faces user ({want})', 'status': 'not_modelled', 'says': f'faces names {want}, which is not in PURPOSE["holds"]',
+                            'fix': f'Name in PURPOSE["faces"] the held body that must face the user ({", ".join(h["body"] for h in compiled["holds"]) or "none is listed"}), or list {want} in PURPOSE["holds"] and model it as held:{want}'})
         for name, n, face in held_faces:
             if compiled['faces'] is not None and want not in (None, name):
                 continue
@@ -299,7 +319,7 @@ def evaluate(use_step, compiled):
     return results, loads, notes
 
 
-def inspect_purpose(request):
+def inspect_purpose(request, build_volume=None):
     """The purpose block of a solid result, or None for mesh mode and 3MF projects (their paths are unchanged)."""
     base = Path(request['output']) / request['name']
     if request.get('mode', 'solid') != 'solid' or Path(str(base) + '.project.json').exists():
@@ -311,7 +331,7 @@ def inspect_purpose(request):
                 'loads': [], 'not_checked': [], 'blocked': [why + '.'], 'ready': False}
     compiled = compile_purpose(p)
     try:
-        results, loads, notes = evaluate(Path(str(base) + '.use.step'), compiled)
+        results, loads, notes = evaluate(Path(str(base) + '.use.step'), compiled, build_volume)
     except Exception as e:   # a measurement that failed proves nothing: reported, and it blocks ready
         loads, notes = [], []
         results = [{'requirement': n, 'status': 'fail' if pr else 'pass', 'says': pr or 'stated'} for n, pr in compiled['requirements']]

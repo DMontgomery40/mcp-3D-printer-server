@@ -42,7 +42,7 @@ def inspect(request):
     # What the part is for, evaluated on the design as it is used (purpose.py): ready, and why not.
     from purpose import inspect_purpose
     try:
-        purpose = inspect_purpose(request)
+        purpose = inspect_purpose(request, float(step.volume) if step is not None else None)
     except Exception as e:
         why = f'the purpose could not be evaluated: {type(e).__name__}: {e}'[:300]
         purpose = {'declared': None, 'requirements': [], 'loads': [], 'not_checked': [], 'blocked': [why], 'ready': False}
@@ -61,7 +61,8 @@ def inspect(request):
             'step_volume_mm3': float(step.volume) if step is not None else None, 'solid_count': len(step.solids()) if step is not None else len(m.split(only_watertight=True)),
             'mesh_components': len(m.split(only_watertight=False)), 'checks': checks,
             **found, 'renders': renders,
-            **({'purpose': purpose, 'ready': purpose['ready']} if purpose is not None else {})}
+            # ready needs sound geometry too; problems (body gaps) stay advisory, as they were
+            **({'purpose': purpose, 'ready': purpose['ready'] and all(v for v in checks.values() if v is not None)} if purpose is not None else {})}
 
 
 def use_view(step, folder, eye=None):
