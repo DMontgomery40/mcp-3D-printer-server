@@ -154,6 +154,18 @@ test("the designer's numbers have floors: a held mass, a press, a facing allowan
   assert.equal(r.purpose.within_deg, 25);
 });
 
+test("a light, bulky real object passes the held-mass check: a paper-towel roll at about 0.094 g/cm3", runtime, () => {
+  const r = inspect("towel_roll.py");
+  assert.equal(find(r, "held roll size and mass"), undefined, JSON.stringify(r.purpose.blocked));
+  assert.equal(r.ready, true, JSON.stringify(r.purpose.blocked));
+});
+
+test("a held body far larger than the object it stands for is refused", runtime, () => {
+  const r = inspect("oversized_held.py");
+  assert.equal(r.ready, false);
+  assert.match(r.purpose.blocked.join(" "), /Model the keys at its real size and mass: 80 g in the 27000\.0 cm\^3 held:keys/);
+});
+
 test("a held object whose mass does not fit its size is refused", runtime, () => {
   const r = inspect("dense_held.py");
   assert.equal(r.ready, false);

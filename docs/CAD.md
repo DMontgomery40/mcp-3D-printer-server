@@ -89,7 +89,7 @@ def use():   # Z up, gravity -Z: the part, the held object and the surface it me
 - for a part that rests on a surface, checks that it neither lifts, tips (the centre of pressure stays inside its footprint) nor slides (friction 0.4);
 - for screws, clamps and hooks, reports the loads; their strength is listed in `not_checked`. A mount declared `other` that carries a held body blocks ready (pick the nearest real kind);
 - fails closed where it cannot compute: a taped contact that is not one flat patch blocks ready, and in a mix of mount kinds the tape is still checked, carrying the whole load;
-- holds the designer's numbers to floors: a held body needs a mass over 0 g that fits its modelled size (0.15 to 8 g/cm³), the press is at least 1.5 N when something is held, jolts are at least 1.5 g in a vehicle, and a held screen may be at most 25° off the user's eye;
+- holds the designer's numbers to floors: a held body needs a mass over 0 g that fits its modelled size (0.03 to 8 g/cm³), the press is at least 1.5 N when something is held, jolts are at least 1.5 g in a vehicle, and a held screen may be at most 25° off the user's eye;
 - needs each tape or rest surface to be a real one: a slab reaching at least 3 times the contact's area in its plane and at least 3 mm behind it, not a block shaped to the part;
 - draws `renders.use`, the design in use from the user's eye (or from the front right and above), with the world surface cut to its surroundings.
 
