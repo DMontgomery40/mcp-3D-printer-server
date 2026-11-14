@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `counterpart_diagnostics` (counterpart/1) returns this server's own redacted diagnostics bundle for a tester's bug report, `{package, version, files: [{name, content, truncated}], notes}`, so a client's Export Diagnostics can include the MCP's logs without knowing their paths: the configured printer (kind, host, model, serial, connection; firmware is not read), its settings, slicer path and version (never by running the slicer), CAD runtime status, recent tool errors, this run's stderr (printer connection and Bambu MQTT messages) and the tails of the FULU control trace and Bambu network plug-in logs. Access codes, LAN passwords, API keys, tokens, cookies, account emails and anything named like a secret are redacted, including configured secrets and secret tool arguments wherever they appear; serial numbers stay. Names, contents and notes never exceed `max_bytes` (default 4 MiB, at most 8 MiB); a missing file is a note. `counterpart_printer_info` advertises it as `capabilities.diagnostics`. Contacts no printer; tested with mocked logs and no printer. Ported from bambu-printer-mcp, sharing `src/counterpart/diagnostics.ts` verbatim. Refs DMontgomery40/scan-to-make#799.
+
 ## [1.2.76] – 2026-11-12
 
 ### Added
