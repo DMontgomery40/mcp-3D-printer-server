@@ -628,3 +628,78 @@ test("final is recorded only when the engine finds the design ready; the designe
   verdict = {};                                  // mesh mode and 3MF projects carry no verdict: today's path
   assert.equal((await run("mesh")).final, true);
 });
+
+test("every receipt says whether the run is the design or a check, and every valid run that is not final says why (scan-to-make #790)", async (t) => {
+  const { CadEngine } = await import("../dist/cad-engine.js");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cad-role-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  let verdict = {}, valid = true;
+  const requests = [];
+  const system = {
+    platform: "linux",
+    run: async (file, args) => {
+      if (args[0] === "venv") {
+        await fs.mkdir(path.join(root, "runtime", "bin"), { recursive: true });
+        await fs.writeFile(path.join(root, "runtime", "bin", "python"), "stub");
+      }
+      if (args.includes("smoke"))
+        return { stdout: JSON.stringify({ build123d: "0.13.0", watertight: true, manifold: true, step_valid: true, solid_count: 1 }) };
+      if (args.includes("parameters")) return { stdout: "{}" };
+      if (args.includes("build")) {
+        const q = JSON.parse(await fs.readFile(args.at(-1), "utf8"));
+        requests.push(q);
+        for (const ext of ["stl", "step"]) await fs.writeFile(path.join(q.output, `${q.name}.${ext}`), ext);
+        return { stdout: "" };
+      }
+      if (args.includes("inspect"))
+        return { stdout: JSON.stringify({ valid, bounds_mm: [[0, 0, 0], [1, 1, 1]], solid_count: 1, checks: {}, renders: {}, ...verdict }) };
+      return { stdout: "" };
+    },
+  };
+  const engine = new CadEngine({ dataDir: root, outputRoots: [root], system });
+  await engine.setup({ install: true });
+  const run = async (name, extra = {}) => {
+    const result = await engine.run({ script: "P={}\ndef build(): pass", output_dir: root, name, ...extra });
+    return { result, receipt: JSON.parse(await fs.readFile(result.result_manifest, "utf8")) };
+  };
+  // absent means design, and the receipt says so
+  verdict = { ready: true, purpose: { blocked: [] } };
+  const design = await run("design", { final: true });
+  assert.equal(design.receipt.role, "design");
+  assert.equal(design.receipt.final, true);
+  assert.equal(design.receipt.draft_reasons, undefined, "a final run is not a draft");
+  // a ready run the designer did not select
+  const unselected = await run("unselected");
+  assert.equal(unselected.receipt.role, "design");
+  assert.deepEqual(unselected.receipt.draft_reasons, ["The designer didn't mark this run final."]);
+  assert.deepEqual(unselected.result.draft_reasons, unselected.receipt.draft_reasons);
+  // a run refused as final: its reasons, in plain sentences; final_refused stays as it was
+  verdict = { ready: false, purpose: { blocked: ["Turn the phone toward the user: its face is 35 deg off the line to their eye (allowed 25)."] } };
+  const refused = await run("refused", { final: true });
+  assert.deepEqual(refused.receipt.final_refused, verdict.purpose.blocked);
+  assert.deepEqual(refused.receipt.draft_reasons, [
+    "It isn't ready, so the engine didn't mark it final.",
+    "Turn the phone toward the user: its face is 35 deg off the line to their eye (allowed 25).",
+  ]);
+  // not ready and not asked for: both reasons
+  const unready = await run("unready");
+  assert.deepEqual(unready.receipt.draft_reasons, [
+    "The designer didn't mark this run final.",
+    "Turn the phone toward the user: its face is 35 deg off the line to their eye (allowed 25).",
+  ]);
+  // a check part or reference export: never the design, never final, and the build is told so
+  verdict = {};
+  const check = await run("chk_cradle_seated", { role: "check", final: true });
+  assert.equal(check.receipt.role, "check");
+  assert.equal(check.receipt.final, false);
+  assert.deepEqual(check.receipt.final_refused, ["A check run is never the design: run the design itself with role \"design\" to mark it final."]);
+  assert.deepEqual(check.receipt.draft_reasons, ["This is a check part or reference export, not the design."]);
+  assert.equal(requests.at(-1).role, "check");
+  // an invalid run is never a draft, so it gets no reasons
+  valid = false; verdict = { ready: false, purpose: { blocked: ["x."] } };
+  const broken = await run("broken");
+  assert.equal(broken.receipt.draft_reasons, undefined);
+  assert.equal(broken.receipt.role, "design");
+  // only design or check
+  await assert.rejects(engine.run({ script: "P={}\ndef build(): pass", output_dir: root, name: "bad", role: "draft" }), /role must be "design" or "check"/);
+});

@@ -22,12 +22,12 @@ const runtime = {
   timeout: 300000,
 };
 
-function inspect(fixture, mode = "solid") {
+function inspect(fixture, mode = "solid", extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cad-purpose-"));
   try {
     fs.writeFileSync(path.join(dir, "p.json"), "{}");
     const request = path.join(dir, "request.json");
-    fs.writeFileSync(request, JSON.stringify({ output: dir, name: "part", script: path.join(fixtures, fixture), parameters: path.join(dir, "p.json"), mode }));
+    fs.writeFileSync(request, JSON.stringify({ output: dir, name: "part", script: path.join(fixtures, fixture), parameters: path.join(dir, "p.json"), mode, ...extra }));
     for (const step of ["build", "inspect"]) {
       const r = spawnSync(python, ["-I", "-B", worker, step, request], { encoding: "utf8", timeout: 240000 });
       assert.equal(r.status, 0, r.stderr);
@@ -195,4 +195,10 @@ test("mesh mode evaluates no purpose and never calls use()", runtime, () => {
   assert.equal(r.purpose, undefined);
   assert.equal(r.ready, undefined);
   assert.ok(!r.files.some((f) => /\.use\.(step|error)$/.test(f)), r.files.join(", "));
+});
+
+test("a check run evaluates no purpose: a fit reference is not the design", runtime, () => {
+  const r = inspect("strip_square.py", "solid", { role: "check" });
+  assert.equal(r.purpose, undefined);
+  assert.equal(r.ready, undefined);
 });

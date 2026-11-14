@@ -392,8 +392,8 @@ def evaluate(use_step, compiled, build_volume=None):
 def inspect_purpose(request, build_volume=None):
     """The purpose block of a solid result, or None for mesh mode and 3MF projects (their paths are unchanged)."""
     base = Path(request['output']) / request['name']
-    if request.get('mode', 'solid') != 'solid' or Path(str(base) + '.project.json').exists():
-        return None
+    if request.get('mode', 'solid') != 'solid' or Path(str(base) + '.project.json').exists() or request.get('role') == 'check':
+        return None                     # a check part or reference export is not the design: nothing to hold it to
     p, error = read(request['script'])
     if p is None:
         why = (f'Fix PURPOSE: {error}' if error else 'Add PURPOSE = {"for": ..., "modelled_on": ...} beside P: what the part is for in the person\'s words and the bought product it follows (plus holds, mounts and use() when it carries something), so its use can be checked')

@@ -59,6 +59,8 @@ test("the engine prompt names every example by purpose in one line each, and the
   assert.match(text, /"held:<body>"/);
   assert.match(text, /"world:<body>"/);
   assert.match(text, /final: true is recorded only when ready is true/);
+  // check parts and reference exports say so, so a client never keeps one as the person's model (scan-to-make #790)
+  assert.match(text, /pass role: "check" to every cad_run that is not the design itself/);
   // the examples that teach it carry both, one per kind of interface the engine models
   for (const name of ["desk_edge_cable_holder", "desk_clamp_hook", "phone_stand"]) {
     const { script } = cadExamples().find((e) => e.name === name);

@@ -580,6 +580,7 @@ export class CadEngine {
       "inputs",
       "mode",
       "final",
+      "role",
     ]);
     const root = await this.allowedDirectory(args.output_dir);
     const name = plainName(args.name);
@@ -587,6 +588,11 @@ export class CadEngine {
       deadline = started + timeout;
     if (args.final !== undefined && typeof args.final !== "boolean")
       throw new Error("final must be a boolean.");
+    // What the run is for, on every receipt: the design itself, or a check part or reference export that must
+    // never become the person's model (scan-to-make #790 keeps the last valid run as a draft). Absent is design.
+    if (args.role !== undefined && args.role !== "design" && args.role !== "check")
+      throw new Error('role must be "design" or "check".');
+    const role = args.role === "check" ? "check" : "design";
     if (root.split(path.sep).includes(".cad-inputs"))
       throw new Error(
         "output_dir cannot be inside the reserved CAD input cache.",
@@ -718,6 +724,7 @@ export class CadEngine {
           status: "pending",
           final: false,
           ...(args.final === true ? { final_requested: true } : {}),
+          role,
           lineage_id: lineage,
         });
         try {
@@ -738,6 +745,7 @@ export class CadEngine {
             script,
             parameters,
             mode,
+            role,
             inputs: snapshots,
           };
           await fs.writeFile(request, JSON.stringify(base), { mode: 0o600 });
@@ -812,8 +820,11 @@ export class CadEngine {
           const project = await this.project3mf(job, name, snapshots);
           // final is the designer's selection, and it no longer stands on its own word (scan-to-make #608): a solid
           // design is selected only when the engine found it ready, its purpose evaluated on the design as used.
+          const blocked: string[] = Array.isArray(checked.purpose?.blocked) ? checked.purpose.blocked : [];
           const refused: string[] | undefined =
-            args.final === true && checked.ready === false
+            args.final === true && role === "check"
+              ? ['A check run is never the design: run the design itself with role "design" to mark it final.']
+              : args.final === true && checked.ready === false
               ? (Array.isArray(checked.purpose?.blocked) && checked.purpose.blocked.length ? checked.purpose.blocked : ["the engine did not find this design ready"])
               : undefined;
           const result = {
@@ -831,6 +842,18 @@ export class CadEngine {
             status: "completed",
             final: args.final === true && !refused,
             ...(refused ? { final_requested: true, final_refused: refused } : {}),
+            role,
+            // Why a valid run is not the final model, in plain sentences, for a client that keeps it as a draft.
+            ...(checked.valid === true && !(args.final === true && !refused)
+              ? {
+                  draft_reasons:
+                    role === "check"
+                      ? ["This is a check part or reference export, not the design."]
+                      : args.final === true
+                        ? ["It isn't ready, so the engine didn't mark it final.", ...refused!]
+                        : ["The designer didn't mark this run final.", ...(checked.ready === false ? blocked : [])],
+                }
+              : {}),
             completed_at: new Date().toISOString(),
             lineage_id: lineage,
             result_manifest: resultManifest,
@@ -859,6 +882,7 @@ export class CadEngine {
             status: "failed",
             final: false,
             final_requested: args.final === true,
+            role,
             lineage_id: lineage,
             message: e instanceof Error ? e.message : String(e),
             script,
