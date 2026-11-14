@@ -325,6 +325,8 @@ const DEFAULT_FILAMENT_PROFILE =
 // Bambu-specific default values
 const DEFAULT_BAMBU_SERIAL = process.env.BAMBU_SERIAL || "";
 const DEFAULT_BAMBU_TOKEN = process.env.BAMBU_TOKEN || "";
+/** Access-code names people try that this server does not read (counterpart_diagnostics names them when set). */
+const UNREAD_ACCESS_CODE_NAMES = ["BAMBU_PRINTER_ACCESS_CODE", "BAMBU_PRINTER_ACCESS_TOKEN", "BAMBU_ACCESS_CODE", "BAMBU_ACCESS_TOKEN", "BAMBU_PRINTER_TOKEN"];
 
 // Printer model and bed type (Bambu safety)
 const DEFAULT_BAMBU_MODEL = process.env.BAMBU_MODEL?.trim().toLowerCase() || "";
@@ -985,6 +987,9 @@ class ThreeDPrinterMCPServer {
       // Firmware comes only from the printer; this tool asks it nothing.
       firmware: "unknown",
     }];
+    // A look-alike name this server never reads leaves credentialSet false; name it so the bundle says why.
+    const ignored = bambu ? UNREAD_ACCESS_CODE_NAMES.filter(key => process.env[key]) : [];
+    if (ignored.length) notes.push(`${ignored.join(" and ")} ${ignored.length > 1 ? "are" : "is"} set, but this server reads the access code only from BAMBU_TOKEN (in the environment or its .env).`);
     if (!process.env.PRINTER_HOST) notes.push(`No printer host is configured (PRINTER_HOST is unset); printers.json shows the default, ${DEFAULT_HOST}.`);
     const selected = wanted ? printers.filter(p => [p.id, p.host, p.serial].some(v => v?.toLowerCase() === wanted)) : printers;
     if (wanted && !selected.length) notes.push(`No configured printer is ${args.printer}; printers.json lists none.`);

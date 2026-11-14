@@ -45,9 +45,10 @@ async function mock(t, routes) {
   return { port: String(http.address().port), requests };
 }
 
-async function server(t, env) {
+async function server(t, env, files = {}) {
   const temp = await trackedMkdtemp(path.join(os.tmpdir(), "counterpart-tools-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  for (const [name, text] of Object.entries(files)) await fs.writeFile(path.join(temp, name), text, { mode: 0o600 });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(ROOT, "dist", "index.js")],
@@ -398,6 +399,27 @@ test("counterpart_diagnostics returns this server's redacted bundle within max_b
   const mine = (await call(client, "counterpart_diagnostics", { printer: "127.0.0.1" })).structuredContent;
   assert.equal(JSON.parse(mine.files.find((file) => file.name === "printers.json").content).printers.length, 1);
   assert.equal((await client.callTool({ name: "counterpart_diagnostics", arguments: { max_bytes: 8_388_609 } })).isError, true);
+});
+
+test("counterpart_diagnostics says credentialSet from every place this server reads the access code, and never returns it", async (t) => {
+  const code = "dummy-access-7731";
+  const printer = { PRINTER_TYPE: "bambu", BAMBU_SERIAL: "01PTESTSERIAL", BAMBU_MODEL: "p1s" };
+  const printers = (bundle) => JSON.parse(bundle.files.find((file) => file.name === "printers.json").content).printers;
+  for (const [label, env, files] of [
+    ["BAMBU_TOKEN in the environment", { BAMBU_TOKEN: code }, {}],
+    ["BAMBU_TOKEN in .env", {}, { ".env": `BAMBU_TOKEN=${code}\n` }],
+  ]) {
+    const { client } = await server(t, { ...printer, ...env }, files);
+    const bundle = (await call(client, "counterpart_diagnostics")).structuredContent;
+    assert.deepEqual(printers(bundle).map((p) => p.credentialSet), [true], label);
+    assert.ok(!JSON.stringify(bundle).includes(code), `${label}: the code leaked`);
+  }
+  // A name this server does not read: false, a note that names it, and its value still redacted.
+  const { client } = await server(t, { ...printer, BAMBU_PRINTER_ACCESS_CODE: code });
+  const bundle = (await call(client, "counterpart_diagnostics")).structuredContent;
+  assert.deepEqual(printers(bundle).map((p) => p.credentialSet), [false]);
+  assert.ok(bundle.notes.some((note) => /BAMBU_PRINTER_ACCESS_CODE is set, but this server reads the access code only from BAMBU_TOKEN/.test(note)), bundle.notes.join("\n"));
+  assert.ok(!JSON.stringify(bundle).includes(code), "the unread code leaked");
 });
 
 test("counterpart_printer_info advertises counterpart_diagnostics", async (t) => {
