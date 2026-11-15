@@ -149,6 +149,22 @@ test("a base partly over a desk's edge touches it, with the patch the size of th
   assert.match(find(off, "mounts desk").says, /does not touch world:desk/);
 });
 
+test("a base across a narrow shelf touches it with no corner on it; a huge base stays cheap; a floating one does not touch", runtime, () => {
+  const area = mount => Number(/^(\d+) mm\^2/.exec(mount.says)[1]);
+  // 100 x 60 mm centred across a 300 x 20 mm shelf: 2000 mm^2 on it, and none of the base's corners.
+  const across = find(inspect("shelf_base.py"), "mounts shelf");
+  assert.equal(across.status, "pass", across.says);
+  assert.ok(Math.abs(area(across) - 2000) <= 200, `${area(across)} mm^2 of a 2000 mm^2 overlap`);
+  // 2000 x 2000 mm on the same shelf: 6000 mm^2, split only where the shelf is.
+  const started = Date.now();
+  const huge = find(inspect("shelf_huge_base.py"), "mounts shelf");
+  assert.equal(huge.status, "pass", huge.says);
+  assert.ok(Math.abs(area(huge) - 6000) <= 600, `${area(huge)} mm^2 of a 6000 mm^2 overlap`);
+  assert.ok(Date.now() - started < 120_000, `${Date.now() - started} ms`);
+  const off = find(inspect("shelf_floating.py"), "mounts shelf");
+  assert.equal(off.status, "not_modelled");
+});
+
 const status = (r, prefix) => find(r, prefix)?.status;
 const peak = (r, kase) => r.purpose.loads.find((l) => l.case === kase).peak_tension_kpa;
 
