@@ -11,6 +11,11 @@ import {
   DIAGNOSTICS_DEFAULT_BYTES, DIAGNOSTICS_MAX_BYTES, DIAGNOSTICS_OUTPUT_SCHEMA, appVersion, buildDiagnostics, diagnosticsBudget,
   newestLogs, recordToolError, settingsSnapshot, redactText, rememberSecretArguments, resetDiagnosticsMemory, tailText, toolErrorsText,
 } from "../dist/counterpart/diagnostics.js";
+import * as diagnostics from "../dist/counterpart/diagnostics.js";
+// The pattern rules alone, where a test reads what each named form becomes (redactText also withholds whole lines).
+const redactPatterns = diagnostics.redactPatterns ?? redactText;
+const WITHHELD = diagnostics.WITHHELD ?? "[line withheld: may contain a secret]";
+const { captureServerLog, serverLogText } = diagnostics;
 
 const bytes = text => Buffer.byteLength(text, "utf8");
 const bundleBytes = result => result.files.reduce((sum, file) => sum + bytes(file.name) + bytes(file.content), 0) + result.notes.reduce((sum, note) => sum + bytes(note), 0);
@@ -107,7 +112,7 @@ const SECRETS = [
 
 for (const [kind, line, secret, options] of SECRETS) {
   test(`redaction removes ${kind}`, () => {
-    const out = redactText(line, options?.secrets);
+    const out = redactPatterns(line, options?.secrets);
     assert.ok(!out.includes(secret), `${kind}: ${out}`);
   });
 }
@@ -116,114 +121,114 @@ test("this server's own home folder reads ~, also with escaped slashes; other pe
   const previous = process.env.HOME;
   process.env.HOME = "/home/tester-home";
   t.after(() => { if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous; });
-  assert.equal(redactText("open /home/tester-home/models/a.stl"), "open ~/models/a.stl");
-  assert.equal(redactText(String.raw`{"p":"\/home\/tester-home\/x"}`), String.raw`{"p":"~\/x"}`);
-  assert.equal(redactText("/home/tester-homes/x"), "/home/[user]/x", "a longer name is someone else's");
-  assert.equal(redactText("/Users/Shared/x C:\\Users\\Public\\y"), "/Users/Shared/x C:\\Users\\Public\\y");
+  assert.equal(redactPatterns("open /home/tester-home/models/a.stl"), "open ~/models/a.stl");
+  assert.equal(redactPatterns(String.raw`{"p":"\/home\/tester-home\/x"}`), String.raw`{"p":"~\/x"}`);
+  assert.equal(redactPatterns("/home/tester-homes/x"), "/home/[user]/x", "a longer name is someone else's");
+  assert.equal(redactPatterns("/Users/Shared/x C:\\Users\\Public\\y"), "/Users/Shared/x C:\\Users\\Public\\y");
 });
 
 test("the lead's regressions: a scheme is never taken as the value, access-code is a secret name, a URL's https: swallows nothing", () => {
   // The key=value rule must not take "Bearer" as authorization's value and leave the token after it.
   for (const scheme of ["Bearer", "bearer", "BEARER", "Basic"]) {
-    assert.equal(redactText(`Authorization: ${scheme} sch3meSecretValue99`), `Authorization: ${scheme} [redacted]`);
+    assert.equal(redactPatterns(`Authorization: ${scheme} sch3meSecretValue99`), `Authorization: ${scheme} [redacted]`);
   }
-  assert.equal(redactText('{"Authorization":"Bearer sch3meSecretValue99"}'), '{"Authorization":"[redacted]"}', "a quoted JSON value goes whole");
+  assert.equal(redactPatterns('{"Authorization":"Bearer sch3meSecretValue99"}'), '{"Authorization":"[redacted]"}', "a quoted JSON value goes whole");
   // "access" ends in s: it is never read as a plural and cut to "acces".
-  assert.equal(redactText("access-code: 31415926"), "access-code: [redacted]");
-  assert.equal(redactText("ACCESS_CODE=31415926 accessCode=31415926"), "ACCESS_CODE=[redacted] accessCode=[redacted]");
+  assert.equal(redactPatterns("access-code: 31415926"), "access-code: [redacted]");
+  assert.equal(redactPatterns("ACCESS_CODE=31415926 accessCode=31415926"), "ACCESS_CODE=[redacted] accessCode=[redacted]");
   // "https:" is not a secret name, so it must not take the rest of the URL as its value and hide the token from the rule.
-  assert.equal(redactText("GET https://api.example.com/x?access_token=tokABC123456&y=1"), "GET https://api.example.com/x?access_token=[redacted]&y=1");
-  assert.equal(redactText("open https://ex.com/cb?code=1#id_token=tokXYZ987654"), "open https://ex.com/cb?code=1#id_token=[redacted]");
+  assert.equal(redactPatterns("GET https://api.example.com/x?access_token=tokABC123456&y=1"), "GET https://api.example.com/x?access_token=[redacted]&y=1");
+  assert.equal(redactPatterns("open https://ex.com/cb?code=1#id_token=tokXYZ987654"), "open https://ex.com/cb?code=1#id_token=[redacted]");
 });
 
 test("the app's re-review: structured values under a secret's name, name/value pairs, whole Authorization lines, Negotiate (N1, N3, N6)", () => {
   // N1: an object or array under a secret's name goes whole, and the JSON still parses.
-  assert.equal(redactText('{"password":{"value":"pwvalue1"},"port":990}'), '{"password":"[redacted]","port":990}');
-  assert.equal(redactText('{"tokens":["tokval22","tokval23"]}'), '{"tokens":"[redacted]"}');
-  assert.equal(redactText('{"apiKeys":[{"value":"akval333","note":"a [b] {c}"}]}'), '{"apiKeys":"[redacted]"}');
-  assert.equal(redactText('{"password": {"value": "cut-before-its-end'), '{"password": "[redacted]"', "a structure cut short goes to its line's end");
-  assert.equal(redactText('{"layers":[1,2],"filaments":{"slot":1}}'), '{"layers":[1,2],"filaments":{"slot":1}}', "other structures stay");
+  assert.equal(redactPatterns('{"password":{"value":"pwvalue1"},"port":990}'), '{"password":"[redacted]","port":990}');
+  assert.equal(redactPatterns('{"tokens":["tokval22","tokval23"]}'), '{"tokens":"[redacted]"}');
+  assert.equal(redactPatterns('{"apiKeys":[{"value":"akval333","note":"a [b] {c}"}]}'), '{"apiKeys":"[redacted]"}');
+  assert.equal(redactPatterns('{"password": {"value": "cut-before-its-end'), '{"password": "[redacted]"', "a structure cut short goes to its line's end");
+  assert.equal(redactPatterns('{"layers":[1,2],"filaments":{"slot":1}}'), '{"layers":[1,2],"filaments":{"slot":1}}', "other structures stay");
   // N1: a secret named in a name/key field and given in a value field, either order.
-  assert.equal(redactText('{"name":"BAMBU_ACCESS_CODE","value":"acval444"}'), '{"name":"BAMBU_ACCESS_CODE","value":"[redacted]"}');
-  assert.equal(redactText('{"value":"acval446", "name":"apiKey"}'), '{"value":"[redacted]", "name":"apiKey"}');
-  assert.ok(!redactText('{"key":"BAMBU_TOKEN","value":"acval445"}').includes("acval445"));
-  assert.equal(redactText('{"name":"BAMBU_MODEL","value":"p1s"}'), '{"name":"BAMBU_MODEL","value":"p1s"}', "a setting that is not a secret stays");
-  assert.equal(redactText('{"name":"BAMBU_TOKEN","value":"[set]"}'), '{"name":"BAMBU_TOKEN","value":"[set]"}');
+  assert.equal(redactPatterns('{"name":"BAMBU_ACCESS_CODE","value":"acval444"}'), '{"name":"BAMBU_ACCESS_CODE","value":"[redacted]"}');
+  assert.equal(redactPatterns('{"value":"acval446", "name":"apiKey"}'), '{"value":"[redacted]", "name":"apiKey"}');
+  assert.ok(!redactPatterns('{"key":"BAMBU_TOKEN","value":"acval445"}').includes("acval445"));
+  assert.equal(redactPatterns('{"name":"BAMBU_MODEL","value":"p1s"}'), '{"name":"BAMBU_MODEL","value":"p1s"}', "a setting that is not a secret stays");
+  assert.equal(redactPatterns('{"name":"BAMBU_TOKEN","value":"[set]"}'), '{"name":"BAMBU_TOKEN","value":"[set]"}');
   // N3: the whole Authorization header line goes, a Digest username with it.
-  assert.equal(redactText('Authorization: Digest username="alice", realm="r", response="abc123def"'), "Authorization: Digest [redacted]");
-  assert.equal(redactText('proxy-authorization: digest username="bob", nonce="n1"\nnext line'), "proxy-authorization: digest [redacted]\nnext line");
-  assert.equal(redactText("Authorization: someCustomScheme opaque-value-77"), "Authorization: [redacted]");
+  assert.equal(redactPatterns('Authorization: Digest username="alice", realm="r", response="abc123def"'), "Authorization: Digest [redacted]");
+  assert.equal(redactPatterns('proxy-authorization: digest username="bob", nonce="n1"\nnext line'), "proxy-authorization: digest [redacted]\nnext line");
+  assert.equal(redactPatterns("Authorization: someCustomScheme opaque-value-77"), "Authorization: [redacted]");
   // N6: Negotiate (and NTLM) are schemes.
   for (const scheme of ["Negotiate", "negotiate", "NTLM"]) {
-    assert.equal(redactText(`Authorization: ${scheme} YIIBhwYGKwYBBQUC`), `Authorization: ${scheme} [redacted]`);
-    assert.equal(redactText(`sent ${scheme} YIIBhwYGKwYBBQUC to the proxy`), `sent ${scheme} [redacted] to the proxy`);
+    assert.equal(redactPatterns(`Authorization: ${scheme} YIIBhwYGKwYBBQUC`), `Authorization: ${scheme} [redacted]`);
+    assert.equal(redactPatterns(`sent ${scheme} YIIBhwYGKwYBBQUC to the proxy`), `sent ${scheme} [redacted] to the proxy`);
   }
 });
 
 test("release review D-1: a name/value pair leaks nothing with other fields between, in either order", () => {
-  assert.equal(redactText('{"name":"BAMBU_ACCESS_CODE","note":"x","value":"secretD1a"}'), '{"name":"BAMBU_ACCESS_CODE","note":"x","value":"[redacted]"}');
-  assert.equal(redactText('{"name":"BAMBU_ACCESS_CODE","scope":"lan","value":"secretD1a"}'), '{"name":"BAMBU_ACCESS_CODE","scope":"lan","value":"[redacted]"}');
-  assert.equal(redactText('{"value":"secretD1b","scope":"lan","note":"n","name":"cloud_token"}'), '{"value":"[redacted]","scope":"lan","note":"n","name":"cloud_token"}');
+  assert.equal(redactPatterns('{"name":"BAMBU_ACCESS_CODE","note":"x","value":"secretD1a"}'), '{"name":"BAMBU_ACCESS_CODE","note":"x","value":"[redacted]"}');
+  assert.equal(redactPatterns('{"name":"BAMBU_ACCESS_CODE","scope":"lan","value":"secretD1a"}'), '{"name":"BAMBU_ACCESS_CODE","scope":"lan","value":"[redacted]"}');
+  assert.equal(redactPatterns('{"value":"secretD1b","scope":"lan","note":"n","name":"cloud_token"}'), '{"value":"[redacted]","scope":"lan","note":"n","name":"cloud_token"}');
   const pretty = '{"settings": [\n  {\n    "name": "BAMBU_ACCESS_CODE",\n    "scope": "lan",\n    "value": "secretD1c"\n  }\n]}';
-  assert.ok(!redactText(pretty).includes("secretD1c"), "pretty-printed, inside an array");
-  assert.doesNotThrow(() => JSON.parse(redactText(pretty)));
-  assert.equal(redactText('{"name":"BAMBU_MODEL","note":"x","value":"p1s"}'), '{"name":"BAMBU_MODEL","note":"x","value":"p1s"}', "a setting that is not a secret stays");
-  assert.equal(redactText('{"name":"BAMBU_TOKEN","note":"x","value":"[set]"}'), '{"name":"BAMBU_TOKEN","note":"x","value":"[set]"}');
+  assert.ok(!redactPatterns(pretty).includes("secretD1c"), "pretty-printed, inside an array");
+  assert.doesNotThrow(() => JSON.parse(redactPatterns(pretty)));
+  assert.equal(redactPatterns('{"name":"BAMBU_MODEL","note":"x","value":"p1s"}'), '{"name":"BAMBU_MODEL","note":"x","value":"p1s"}', "a setting that is not a secret stays");
+  assert.equal(redactPatterns('{"name":"BAMBU_TOKEN","note":"x","value":"[set]"}'), '{"name":"BAMBU_TOKEN","note":"x","value":"[set]"}');
 });
 
 test("release review D-2 to D-5: bare hf_ keys, bare Digest credentials, %40 emails, spaced code labels", () => {
   // D-2
-  assert.equal(redactText("pulled with hf_abcdefghijklmnopqrstuvwxyz0123456789 ok"), "pulled with [redacted-token] ok");
+  assert.equal(redactPatterns("pulled with hf_abcdefghijklmnopqrstuvwxyz0123456789 ok"), "pulled with [redacted-token] ok");
   // D-3
-  assert.equal(redactText('sent Digest username="alice", realm="r", nonce="n1", response="6629fae49393a05397450978507c4ef1"\nnext'), "sent Digest [redacted]\nnext");
+  assert.equal(redactPatterns('sent Digest username="alice", realm="r", nonce="n1", response="6629fae49393a05397450978507c4ef1"\nnext'), "sent Digest [redacted]\nnext");
   // D-4
-  assert.equal(redactText("account is name%40example.com ok"), "account is [redacted-email] ok");
-  assert.equal(redactText("login=first.last%40mail.example.co.uk&x=1").includes("first.last"), false);
+  assert.equal(redactPatterns("account is name%40example.com ok"), "account is [redacted-email] ok");
+  assert.equal(redactPatterns("login=first.last%40mail.example.co.uk&x=1").includes("first.last"), false);
   // D-5
-  assert.equal(redactText("access code: 12345678"), "access code: [redacted]");
-  assert.equal(redactText('Pairing Code = "98765432"'), 'Pairing Code = "[redacted]"');
-  assert.equal(redactText("LAN code: 31415926, verification code 1234"), "LAN code: [redacted], verification code 1234");
-  assert.equal(redactText("access code: [set]"), "access code: [set]");
+  assert.equal(redactPatterns("access code: 12345678"), "access code: [redacted]");
+  assert.equal(redactPatterns('Pairing Code = "98765432"'), 'Pairing Code = "[redacted]"');
+  assert.equal(redactPatterns("LAN code: 31415926, verification code 1234"), "LAN code: [redacted], verification code 1234");
+  assert.equal(redactPatterns("access code: [set]"), "access code: [set]");
 });
 
 test("release review D-6: a random bare code, a bare AWS secret, XML and plist secrets, a quoted secret longer than 4096 characters", () => {
-  assert.equal(redactText('{"code": "Ab3dEf6hJk9mNpQrStUvWxYz0123"}'), '{"code": "[redacted]"}');
-  assert.equal(redactText("aws secret wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY end"), "aws secret [redacted-token] end");
-  assert.equal(redactText("<dict><key>apiToken</key>\n<string>plistsecret1</string></dict>"), "<dict><key>apiToken</key>\n<string>[redacted]</string></dict>");
-  assert.equal(redactText('<config><password type="x">xmlsecret22</password></config>'), '<config><password type="x">[redacted]</password></config>');
+  assert.equal(redactPatterns('{"code": "Ab3dEf6hJk9mNpQrStUvWxYz0123"}'), '{"code": "[redacted]"}');
+  assert.equal(redactPatterns("aws secret wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY end"), "aws secret [redacted-token] end");
+  assert.equal(redactPatterns("<dict><key>apiToken</key>\n<string>plistsecret1</string></dict>"), "<dict><key>apiToken</key>\n<string>[redacted]</string></dict>");
+  assert.equal(redactPatterns('<config><password type="x">xmlsecret22</password></config>'), '<config><password type="x">[redacted]</password></config>');
   const long = "w ".repeat(2500) + "tailsecret99";
-  assert.equal(redactText(`{"password":"${long}","port":990}`), '{"password":"[redacted]","port":990}');
+  assert.equal(redactPatterns(`{"password":"${long}","port":990}`), '{"password":"[redacted]","port":990}');
   // Unchanged: plist keys and versions, element text that is not a secret, paths with slashes.
   for (const line of ["<key>CFBundleVersion</key><string>2.0.1</string>", "<name>P1S</name><key>token</key>", "/Users/Shared/Library/Application/Support/BambuStudio2",
     "Library/Application/Support/BambuStudio/x"]) {
-    assert.equal(redactText(line), line);
+    assert.equal(redactPatterns(line), line);
   }
 });
 
 test("printer error codes survive (N4)", () => {
   for (const line of ["HMS code 05004043 at ams", "code 1234 printer", "HMS_0500_4043 code: 0500-4043", '{"print_error":50348044,"code":1234}', "err_code=0300-0100-0001"]) {
-    assert.equal(redactText(line), line);
+    assert.equal(redactPatterns(line), line);
   }
 });
 
 test("redaction keeps names that only look like secret words, and Bambu's error codes", () => {
   for (const line of ["exit code: 0 err_code=1200 code=0", '{"step":"send","command":"pause","code":0}', "spinner=3 keyboard=us monkey=1",
     "token=[set] password=\"\" BAMBU_TOKEN=[set]", "authenticate: failed", "https://example.com/path?page=2"]) {
-    assert.equal(redactText(line), line);
+    assert.equal(redactPatterns(line), line);
   }
-  assert.equal(redactText("authorization: bearer abcDEF123456"), "authorization: bearer [redacted]", "the scheme stays");
-  assert.equal(redactText('{"accessCodeSet":true,"pin":null,"token":false}'), '{"accessCodeSet":true,"pin":null,"token":false}', "whether a secret is set stays");
-  assert.deepEqual(JSON.parse(redactText('{"pin": 7351, "otp":731204}')), { pin: "[redacted]", otp: "[redacted]" }, "a bare JSON number becomes a string");
+  assert.equal(redactPatterns("authorization: bearer abcDEF123456"), "authorization: bearer [redacted]", "the scheme stays");
+  assert.equal(redactPatterns('{"accessCodeSet":true,"pin":null,"token":false}'), '{"accessCodeSet":true,"pin":null,"token":false}', "whether a secret is set stays");
+  assert.deepEqual(JSON.parse(redactPatterns('{"pin": 7351, "otp":731204}')), { pin: "[redacted]", otp: "[redacted]" }, "a bare JSON number becomes a string");
 });
 
 test("redaction keeps empty and already-replaced values, so a setting still shows whether it is set", () => {
   const line = '{"API_KEY": "", "BAMBU_TOKEN": "[set]", "password": "[redacted]"} token=';
-  assert.equal(redactText(line), line);
+  assert.equal(redactPatterns(line), line);
 });
 
 test("redaction keeps serial numbers, hosts, hashes and ordinary words", () => {
   const line = 'serial 01P00A391200001 host 192.168.1.20 sha256 3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b "passed": true state=RUNNING author=David';
-  assert.equal(redactText(line), line);
+  assert.equal(redactPatterns(line), line);
 });
 
 test("redaction removes environment secrets and values seen in tool arguments, wherever they appear", t => {
@@ -231,7 +236,7 @@ test("redaction removes environment secrets and values seen in tool arguments, w
   process.env.SOME_PRINTER_TOKEN = "envtoken-6655";
   t.after(() => { if (previous === undefined) delete process.env.SOME_PRINTER_TOKEN; else process.env.SOME_PRINTER_TOKEN = previous; resetDiagnosticsMemory(); });
   rememberSecretArguments({ host: "10.0.0.9", bambu_token: "argcode-1234", nested: { api_key: "nested-key-99" }, model: "p1s" });
-  const out = redactText("got envtoken-6655 then argcode-1234 and nested-key-99 from 10.0.0.9 p1s");
+  const out = redactPatterns("got envtoken-6655 then argcode-1234 and nested-key-99 from 10.0.0.9 p1s");
   for (const secret of ["envtoken-6655", "argcode-1234", "nested-key-99"]) assert.ok(!out.includes(secret), out);
   assert.match(out, /10\.0\.0\.9 p1s/);
 });
@@ -239,12 +244,13 @@ test("redaction removes environment secrets and values seen in tool arguments, w
 test("every kind of secret written to a log file never comes out of the bundle", t => {
   const dir = scratch(t);
   const file = path.join(dir, "control-trace.log");
-  fs.writeFileSync(file, SECRETS.map(([, line]) => line).join("\n") + "\n");
+  // The serial line goes first: the unterminated PEM block at the end takes the rest of the file with it.
+  fs.writeFileSync(file, "printer 01P00A391200001 ready\n" + SECRETS.map(([, line]) => line).join("\n") + "\n");
   const result = buildDiagnostics({ package: "pkg", version: "1.0.0", sources: [{ name: "fulu/control-trace.log", file }], secrets: ["7f3e9a21"] });
   validate(result);
   const text = JSON.stringify(result);
   for (const [kind, , secret] of SECRETS) assert.ok(!text.includes(secret), kind);
-  assert.match(result.files[0].content, /01P00A391200001/, "the serial stays");
+  assert.match(result.files[0].content, /printer 01P00A391200001 ready/, "a line that names no secret stays, its serial with it");
 });
 
 test("a secret cut by the tail's start is dropped with its partial line", t => {
@@ -361,8 +367,157 @@ test("redaction stays fast on long runs a log can hold (base64 blobs, unclosed q
   for (const [name, text] of [["one run", "x".repeat(n)], ["base64", Buffer.alloc(n * 3 / 4, 0x9b).toString("base64")], ["dashes and dots", "a-b.c_".repeat(n / 6)],
     ["unclosed quotes", 'password: "abc '.repeat(n / 15)], ["at signs", "a@".repeat(n / 2)], ["many keys", "token=x ".repeat(n / 8)]]) {
     const started = Date.now();
-    redactText(text);
+    redactPatterns(text);
     assert.ok(Date.now() - started < 10_000, `${name} took ${Date.now() - started} ms`);
   }
-  assert.ok(!redactText('password: "unclosed-secret').includes("unclosed-secret"));
+  assert.ok(!redactPatterns('password: "unclosed-secret').includes("unclosed-secret"));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The redesign after the release re-check (R-1 to R-7): fail closed. Every probe below leaked before it.
+
+/** The whole bundle for one log of free text, and one JSON file, as the tool returns them. */
+const bundleOf = (text, secrets = []) => JSON.stringify(buildDiagnostics({ package: "p", version: "1", sources: [{ name: "server-stderr.log", text }, { name: "logged.json", text }], secrets }));
+
+const LEAKS = [
+  // R-1: anything between a name and its value, and a value that is itself a structure.
+  ["R-1 object between name and value", '{"name":"BAMBU_ACCESS_CODE","meta":{"a":1},"value":"r1secretA"}', "r1secretA"],
+  ["R-1 braces in a string between", '{"name":"BAMBU_ACCESS_CODE","note":"a {b} c","value":"r1secretB"}', "r1secretB"],
+  ["R-1 array of objects between", '{"name":"BAMBU_ACCESS_CODE","tags":[{"k":"v"}],"value":"r1secretC"}', "r1secretC"],
+  ["R-1 an object over 16384 characters", `{"name":"BAMBU_ACCESS_CODE","pad":"${"x".repeat(17000)}","value":"r1secretD"}`, "r1secretD"],
+  ["R-1 a value that is an object", '{"name":"password","value":{"nested":"r1secretE"}}', "r1secretE"],
+  ["R-1 every element of an array value", '{"name":"tokens","value":["first1","r1SECOND"]}', "r1SECOND"],
+  // R-2: other quoting, other field names, XML attributes, unquoted lists.
+  ["R-2 Python dict", "{'name': 'BAMBU_TOKEN', 'value': 'r2secretA'}", "r2secretA"],
+  ["R-2 Node inspect", "{ name: 'BAMBU_ACCESS_CODE', value: 'r2secretB' }", "r2secretB"],
+  ["R-2 value under text", '{"name":"BAMBU_TOKEN","text":"r2secretC"}', "r2secretC"],
+  ["R-2 value under v", '{"name":"BAMBU_TOKEN","v":"r2secretD"}', "r2secretD"],
+  ["R-2 value under env_value", '{"name":"BAMBU_TOKEN","env_value":"r2secretE"}', "r2secretE"],
+  ["R-2 value under setting", '{"name":"BAMBU_TOKEN","setting":"r2secretF"}', "r2secretF"],
+  ["R-2 name under label", '{"label":"BAMBU_ACCESS_CODE","value":"r2secretG"}', "r2secretG"],
+  ["R-2 name under property", '{"property":"apiToken","value":"r2secretH"}', "r2secretH"],
+  ["R-2 name under envName", '{"envName":"BAMBU_TOKEN","value":"r2secretI"}', "r2secretI"],
+  ["R-2 XML setting attributes", '<setting name="password" value="r2secretJ"/>', "r2secretJ"],
+  ["R-2 XML add key", '<add key="BambuAccessCode" value="r2secretK"/>', "r2secretK"],
+  ["R-2 Android string resource", '<string name="apiToken">r2secretL</string>', "r2secretL"],
+  ["R-2 unquoted list", "tokens=[first2, r2SECOND]", "r2SECOND"],
+  ["R-2 single-quoted list", "tokens=['first3', 'r2THIRD']", "r2THIRD"],
+  // R-3: a pair inside JSON escaped in a string.
+  ["R-3 escaped pair", String.raw`{"msg":"{\"name\":\"BAMBU_ACCESS_CODE\",\"value\":\"r3secretA\"}"}`, "r3secretA"],
+  // R-4: an escaped quoted secret longer than any lookahead.
+  ["R-4 long escaped value", String.raw`{"msg":"{\"password\":\"` + "Qq9 ".repeat(1300) + "r4tail99" + String.raw`\"}"}`, "r4tail99"],
+  // R-5: spellings.
+  ["R-5 pass as a JSON key", '{"pass":"r5secretA"}', "r5secretA"],
+  ["R-5 mqtt pass=", "mqtt pass=r5secretB", "r5secretB"],
+  ["R-5 device_code", "device_code=48291037", "48291037"],
+  ["R-5 unlock_code", "unlock_code: 73920184", "73920184"],
+  ["R-5 alternating case", "PaSsWoRd=r5secretC", "r5secretC"],
+  ["R-5 alternating case, access code", "AcCeSsCoDe=r5secretD", "r5secretD"],
+  ["R-5 \\x escape", String.raw`\x70assword=r5secretE`, "r5secretE"],
+  ["R-5 % escape", "pass%77ord=r5secretF", "r5secretF"],
+  // R-6: a secret split across lines.
+  ["R-6 quoted value across lines", '{"password":"r6AAA\nr6BBB"}', "r6BBB"],
+  ["R-6 Digest on the next line", 'Digest\n username="r6user", response="r6response"', "r6response"],
+  ["R-6 folded header", "Authorization: Bearer\n  r6folded", "r6folded"],
+  ["R-6 YAML folded value", "password: >\n  r6yaml\nnext: 1", "r6yaml"],
+];
+
+for (const [kind, text, secret] of LEAKS) {
+  test(`fail closed: ${kind}`, () => {
+    resetDiagnosticsMemory();
+    const out = bundleOf(text);
+    assert.ok(!out.includes(secret), `${kind}: ${out.length > 600 ? out.slice(0, 600) + "…" : out}`);
+  });
+}
+
+test("R-7: long file names and measures under secret-sounding names stay", () => {
+  const text = "wrote MyPrint2026Version3FinalAssembly.stl\ntokenCount: 5\nsessionTimeoutSec=30\npasswordMinLength = 8";
+  assert.equal(redactText(text), text);
+  const json = JSON.parse(buildDiagnostics({ package: "p", version: "1", sources: [{ name: "a.json", text: JSON.stringify({ tokenCount: 5, sessionTimeoutSec: 30, passwordMinLength: 8, file: "MyPrint2026Version3FinalAssembly.stl" }) }] }).files[0].content);
+  assert.deepEqual(json, { tokenCount: 5, sessionTimeoutSec: 30, passwordMinLength: 8, file: "MyPrint2026Version3FinalAssembly.stl" });
+});
+
+test("a withheld line keeps its time and level, and lines that only say whether a secret is set stay", () => {
+  assert.equal(redactText("2026-11-14T10:00:00.000Z error mqtt pass=hunter2x"), `2026-11-14T10:00:00.000Z error ${WITHHELD}`);
+  for (const line of ["accessCodeSet: true", '  "BAMBU_TOKEN": "[set]",', "BAMBU_TOKEN=[set]", "HMS code 05004043", "firmware 01.08.02.00", "print_error: 0500-4043", "plain line"]) {
+    assert.equal(redactText(line), line);
+  }
+});
+
+test("JSON files stay valid JSON: a secret's value goes, its name and whether it is set stay", () => {
+  const value = { printers: [{ id: "01P", accessCodeSet: true, connection: { mode: "lan" } }], env: [{ name: "BAMBU_TOKEN", scope: "lan", value: "jsonsecret1" }, { name: "BAMBU_MODEL", value: "p1s" }],
+    msg: JSON.stringify({ name: "X_TOKEN", value: "jsonsecret2" }), note: "the password is jsonsecret3" };
+  const out = JSON.parse(buildDiagnostics({ package: "p", version: "1", sources: [{ name: "printers.json", text: JSON.stringify(value) }] }).files[0].content);
+  assert.equal(out.printers[0].accessCodeSet, true);
+  assert.deepEqual(out.env[1], { name: "BAMBU_MODEL", value: "p1s" });
+  assert.equal(out.env[0].name, "BAMBU_TOKEN");
+  for (const secret of ["jsonsecret1", "jsonsecret2", "jsonsecret3"]) assert.ok(!JSON.stringify(out).includes(secret), secret);
+});
+
+test("objects are redacted when logged, before they are written as text, and the bundle never holds them", t => {
+  resetDiagnosticsMemory();
+  t.after(() => resetDiagnosticsMemory());
+  captureServerLog();
+  console.error("settings", { name: "BAMBU_ACCESS_CODE", scope: "lan", value: "capsecret1" }, { reply: JSON.stringify({ password: "capsecret2" }) });
+  const log = serverLogText();
+  for (const secret of ["capsecret1", "capsecret2"]) assert.ok(!log.includes(secret), log);
+});
+
+test("a configured secret goes in every encoded form, and before a long line is cut", t => {
+  resetDiagnosticsMemory();
+  t.after(() => resetDiagnosticsMemory());
+  const code = "83c1f0a2";
+  const forms = [code, Buffer.from(`bblp:${code}`).toString("base64"), Buffer.from(code).toString("base64"), encodeURIComponent(`x${code}&`), JSON.stringify(`"${code}"`)];
+  const out = JSON.stringify(buildDiagnostics({ package: "p", version: "1", sources: [{ name: "a.log", text: forms.map(f => `got ${f} ok`).join("\n") }], secrets: [code] }));
+  assert.ok(!out.includes(code), out);
+  for (const form of forms.slice(1, 3)) assert.ok(!out.includes(form), form);
+  // A code straddling the 4000-character line cut leaves no part of itself.
+  const previous = process.env.SOME_PRINTER_TOKEN;
+  process.env.SOME_PRINTER_TOKEN = "straddle-77665544";
+  t.after(() => { if (previous === undefined) delete process.env.SOME_PRINTER_TOKEN; else process.env.SOME_PRINTER_TOKEN = previous; });
+  captureServerLog();
+  console.error("x".repeat(3990) + "straddle-77665544");
+  assert.ok(!serverLogText().includes("straddle-776"), "no partial value");
+});
+
+test("settings show values only for known non-secret settings; any other shows only whether it is set", () => {
+  const env = { BAMBU_MODEL: "p1s", SLICER_API_URL: "https://user:pw@slicer.example/api", BLENDER_MCP_ARGS: "--token abc", BAMBU_TOKEN: "x", API_KEY: "", PRINTER_HOST: "10.0.0.4" };
+  assert.deepEqual(settingsSnapshot(/^(?:BAMBU|SLICER|BLENDER|API_KEY|PRINTER)/, env),
+    { API_KEY: "", BAMBU_MODEL: "p1s", BAMBU_TOKEN: "[set]", BLENDER_MCP_ARGS: "[set]", PRINTER_HOST: "10.0.0.4", SLICER_API_URL: "[set]" });
+});
+
+test("property: a secret under any secret word, in any syntax, never comes out of the bundle", () => {
+  let seed = 0x5eed;
+  const rand = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const pick = list => list[rand(list.length)];
+  const WORDS = ["password", "pass", "passwd", "secret", "token", "apiKey", "access_code", "lanCode", "pairing-code", "deviceCode", "unlock_code",
+    "auth", "cookie", "session", "credential", "privateKey", "passphrase", "client_secret", "refreshToken", "x-api-key"];
+  const spell = word => {
+    const cased = [...word].map(c => (rand(2) ? c.toUpperCase() : c.toLowerCase())).join("");
+    return pick([word, cased, word.toUpperCase(), cased.replace(/^./, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)]);
+  };
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const SYNTAX = [
+    (w, s) => JSON.stringify({ outer: { inner: { [w]: s } } }),
+    (w, s) => JSON.stringify({ name: w.toUpperCase(), note: "n", meta: { a: [1, { b: 2 }] }, value: s }),
+    (w, s) => `{'${w}': '${s}'}`,
+    (w, s) => `<${w.replace(/[^A-Za-z]/g, "")}>${s}</${w.replace(/[^A-Za-z]/g, "")}>`,
+    (w, s) => `<add key="${w}" value="${s}"/>`,
+    (w, s) => `${w}: ${s}`,
+    (w, s) => JSON.stringify({ msg: JSON.stringify({ [w]: s }) }),
+    (w, s) => JSON.stringify({ msg: JSON.stringify({ name: w, value: s }) }),
+    (w, s) => `${w} = "${s.slice(0, 6)}\n${s.slice(6)}"`,
+    (w, s) => `${w}:\n  ${s}`,
+    (w, s) => `2026-11-14T10:00:00.000Z warn ${w}=${s} more`,
+    (w, s) => `--${w} ${s}`,
+  ];
+  for (let i = 0; i < 400; i++) {
+    const secret = Array.from({ length: 12 }, () => alphabet[rand(alphabet.length)]).join("");
+    const syntax = rand(SYNTAX.length);
+    const text = `before ${i}\n${SYNTAX[syntax](spell(pick(WORDS)), secret)}\nafter ${i}`;
+    const out = bundleOf(text);
+    for (const piece of [secret, secret.slice(0, 6), secret.slice(6)]) {
+      assert.ok(!out.includes(piece), `case ${i} (syntax ${syntax}) leaked ${piece}: ${JSON.stringify(text)} -> ${out.slice(0, 400)}`);
+    }
+  }
 });

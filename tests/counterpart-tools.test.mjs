@@ -348,7 +348,7 @@ test("slice capabilities follow the slicer route", async () => {
   assert.deepEqual(sliceCapabilities("bambustudio", false), { supports: true, copies: true, orient: true });
 });
 
-test("counterpart_diagnostics returns this server's redacted bundle within max_bytes, with missing logs as notes", async (t) => {
+test("counterpart_diagnostics returns this server's redacted bundle within max_bytes, and leaves the plug-in logs out", async (t) => {
   const config = await trackedMkdtemp(path.join(os.tmpdir(), "diagnostics-config-"));
   t.after(() => fs.rm(config, { recursive: true, force: true }));
   const bridgeDir = path.join(config, "bambu-network");
@@ -375,13 +375,12 @@ test("counterpart_diagnostics returns this server's redacted bundle within max_b
   const { name, version } = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
   assert.deepEqual([bundle.package, bundle.version], [name, version]);
   const names = bundle.files.map((file) => file.name);
-  for (const expected of ["server.json", "printers.json", "settings.json", "slicer.json", "cad.json", "tool-errors.log", "server-stderr.log", "fulu/control-trace.log", "fulu/debug_network.log"]) assert.ok(names.includes(expected), expected);
+  assert.deepEqual(names, ["server.json", "printers.json", "settings.json", "slicer.json", "cad.json", "tool-errors.log", "server-stderr.log"]);
+  // Other programs write the plug-in logs, and they can hold secrets this server cannot recognise.
+  assert.ok(bundle.notes.some((note) => /fulu\) and native helper logs are not included/.test(note)), bundle.notes.join("\n"));
   assert.ok(names.every((file) => !path.isAbsolute(file) && !file.split("/").includes("..")));
   const size = bundle.files.reduce((sum, file) => sum + Buffer.byteLength(file.name) + Buffer.byteLength(file.content), 0) + bundle.notes.reduce((sum, note) => sum + Buffer.byteLength(note), 0);
   assert.ok(size <= maxBytes, `${size} > ${maxBytes}`);
-  const plugin = bundle.files.find((file) => file.name === "fulu/debug_network.log");
-  assert.equal(plugin.truncated, true);
-  assert.match(plugin.content, /serial 01PTESTSERIAL\n$/, "the tail, with the serial kept");
 
   const text = JSON.stringify(bundle);
   for (const secret of [access, "cloudtoken-abc123", "tester@example.com", "cookie-xyz", "pluginkey-77", "lanpass-4411", "owner@example.org", "argsecret-5566"]) {
@@ -391,7 +390,6 @@ test("counterpart_diagnostics returns this server's redacted bundle within max_b
   assert.deepEqual(printers.map((p) => [p.id, p.kind, p.serial, p.model, p.credentialSet, p.firmware]), [["01PTESTSERIAL", "bambu", "01PTESTSERIAL", "p1s", true, "unknown"]]);
   assert.equal(JSON.parse(bundle.files.find((file) => file.name === "settings.json").content).BAMBU_TOKEN, "[set]");
   assert.match(bundle.files.find((file) => file.name === "tool-errors.log").content, /counterpart_make_3mf: /);
-  assert.match(bundle.files.find((file) => file.name === "fulu/control-trace.log").content, /"step":"delivered"/);
 
   const other = (await call(client, "counterpart_diagnostics", { printer: "01POTHER" })).structuredContent;
   assert.deepEqual(JSON.parse(other.files.find((file) => file.name === "printers.json").content).printers, []);

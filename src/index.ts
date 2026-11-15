@@ -3,7 +3,7 @@
 // Must stay first: Node.js 18 needs the global crypto before any SDK transport code runs.
 import "./ensure-web-crypto.js";
 import { SELF_CHECK_OUTPUT_SCHEMA, selfCheck } from "./counterpart/self-check.js";
-import { DIAGNOSTICS_INPUT_PROPERTIES, DIAGNOSTICS_OUTPUT_SCHEMA, appVersion, buildDiagnostics, captureServerLog, diagnosticsBudget, jsonText, newestLogs, recordToolError, rememberSecretArguments, serverLogText, settingsSnapshot, toolErrorsText, type DiagnosticsSource } from "./counterpart/diagnostics.js";
+import { DIAGNOSTICS_INPUT_PROPERTIES, DIAGNOSTICS_OUTPUT_SCHEMA, appVersion, buildDiagnostics, captureServerLog, diagnosticsBudget, jsonText, recordToolError, rememberSecretArguments, serverLogText, settingsSnapshot, toolErrorsText, type DiagnosticsSource } from "./counterpart/diagnostics.js";
 import {FLIGHT_RECORD_PROPERTIES,FLIGHT_RECORD_DESCRIPTION,FLIGHT_RECORD_OUTPUT_SCHEMA,flightReadOptions,flightRecordResult,FLIGHT_ASSESS_PROPERTIES,FLIGHT_ASSESS_REQUIRED,FLIGHT_ASSESS_DESCRIPTION,PRINT_EVIDENCE_GUIDANCE,visualSubmission} from "./counterpart/flight-tools.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -1009,7 +1009,6 @@ class ThreeDPrinterMCPServer {
 
     const settings = settingsSnapshot(/^(?:PRINTER|API_KEY|BAMBU|SLICER|FILAMENT_PROFILE|ORCA|CAD|BLENDER|FUSION|BED_TYPE|NOZZLE|MCP|PJARCZAK|FULU|TEMP_DIR)/);
 
-    const bridgeDir = this.bambuNetwork.resolveConfigDir();
     const sources: DiagnosticsSource[] = [
       { name: "server.json", text: jsonText({ package: SERVER_NAME, version: SERVER_VERSION, node: process.version, platform: process.platform, arch: process.arch, uptimeSec: Math.round(process.uptime()) }) },
       { name: "printers.json", text: jsonText({ printers: selected }) },
@@ -1018,11 +1017,10 @@ class ThreeDPrinterMCPServer {
       { name: "cad.json", text: jsonText(cad) },
       { name: "tool-errors.log", text: toolErrorsText() || "No tool has failed since this server started.\n" },
       { name: "server-stderr.log", text: serverLogText() || "Nothing written to stderr since this server started.\n" },
-      { name: "fulu/control-trace.log", file: path.join(bridgeDir, "control-trace.log"), missing: "fulu/control-trace.log: no FULU control trace yet (no control was sent over the Bambu network route)." },
     ];
-    const pluginLogs = newestLogs([bridgeDir, path.join(bridgeDir, "log")], 3, ["control-trace.log"]);
-    for (const file of pluginLogs) sources.push({ name: `fulu/${path.basename(file)}`, file });
-    if (!pluginLogs.length) notes.push("fulu: no Bambu network plug-in log files.");
+    // The Bambu network plug-in and native helper logs are written by other programs, in forms this server does not
+    // control, and can carry secrets it never held (a cloud token, another printer's code): they stay out.
+    notes.push("The Bambu network plug-in (fulu) and native helper logs are not included: other programs write them, and they can hold secrets this server cannot recognise.");
     return buildDiagnostics({ package: SERVER_NAME, version: SERVER_VERSION, sources, notes, maxBytes, secrets: [DEFAULT_BAMBU_TOKEN, DEFAULT_API_KEY].filter(Boolean) });
   }
 
