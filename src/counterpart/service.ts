@@ -203,6 +203,7 @@ export class CounterpartService {
       };
     }
     if (cadEnabled()) capabilities.cad = CAD_CAPABILITY;
+    capabilities.diagnostics = true;
     const streamCandidates = await this.cameraCandidates(target).catch(() => []);
     capabilities.cameraStream = await cameraNativeAvailable() && streamCandidates.length > 0 &&
       (capabilities.camera !== "none" || streamCandidates.some(candidate => candidate.configured));

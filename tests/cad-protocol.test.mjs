@@ -199,3 +199,13 @@ test("CAD structured refusals pass the advertised output schema without wording 
   assert.equal(expired.structuredContent.code, "cad-queue-timeout");
   assert.deepEqual(await readdir(join(data, "queue")), []);
 });
+
+test("cad_run's contract carries role and draft_reasons (scan-to-make #790)", async () => {
+  const { CAD_TOOLS } = await import("../dist/cad/contracts.js");
+  const run = CAD_TOOLS.find((t) => t.name === "cad_run");
+  assert.deepEqual(run.inputSchema.properties.role.enum, ["design", "check"]);
+  const out = run.outputSchema.anyOf[0].properties;
+  assert.deepEqual(out.role.enum, ["design", "check"]);
+  assert.equal(out.draft_reasons.type, "array");
+  assert.ok(!run.inputSchema.required.includes("role"), "absent means design");
+});

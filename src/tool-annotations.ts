@@ -33,6 +33,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   list_printer_files: read(true),
   counterpart_printer_info: read(true),
   counterpart_self_check: read(false), // loads this install's own modules; contacts no printer
+  counterpart_diagnostics: read(false), // reads this server's own logs and settings, redacted; contacts no printer
   counterpart_print_progress: read(true),
   counterpart_print_record: read(false),
   counterpart_print_assess: write(false,true,false),

@@ -61,6 +61,8 @@ export interface CounterpartCapabilities {
   layers: boolean;
   camera: CameraCapability;
   cameraStream?: boolean;
+  /** counterpart_diagnostics is here: this server hands over its own redacted diagnostics bundle. */
+  diagnostics?: boolean;
   filaments: FilamentCapability;
   pause: boolean;
   resume: boolean;
@@ -163,6 +165,7 @@ export const PRINTER_INFO_OUTPUT_SCHEMA = {
         layers: { type: "boolean" },
         camera: { type: "string", enum: ["bambu-tcp", "rtsp", "http-snapshot", "none"] },
         cameraStream: {type: "boolean"},
+        diagnostics: { type: "boolean", description: "counterpart_diagnostics is available." },
         filaments: { type: "string", enum: ["ams", "single", "none"] },
         pause: { type: "boolean" },
         resume: { type: "boolean" },

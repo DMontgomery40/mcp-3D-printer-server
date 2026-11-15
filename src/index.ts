@@ -3,6 +3,7 @@
 // Must stay first: Node.js 18 needs the global crypto before any SDK transport code runs.
 import "./ensure-web-crypto.js";
 import { SELF_CHECK_OUTPUT_SCHEMA, selfCheck } from "./counterpart/self-check.js";
+import { DIAGNOSTICS_INPUT_PROPERTIES, DIAGNOSTICS_OUTPUT_SCHEMA, appVersion, buildDiagnostics, captureServerLog, diagnosticsBudget, jsonText, recordToolError, rememberSecretArguments, serverLogText, settingsSnapshot, toolErrorsText, type DiagnosticsSource } from "./counterpart/diagnostics.js";
 import {FLIGHT_RECORD_PROPERTIES,FLIGHT_RECORD_DESCRIPTION,FLIGHT_RECORD_OUTPUT_SCHEMA,flightReadOptions,flightRecordResult,FLIGHT_ASSESS_PROPERTIES,FLIGHT_ASSESS_REQUIRED,FLIGHT_ASSESS_DESCRIPTION,PRINT_EVIDENCE_GUIDANCE,visualSubmission} from "./counterpart/flight-tools.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -151,6 +152,8 @@ import { bambuColourNames } from "./printers/bambu-filaments.js";
 
 // Load environment variables from .env file
 dotenv.config();
+// What the server writes to stderr is also kept for counterpart_diagnostics.
+captureServerLog();
 const CAD_ENABLED = cadEnabled();
 
 const SERVER_NAME = "mcp-3d-printer-server";
@@ -322,6 +325,8 @@ const DEFAULT_FILAMENT_PROFILE =
 // Bambu-specific default values
 const DEFAULT_BAMBU_SERIAL = process.env.BAMBU_SERIAL || "";
 const DEFAULT_BAMBU_TOKEN = process.env.BAMBU_TOKEN || "";
+/** Access-code names people try that this server does not read (counterpart_diagnostics names them when set). */
+const UNREAD_ACCESS_CODE_NAMES = ["BAMBU_PRINTER_ACCESS_CODE", "BAMBU_PRINTER_ACCESS_TOKEN", "BAMBU_ACCESS_CODE", "BAMBU_ACCESS_TOKEN", "BAMBU_PRINTER_TOKEN"];
 
 // Printer model and bed type (Bambu safety)
 const DEFAULT_BAMBU_MODEL = process.env.BAMBU_MODEL?.trim().toLowerCase() || "";
@@ -571,7 +576,7 @@ const PRINTER_TARGET_PROPERTIES = {
 const OUTPUT_SCHEMA_TOOLS = new Set([
   "cad_status", "cad_setup", "cad_run", "cad_check_fit", "cad_examples",
   "counterpart_discover_printers", "counterpart_setup_fields", "counterpart_propose_filaments",
-  "counterpart_printer_info", "counterpart_self_check", "counterpart_print_progress", "counterpart_make_3mf", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
+  "counterpart_printer_info", "counterpart_self_check", "counterpart_diagnostics", "counterpart_print_progress", "counterpart_make_3mf", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
   "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
   "blender_mcp_setup", "fusion_mcp_setup", "connect_printer", "octoprint_request_api_key",
@@ -956,6 +961,71 @@ class ThreeDPrinterMCPServer {
   }
 
   /** The running Blender add-on's get_addon_status, read through this server's Blender bridge (undefined when it has none). */
+  /** counterpart_diagnostics: this server's own redacted bundle (src/counterpart/diagnostics.ts). Contacts no printer. */
+  private async diagnostics(args: Record<string, unknown>): Promise<ReturnType<typeof buildDiagnostics>> {
+    const unknown = Object.keys(args).filter(key => key !== "printer" && key !== "max_bytes");
+    if (unknown.length) throw new Error(`counterpart_diagnostics takes only printer and max_bytes, not ${unknown.join(", ")}.`);
+    if (args.printer !== undefined && typeof args.printer !== "string") throw new Error("printer must be a string.");
+    const maxBytes = diagnosticsBudget(args.max_bytes);
+    const wanted = (args.printer as string | undefined)?.trim().toLowerCase();
+    const notes: string[] = [];
+    // This server's own sentences, built only from setting names it reads: their secret words name settings.
+    const fixedNotes: string[] = [];
+
+    const kind = DEFAULT_TYPE.toLowerCase();
+    const bambu = kind === "bambu";
+    let connection: Record<string, string>;
+    if (bambu) {
+      try { connection = resolveConnection(undefined); } catch (error) { connection = { error: error instanceof Error ? error.message : String(error) }; }
+    } else connection = { mode: "http", port: DEFAULT_PORT };
+    const printers = [{
+      id: (bambu && DEFAULT_BAMBU_SERIAL) || DEFAULT_HOST,
+      kind,
+      host: DEFAULT_HOST,
+      ...(bambu && DEFAULT_BAMBU_SERIAL ? { serial: DEFAULT_BAMBU_SERIAL } : {}),
+      ...(bambu && DEFAULT_BAMBU_MODEL ? { model: DEFAULT_BAMBU_MODEL } : {}),
+      connection,
+      credentialSet: Boolean(bambu ? DEFAULT_BAMBU_TOKEN : DEFAULT_API_KEY),
+      // Firmware comes only from the printer; this tool asks it nothing.
+      firmware: "unknown",
+    }];
+    // A look-alike name this server never reads leaves credentialSet false; name it so the bundle says why.
+    const ignored = bambu ? UNREAD_ACCESS_CODE_NAMES.filter(key => process.env[key]) : [];
+    if (ignored.length) fixedNotes.push(`${ignored.join(" and ")} ${ignored.length > 1 ? "are" : "is"} set, but this server reads the access code only from BAMBU_TOKEN (in the environment or its .env).`);
+    if (!process.env.PRINTER_HOST) notes.push(`No printer host is configured (PRINTER_HOST is unset); printers.json shows the default, ${DEFAULT_HOST}.`);
+    const selected = wanted ? printers.filter(p => [p.id, p.host, p.serial].some(v => v?.toLowerCase() === wanted)) : printers;
+    if (wanted && !selected.length) notes.push(`No configured printer is ${args.printer}; printers.json lists none.`);
+    notes.push("Printer firmware is not included: only the printer reports it, and this tool contacts no printer.");
+
+    let slicer: Record<string, unknown>;
+    try {
+      const { fields: _fields, ...setup } = slicerSetupNow();
+      const version = appVersion(setup.path);
+      slicer = { ...setup, ...(version ? { version } : {}) };
+      if (!setup.found) notes.push(`The ${setup.type} slicer is not installed where this server looks (${setup.path || "no path"}).`);
+      else if (!version) notes.push("Slicer version is unknown: its install doesn't name it, and this tool doesn't run the slicer.");
+    } catch (error) { slicer = { error: error instanceof Error ? error.message : String(error) }; }
+
+    let cad: unknown;
+    try { cad = await this.cad.status(); } catch (error) { cad = { error: error instanceof Error ? error.message : String(error) }; }
+
+    const settings = settingsSnapshot(/^(?:PRINTER|API_KEY|BAMBU|SLICER|FILAMENT_PROFILE|ORCA|CAD|BLENDER|FUSION|BED_TYPE|NOZZLE|MCP|PJARCZAK|FULU|TEMP_DIR)/);
+
+    const sources: DiagnosticsSource[] = [
+      { name: "server.json", text: jsonText({ package: SERVER_NAME, version: SERVER_VERSION, node: process.version, platform: process.platform, arch: process.arch, uptimeSec: Math.round(process.uptime()) }) },
+      { name: "printers.json", text: jsonText({ printers: selected }) },
+      { name: "settings.json", text: jsonText(settings) },
+      { name: "slicer.json", text: jsonText(slicer) },
+      { name: "cad.json", text: jsonText(cad) },
+      { name: "tool-errors.log", text: toolErrorsText() || "No tool has failed since this server started.\n" },
+      { name: "server-stderr.log", text: serverLogText() || "Nothing written to stderr since this server started.\n" },
+    ];
+    // The Bambu network plug-in and native helper logs are written by other programs, in forms this server does not
+    // control, and can carry secrets it never held (a cloud token, another printer's code): they stay out.
+    fixedNotes.push("The Bambu network plug-in (fulu) and native helper logs are not included: other programs write them, and they can hold secrets this server cannot recognise.");
+    return buildDiagnostics({ package: SERVER_NAME, version: SERVER_VERSION, sources, notes, fixedNotes, maxBytes, secrets: [DEFAULT_BAMBU_TOKEN, DEFAULT_API_KEY].filter(Boolean) });
+  }
+
   private async blenderAddonHandshake(): Promise<BlenderAddonHandshake | undefined> {
     const signal = AbortSignal.timeout(20_000);
     const status = await this.blender.status({ connect: true, timeout_ms: 15_000 }, signal) as { connected?: boolean; tools?: { name?: string }[] };
@@ -1752,6 +1822,12 @@ class ThreeDPrinterMCPServer {
             description: "Counterpart contract (counterpart/1): whether this install's own runtime dependencies and its Web Crypto shim loaded, each with its installed version. Run it after an update; ok is false when a required check failed, with a message saying which. Contacts no printer.",
             inputSchema: { type: "object", properties: {} },
             outputSchema: SELF_CHECK_OUTPUT_SCHEMA,
+          },
+          {
+            name: "counterpart_diagnostics",
+            description: "Counterpart contract (counterpart/1): this server's own diagnostics for a bug report, as files for the client to add to its export: the configured printer (kind, host, model, serial, connection; firmware is not read), this server's settings, slicer path and version, CAD runtime status, recent tool errors, this run's stderr log (printer connection messages, Bambu MQTT included). The Bambu network plug-in logs are not included. Redaction fails closed: configured secrets go in their encoded forms, JSON is redacted by key, and any log line that names a secret is withheld whole; serial numbers, error codes and whether a secret is set stay. Names, contents and notes stay within max_bytes; anything missing is listed in notes. Contacts no printer.",
+            inputSchema: { type: "object", properties: DIAGNOSTICS_INPUT_PROPERTIES, additionalProperties: false },
+            outputSchema: DIAGNOSTICS_OUTPUT_SCHEMA,
           },
           {
             name:"counterpart_print_record",description:FLIGHT_RECORD_DESCRIPTION,
@@ -2782,6 +2858,7 @@ class ThreeDPrinterMCPServer {
     // A designer's settings extracted for this call are removed when it settles.
     this.server.setRequestHandler(CallToolRequestSchema, (request, extra) => withPrintDispatch(() => withExtractedSettingsCleanup(async () => {
       const { name, arguments: args } = request.params;
+      rememberSecretArguments(args);
       // counterpart/1: print_3mf reports its FTPS upload as MCP progress (src/upload-progress.ts).
       const progressToken = extra._meta?.progressToken;
       let progressNotifications = Promise.resolve();
@@ -2882,6 +2959,9 @@ class ThreeDPrinterMCPServer {
 
           case "counterpart_self_check":
             return structured(await selfCheck({ name: SERVER_NAME, version: SERVER_VERSION }));
+
+          case "counterpart_diagnostics":
+            return structured(await this.diagnostics(args ?? {}));
 
           case "counterpart_setup_fields":
             return structured(genericSetupFields({ server: { name: SERVER_NAME, version: SERVER_VERSION }, models: VALID_BAMBU_MODELS, defaultKind: FALLBACK_PRINTER_TYPE, slicer: slicerSetupNow(),
@@ -3866,6 +3946,7 @@ class ThreeDPrinterMCPServer {
           ]
         };
       } catch (error: unknown) {
+        recordToolError(name, error);
         if (name.startsWith("cad_")) {
           const failure = await this.cad.failure(error, name);
           return {isError: true, content: [{type: "text" as const, text: failure.message}], structuredContent: failure};

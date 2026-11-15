@@ -32,6 +32,7 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   camera_frame: "read",
   counterpart_printer_info: "read",
   counterpart_self_check: "read",
+  counterpart_diagnostics: "read", // this server's own redacted logs; nothing reaches the printer
   counterpart_print_progress: "read",
   counterpart_print_record: "read",
   counterpart_print_assess: "control", // local evidence mutation, never a printer command
