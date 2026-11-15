@@ -17,6 +17,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { cameraNativeAvailable } from "../dist/counterpart/camera-stream.js";
 import { CounterpartService } from "../dist/counterpart/service.js";
 import { SELF_CHECK_OUTPUT_SCHEMA } from "../dist/counterpart/self-check.js";
+import { DIAGNOSTICS_OUTPUT_SCHEMA } from "../dist/counterpart/diagnostics.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURES = path.join(ROOT, "tests", "fixtures", "counterpart");
@@ -44,9 +45,10 @@ async function mock(t, routes) {
   return { port: String(http.address().port), requests };
 }
 
-async function server(t, env) {
+async function server(t, env, files = {}) {
   const temp = await trackedMkdtemp(path.join(os.tmpdir(), "counterpart-tools-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  for (const [name, text] of Object.entries(files)) await fs.writeFile(path.join(temp, name), text, { mode: 0o600 });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(ROOT, "dist", "index.js")],
@@ -141,7 +143,7 @@ test("OctoPrint over MCP: info, progress, filaments and a Classic Webcam snapsho
   assert.equal(info.contract, "counterpart/1");
   assert.equal(info.server.name, "mcp-3d-printer-server");
   assert.deepEqual(info.printer, { kind: "octoprint", host: "127.0.0.1", model: "Prusa i3", name: "Default" });
-  assert.deepEqual(info.capabilities, { cad: CAD_CAPABILITY, progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true,
+  assert.deepEqual(info.capabilities, { cad: CAD_CAPABILITY, progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true, diagnostics: true,
     slicing: { supports: false, copies: false, orient: false } }, "PrusaSlicer (the default for OctoPrint) takes none of them here");
   const progress = (await call(client, "counterpart_print_progress")).structuredContent;
   assert.equal(progress.state, "printing");
@@ -344,4 +346,84 @@ test("slice capabilities follow the slicer route", async () => {
   assert.deepEqual(sliceCapabilities("prusaslicer", false), { supports: false, copies: false, orient: false });
   assert.deepEqual(sliceCapabilities("cura", false), { supports: false, copies: false, orient: false });
   assert.deepEqual(sliceCapabilities("bambustudio", false), { supports: true, copies: true, orient: true });
+});
+
+test("counterpart_diagnostics returns this server's redacted bundle within max_bytes, with missing logs as notes", async (t) => {
+  const config = await trackedMkdtemp(path.join(os.tmpdir(), "diagnostics-config-"));
+  t.after(() => fs.rm(config, { recursive: true, force: true }));
+  const bridgeDir = path.join(config, "bambu-network");
+  await fs.mkdir(path.join(bridgeDir, "log"), { recursive: true });
+  const access = "39af81c2";
+  await fs.writeFile(path.join(bridgeDir, "control-trace.log"), [
+    JSON.stringify({ at: "2026-11-14T10:00:00Z", step: "send", command: "pause", code: 0 }),
+    `{"step":"connect","url":"mqtts://bblp:${access}@192.168.1.20:8883","password":"${access}"}`,
+    "Authorization: Bearer cloudtoken-abc123 for tester@example.com Cookie: sid=cookie-xyz",
+    JSON.stringify({ at: "2026-11-14T10:00:01Z", step: "delivered", command: "pause", heldMs: 120 }),
+  ].join("\n") + "\n");
+  await fs.writeFile(path.join(bridgeDir, "log", "debug_network.log"), `plugin ticket=${"x".repeat(10)} api_key=pluginkey-77 serial 01PTESTSERIAL\n`.repeat(20_000));
+  const { client } = await server(t, { PRINTER_TYPE: "bambu", BAMBU_SERIAL: "01PTESTSERIAL", BAMBU_TOKEN: access, BAMBU_MODEL: "p1s",
+    BAMBU_NETWORK_CONFIG_DIR: bridgeDir, LAN_PASSWORD: "lanpass-4411", BAMBU_CLOUD_EMAIL: "owner@example.org" });
+  const tool = (await client.listTools()).tools.find((entry) => entry.name === "counterpart_diagnostics");
+  assert.deepEqual(tool?.outputSchema, JSON.parse(JSON.stringify(DIAGNOSTICS_OUTPUT_SCHEMA)));
+
+  // A failed call with a secret argument: its error is recorded, the argument's value never returned.
+  const failed = await client.callTool({ name: "counterpart_make_3mf", arguments: { parts: [], bambu_token: "argsecret-5566" } });
+  assert.equal(failed.isError, true);
+
+  const maxBytes = 200_000;
+  const bundle = (await call(client, "counterpart_diagnostics", { max_bytes: maxBytes })).structuredContent;
+  const { name, version } = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
+  assert.deepEqual([bundle.package, bundle.version], [name, version]);
+  const names = bundle.files.map((file) => file.name);
+  for (const expected of ["server.json", "printers.json", "settings.json", "slicer.json", "cad.json", "tool-errors.log", "server-stderr.log", "fulu/control-trace.log", "fulu/debug_network.log"]) assert.ok(names.includes(expected), expected);
+  assert.ok(names.every((file) => !path.isAbsolute(file) && !file.split("/").includes("..")));
+  const size = bundle.files.reduce((sum, file) => sum + Buffer.byteLength(file.name) + Buffer.byteLength(file.content), 0) + bundle.notes.reduce((sum, note) => sum + Buffer.byteLength(note), 0);
+  assert.ok(size <= maxBytes, `${size} > ${maxBytes}`);
+  const plugin = bundle.files.find((file) => file.name === "fulu/debug_network.log");
+  assert.equal(plugin.truncated, true);
+  assert.match(plugin.content, /serial 01PTESTSERIAL\n$/, "the tail, with the serial kept");
+
+  const text = JSON.stringify(bundle);
+  for (const secret of [access, "cloudtoken-abc123", "tester@example.com", "cookie-xyz", "pluginkey-77", "lanpass-4411", "owner@example.org", "argsecret-5566"]) {
+    assert.ok(!text.includes(secret), `${secret} leaked`);
+  }
+  const printers = JSON.parse(bundle.files.find((file) => file.name === "printers.json").content).printers;
+  assert.deepEqual(printers.map((p) => [p.id, p.kind, p.serial, p.model, p.credentialSet, p.firmware]), [["01PTESTSERIAL", "bambu", "01PTESTSERIAL", "p1s", true, "unknown"]]);
+  assert.equal(JSON.parse(bundle.files.find((file) => file.name === "settings.json").content).BAMBU_TOKEN, "[set]");
+  assert.match(bundle.files.find((file) => file.name === "tool-errors.log").content, /counterpart_make_3mf: /);
+  assert.match(bundle.files.find((file) => file.name === "fulu/control-trace.log").content, /"step":"delivered"/);
+
+  const other = (await call(client, "counterpart_diagnostics", { printer: "01POTHER" })).structuredContent;
+  assert.deepEqual(JSON.parse(other.files.find((file) => file.name === "printers.json").content).printers, []);
+  assert.ok(other.notes.some((note) => /No configured printer is 01POTHER/.test(note)));
+  const mine = (await call(client, "counterpart_diagnostics", { printer: "127.0.0.1" })).structuredContent;
+  assert.equal(JSON.parse(mine.files.find((file) => file.name === "printers.json").content).printers.length, 1);
+  assert.equal((await client.callTool({ name: "counterpart_diagnostics", arguments: { max_bytes: 8_388_609 } })).isError, true);
+});
+
+test("counterpart_diagnostics says credentialSet from every place this server reads the access code, and never returns it", async (t) => {
+  const code = "dummy-access-7731";
+  const printer = { PRINTER_TYPE: "bambu", BAMBU_SERIAL: "01PTESTSERIAL", BAMBU_MODEL: "p1s" };
+  const printers = (bundle) => JSON.parse(bundle.files.find((file) => file.name === "printers.json").content).printers;
+  for (const [label, env, files] of [
+    ["BAMBU_TOKEN in the environment", { BAMBU_TOKEN: code }, {}],
+    ["BAMBU_TOKEN in .env", {}, { ".env": `BAMBU_TOKEN=${code}\n` }],
+  ]) {
+    const { client } = await server(t, { ...printer, ...env }, files);
+    const bundle = (await call(client, "counterpart_diagnostics")).structuredContent;
+    assert.deepEqual(printers(bundle).map((p) => p.credentialSet), [true], label);
+    assert.ok(!JSON.stringify(bundle).includes(code), `${label}: the code leaked`);
+  }
+  // A name this server does not read: false, a note that names it, and its value still redacted.
+  const { client } = await server(t, { ...printer, BAMBU_PRINTER_ACCESS_CODE: code });
+  const bundle = (await call(client, "counterpart_diagnostics")).structuredContent;
+  assert.deepEqual(printers(bundle).map((p) => p.credentialSet), [false]);
+  assert.ok(bundle.notes.some((note) => /BAMBU_PRINTER_ACCESS_CODE is set, but this server reads the access code only from BAMBU_TOKEN/.test(note)), bundle.notes.join("\n"));
+  assert.ok(!JSON.stringify(bundle).includes(code), "the unread code leaked");
+});
+
+test("counterpart_printer_info advertises counterpart_diagnostics", async (t) => {
+  const { client } = await server(t, { PRINTER_TYPE: "bambu", BAMBU_SERIAL: "01PTESTSERIAL", BAMBU_TOKEN: "39af81c2", BAMBU_MODEL: "p1s", PRINTER_HOST: "127.0.0.1" });
+  const info = (await call(client, "counterpart_printer_info")).structuredContent;
+  assert.equal(info.capabilities.diagnostics, true);
 });
