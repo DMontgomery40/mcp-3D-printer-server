@@ -136,6 +136,36 @@ test("the lead's regressions: a scheme is never taken as the value, access-code 
   assert.equal(redactText("open https://ex.com/cb?code=1#id_token=tokXYZ987654"), "open https://ex.com/cb?code=1#id_token=[redacted]");
 });
 
+test("the app's re-review: structured values under a secret's name, name/value pairs, whole Authorization lines, Negotiate (N1, N3, N6)", () => {
+  // N1: an object or array under a secret's name goes whole, and the JSON still parses.
+  assert.equal(redactText('{"password":{"value":"pwvalue1"},"port":990}'), '{"password":"[redacted]","port":990}');
+  assert.equal(redactText('{"tokens":["tokval22","tokval23"]}'), '{"tokens":"[redacted]"}');
+  assert.equal(redactText('{"apiKeys":[{"value":"akval333","note":"a [b] {c}"}]}'), '{"apiKeys":"[redacted]"}');
+  assert.equal(redactText('{"password": {"value": "cut-before-its-end'), '{"password": "[redacted]"', "a structure cut short goes to its line's end");
+  assert.equal(redactText('{"layers":[1,2],"filaments":{"slot":1}}'), '{"layers":[1,2],"filaments":{"slot":1}}', "other structures stay");
+  // N1: a secret named in a name/key field and given in a value field, either order.
+  assert.equal(redactText('{"name":"BAMBU_ACCESS_CODE","value":"acval444"}'), '{"name":"BAMBU_ACCESS_CODE","value":"[redacted]"}');
+  assert.equal(redactText('{"value":"acval446", "name":"apiKey"}'), '{"value":"[redacted]", "name":"apiKey"}');
+  assert.ok(!redactText('{"key":"BAMBU_TOKEN","value":"acval445"}').includes("acval445"));
+  assert.equal(redactText('{"name":"BAMBU_MODEL","value":"p1s"}'), '{"name":"BAMBU_MODEL","value":"p1s"}', "a setting that is not a secret stays");
+  assert.equal(redactText('{"name":"BAMBU_TOKEN","value":"[set]"}'), '{"name":"BAMBU_TOKEN","value":"[set]"}');
+  // N3: the whole Authorization header line goes, a Digest username with it.
+  assert.equal(redactText('Authorization: Digest username="alice", realm="r", response="abc123def"'), "Authorization: Digest [redacted]");
+  assert.equal(redactText('proxy-authorization: digest username="bob", nonce="n1"\nnext line'), "proxy-authorization: digest [redacted]\nnext line");
+  assert.equal(redactText("Authorization: someCustomScheme opaque-value-77"), "Authorization: [redacted]");
+  // N6: Negotiate (and NTLM) are schemes.
+  for (const scheme of ["Negotiate", "negotiate", "NTLM"]) {
+    assert.equal(redactText(`Authorization: ${scheme} YIIBhwYGKwYBBQUC`), `Authorization: ${scheme} [redacted]`);
+    assert.equal(redactText(`sent ${scheme} YIIBhwYGKwYBBQUC to the proxy`), `sent ${scheme} [redacted] to the proxy`);
+  }
+});
+
+test("printer error codes survive (N4)", () => {
+  for (const line of ["HMS code 05004043 at ams", "code 1234 printer", "HMS_0500_4043 code: 0500-4043", '{"print_error":50348044,"code":1234}', "err_code=0300-0100-0001"]) {
+    assert.equal(redactText(line), line);
+  }
+});
+
 test("redaction keeps names that only look like secret words, and Bambu's error codes", () => {
   for (const line of ["exit code: 0 err_code=1200 code=0", '{"step":"send","command":"pause","code":0}', "spinner=3 keyboard=us monkey=1",
     "token=[set] password=\"\" BAMBU_TOKEN=[set]", "authenticate: failed", "https://example.com/path?page=2"]) {

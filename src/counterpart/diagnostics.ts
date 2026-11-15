@@ -164,11 +164,44 @@ const AUTH_SCHEME = /^(?:\\?["'])?(?:bearer|basic|digest|token|negotiate|ntlm)$/
  * so a name that is not a secret ("https:", "?code=1") leaves what follows it to be read again ("#id_token=…").
  */
 const KEY_VALUE = new RegExp(String.raw`(\\?["']?)(${NAME})(\\?["']?)(\s*[:=]\s*)(?=(\\"(?:(?!\\")[^\n]){0,4096}\\"|"(?:[^"\\\n]|\\.){0,4096}"|'[^'\n]{0,4096}'|["']?(?:\[[a-z-]{1,16}\])?[^\s,;&}\])"'\\]*))`, "gi");
+/** Where the JSON object or array starting at `start` ends (after its closing bracket), or its line's end if it is cut. */
+function structureEnd(text: string, start: number): number {
+  let depth = 0, inString = false;
+  const limit = Math.min(text.length, start + 65536);
+  for (let i = start; i < limit; i++) {
+    const c = text[i];
+    if (inString) { if (c === "\\") i++; else if (c === '"') inString = false; continue; }
+    if (c === '"') inString = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") { if (--depth === 0) return i + 1; }
+  }
+  const line = text.indexOf("\n", start);
+  return line < 0 || line > limit ? limit : line;
+}
+
+const PAIR_NAME = String.raw`"(?:name|key|env|variable|var|field|id)"\s*:\s*"([^"\\\n]{1,96})"`;
+const PAIR_VALUE = String.raw`"(?:value|val|secret|data)"\s*:\s*`;
+const PAIR_VALUE_TEXT = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|[^\s,}\]]{1,4096})`;
+const NAME_THEN_VALUE = new RegExp(String.raw`(${PAIR_NAME}\s*,\s*${PAIR_VALUE})${PAIR_VALUE_TEXT}`, "gi");
+const VALUE_THEN_NAME = new RegExp(String.raw`(${PAIR_VALUE})${PAIR_VALUE_TEXT}(\s*,\s*${PAIR_NAME})`, "gi");
+/** {"name":"BAMBU_ACCESS_CODE","value":"…"} and {"value":"…","key":"API_TOKEN"}: the value goes when the name is a secret's. */
+function redactNamedValues(text: string): string {
+  const safe = (value: string) => SAFE_VALUE.test(value);
+  return text
+    .replace(NAME_THEN_VALUE, (m, head, name, value) => isSecretName(name) && !safe(value) ? `${head}"${MARK}"` : m)
+    .replace(VALUE_THEN_NAME, (m, head, value, tail, name) => isSecretName(name) && !safe(value) ? `${head}"${MARK}"${tail}` : m);
+}
+
 function redactKeyValues(text: string): string {
   let out = "", last = 0;
   KEY_VALUE.lastIndex = 0;
   for (let m = KEY_VALUE.exec(text); m; m = KEY_VALUE.exec(text)) {
-    const [head, q1, key, q2, sep, value] = m;
+    const [head, q1, key, q2, sep] = m;
+    let value = m[5];
+    const start = m.index + head.length;
+    // An object or array under a secret's name ({"password":{"value":…}}, {"tokens":[…]}) goes whole, to its closing bracket.
+    // Only after a quoted JSON key: token=[set]hunter2 is a value, not an array.
+    if (q2 && (text[start] === "{" || text[start] === "[") && isSecretName(key)) value = text.slice(start, structureEnd(text, start));
     // An empty value, a safe one, or an authorization scheme ("authorization: bearer …", replaced after the scheme) stays.
     if (!isSecretName(key) || !value || SAFE_VALUE.test(value) || AUTH_SCHEME.test(value)) continue;
     const quote = value.startsWith('\\"') ? '\\"' : value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
@@ -185,6 +218,11 @@ const RULES: Array<[RegExp, string | ((...m: string[]) => string)] | ((text: str
   [/-----BEGIN ([A-Z0-9 ]{1,64})-----[\s\S]*?(?:-----END \1-----|$)/g, MARK],
   // Cookie headers: every cookie on the line.
   [/\b((?:set-)?cookie\s*[:=]\s*)[^\r\n]*/gi, `$1${MARK}`],
+  // An Authorization or Proxy-Authorization header line goes whole, past its scheme (a Digest username goes with it).
+  [/(?<![\w"'\\-])((?:proxy-)?authorization[ \t]*:[ \t]*)(?:(bearer|basic|digest|negotiate|ntlm|token)[ \t]+)?[^\r\n]*/gi,
+    (_m, head, scheme) => `${head}${scheme ? `${scheme} ` : ""}${MARK}`],
+  // A secret named by a JSON object's name and given in its value: {"name":"BAMBU_ACCESS_CODE","value":"…"}, either order.
+  redactNamedValues,
   // Authorization schemes, in any case.
   [/\b(Bearer|Basic|Digest|Token|Negotiate|NTLM)(\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1$2${MARK}`],
   // user:password@ in URLs.
