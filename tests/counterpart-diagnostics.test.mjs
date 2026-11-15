@@ -160,6 +160,46 @@ test("the app's re-review: structured values under a secret's name, name/value p
   }
 });
 
+test("release review D-1: a name/value pair leaks nothing with other fields between, in either order", () => {
+  assert.equal(redactText('{"name":"BAMBU_ACCESS_CODE","note":"x","value":"secretD1a"}'), '{"name":"BAMBU_ACCESS_CODE","note":"x","value":"[redacted]"}');
+  assert.equal(redactText('{"name":"BAMBU_ACCESS_CODE","scope":"lan","value":"secretD1a"}'), '{"name":"BAMBU_ACCESS_CODE","scope":"lan","value":"[redacted]"}');
+  assert.equal(redactText('{"value":"secretD1b","scope":"lan","note":"n","name":"cloud_token"}'), '{"value":"[redacted]","scope":"lan","note":"n","name":"cloud_token"}');
+  const pretty = '{"settings": [\n  {\n    "name": "BAMBU_ACCESS_CODE",\n    "scope": "lan",\n    "value": "secretD1c"\n  }\n]}';
+  assert.ok(!redactText(pretty).includes("secretD1c"), "pretty-printed, inside an array");
+  assert.doesNotThrow(() => JSON.parse(redactText(pretty)));
+  assert.equal(redactText('{"name":"BAMBU_MODEL","note":"x","value":"p1s"}'), '{"name":"BAMBU_MODEL","note":"x","value":"p1s"}', "a setting that is not a secret stays");
+  assert.equal(redactText('{"name":"BAMBU_TOKEN","note":"x","value":"[set]"}'), '{"name":"BAMBU_TOKEN","note":"x","value":"[set]"}');
+});
+
+test("release review D-2 to D-5: bare hf_ keys, bare Digest credentials, %40 emails, spaced code labels", () => {
+  // D-2
+  assert.equal(redactText("pulled with hf_abcdefghijklmnopqrstuvwxyz0123456789 ok"), "pulled with [redacted-token] ok");
+  // D-3
+  assert.equal(redactText('sent Digest username="alice", realm="r", nonce="n1", response="6629fae49393a05397450978507c4ef1"\nnext'), "sent Digest [redacted]\nnext");
+  // D-4
+  assert.equal(redactText("account is name%40example.com ok"), "account is [redacted-email] ok");
+  assert.equal(redactText("login=first.last%40mail.example.co.uk&x=1").includes("first.last"), false);
+  // D-5
+  assert.equal(redactText("access code: 12345678"), "access code: [redacted]");
+  assert.equal(redactText('Pairing Code = "98765432"'), 'Pairing Code = "[redacted]"');
+  assert.equal(redactText("LAN code: 31415926, verification code 1234"), "LAN code: [redacted], verification code 1234");
+  assert.equal(redactText("access code: [set]"), "access code: [set]");
+});
+
+test("release review D-6: a random bare code, a bare AWS secret, XML and plist secrets, a quoted secret longer than 4096 characters", () => {
+  assert.equal(redactText('{"code": "Ab3dEf6hJk9mNpQrStUvWxYz0123"}'), '{"code": "[redacted]"}');
+  assert.equal(redactText("aws secret wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY end"), "aws secret [redacted-token] end");
+  assert.equal(redactText("<dict><key>apiToken</key>\n<string>plistsecret1</string></dict>"), "<dict><key>apiToken</key>\n<string>[redacted]</string></dict>");
+  assert.equal(redactText('<config><password type="x">xmlsecret22</password></config>'), '<config><password type="x">[redacted]</password></config>');
+  const long = "w ".repeat(2500) + "tailsecret99";
+  assert.equal(redactText(`{"password":"${long}","port":990}`), '{"password":"[redacted]","port":990}');
+  // Unchanged: plist keys and versions, element text that is not a secret, paths with slashes.
+  for (const line of ["<key>CFBundleVersion</key><string>2.0.1</string>", "<name>P1S</name><key>token</key>", "/Users/Shared/Library/Application/Support/BambuStudio2",
+    "Library/Application/Support/BambuStudio/x"]) {
+    assert.equal(redactText(line), line);
+  }
+});
+
 test("printer error codes survive (N4)", () => {
   for (const line of ["HMS code 05004043 at ams", "code 1234 printer", "HMS_0500_4043 code: 0500-4043", '{"print_error":50348044,"code":1234}', "err_code=0300-0100-0001"]) {
     assert.equal(redactText(line), line);

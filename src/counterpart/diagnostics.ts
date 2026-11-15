@@ -179,18 +179,36 @@ function structureEnd(text: string, start: number): number {
   return line < 0 || line > limit ? limit : line;
 }
 
-const PAIR_NAME = String.raw`"(?:name|key|env|variable|var|field|id)"\s*:\s*"([^"\\\n]{1,96})"`;
-const PAIR_VALUE = String.raw`"(?:value|val|secret|data)"\s*:\s*`;
-const PAIR_VALUE_TEXT = String.raw`("(?:[^"\\\n]|\\.){0,4096}"|[^\s,}\]]{1,4096})`;
-const NAME_THEN_VALUE = new RegExp(String.raw`(${PAIR_NAME}\s*,\s*${PAIR_VALUE})${PAIR_VALUE_TEXT}`, "gi");
-const VALUE_THEN_NAME = new RegExp(String.raw`(${PAIR_VALUE})${PAIR_VALUE_TEXT}(\s*,\s*${PAIR_NAME})`, "gi");
-/** {"name":"BAMBU_ACCESS_CODE","value":"…"} and {"value":"…","key":"API_TOKEN"}: the value goes when the name is a secret's. */
+const PAIR_NAME = /"(?:name|key|env|variable|var|field|id)"\s*:\s*"([^"\\\n]{1,96})"/gi;
+const PAIR_VALUE = /("(?:value|val|secret|data)"\s*:\s*)("(?:[^"\\\n]|\\.){0,65536}"|[^\s,}\]]{1,4096})/gi;
+/**
+ * {"name":"BAMBU_ACCESS_CODE","scope":"lan","value":"…"}: in each flat JSON object (no object inside it), when a
+ * name/key field names a secret, its value fields go, wherever they are in the object and in either order.
+ */
 function redactNamedValues(text: string): string {
-  const safe = (value: string) => SAFE_VALUE.test(value);
-  return text
-    .replace(NAME_THEN_VALUE, (m, head, name, value) => isSecretName(name) && !safe(value) ? `${head}"${MARK}"` : m)
-    .replace(VALUE_THEN_NAME, (m, head, value, tail, name) => isSecretName(name) && !safe(value) ? `${head}"${MARK}"${tail}` : m);
+  return text.replace(/\{[^{}]{0,16384}\}/g, object => {
+    const names = [...object.matchAll(PAIR_NAME)].map(m => m[1]);
+    if (!names.some(isSecretName)) return object;
+    return object.replace(PAIR_VALUE, (m, head, value) => SAFE_VALUE.test(value) ? m : `${head}"${MARK}"`);
+  });
 }
+
+/** Where the quoted string starting at `start` ends (after its closing quote), or its line's end if it is cut. */
+function stringEnd(text: string, start: number, quote: string): number {
+  const limit = Math.min(text.length, start + 1_048_576);
+  for (let i = start + quote.length; i < limit; i++) {
+    if (text.startsWith(quote, i)) return i + quote.length;
+    if (text[i] === "\\" && quote === '"') i++;
+    else if (text[i] === "\n") return i;
+  }
+  return limit;
+}
+
+/** A bare "code" whose value is a random run of mixed case and digits (a pairing code), unlike a printer's error code. */
+const randomCode = (key: string, value: string) => /(?:^|[^A-Za-z])code$/i.test(key.replace(/["'\\]/g, "")) && (() => {
+  const plain = value.replace(/^\\?["']|\\?["']$/g, "");
+  return /^[A-Za-z0-9_-]{16,256}$/.test(plain) && /[a-z]/.test(plain) && /[A-Z]/.test(plain) && /\d/.test(plain);
+})();
 
 function redactKeyValues(text: string): string {
   let out = "", last = 0;
@@ -202,8 +220,13 @@ function redactKeyValues(text: string): string {
     // An object or array under a secret's name ({"password":{"value":…}}, {"tokens":[…]}) goes whole, to its closing bracket.
     // Only after a quoted JSON key: token=[set]hunter2 is a value, not an array.
     if (q2 && (text[start] === "{" || text[start] === "[") && isSecretName(key)) value = text.slice(start, structureEnd(text, start));
+    // A quoted value longer than the lookahead reads goes to its closing quote, not to its first space.
+    else if (value?.startsWith('"') || value?.startsWith('\\"')) {
+      const quote = value.startsWith('"') ? '"' : '\\"';
+      if (value.length <= quote.length || !value.endsWith(quote)) value = text.slice(start, stringEnd(text, start, quote));
+    }
     // An empty value, a safe one, or an authorization scheme ("authorization: bearer …", replaced after the scheme) stays.
-    if (!isSecretName(key) || !value || SAFE_VALUE.test(value) || AUTH_SCHEME.test(value)) continue;
+    if (!(isSecretName(key) || randomCode(key, value)) || !value || SAFE_VALUE.test(value) || AUTH_SCHEME.test(value)) continue;
     const quote = value.startsWith('\\"') ? '\\"' : value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
     // A JSON key's bare value (a number) is replaced by a string, so the JSON still parses.
     const json = quote ? quote : q2 === '"' ? '"' : q2 === '\\"' ? '\\"' : "";
@@ -223,6 +246,16 @@ const RULES: Array<[RegExp, string | ((...m: string[]) => string)] | ((text: str
     (_m, head, scheme) => `${head}${scheme ? `${scheme} ` : ""}${MARK}`],
   // A secret named by a JSON object's name and given in its value: {"name":"BAMBU_ACCESS_CODE","value":"…"}, either order.
   redactNamedValues,
+  // Digest credentials written bare (Digest username="…", response="…"): the whole list, to the line's end.
+  [/\b(Digest)([ \t]+)(?=[A-Za-z_-]{1,32}[ \t]*=)[^\r\n]*/gi, `$1$2${MARK}`],
+  // Two-word labels: "access code: 12345678", "pairing code = …".
+  [/\b((?:access|lan|pair|pairing|auth|verification|security|otp)[ \t]+code)([ \t]*[:=][ \t]*)(?!\[redacted|\[set\])("[^"\n]{1,4096}"|'[^'\n]{1,4096}'|[^\s,;&}\])"']+)/gi,
+    (_m, label, sep, value) => `${label}${sep}${value.startsWith('"') ? `"${MARK}"` : value.startsWith("'") ? `'${MARK}'` : MARK}`],
+  // Secrets in XML and plists: <password>…</password>, <key>apiToken</key><string>…</string>.
+  [/(<key>([^<]{1,96})<\/key>\s*<(string|data|integer)>)([^<]{1,65536})(<\/\3>)/g,
+    (m, head, name, _tag, value, tail) => isSecretName(name) ? `${head}${MARK}${tail}` : m],
+  [/<([A-Za-z_][A-Za-z0-9_.:-]{0,95})((?:\s[^<>]{0,1024})?)>([^<]{1,65536})<\/\1>/g,
+    (m, tag, attributes, value) => tag !== "key" && isSecretName(tag) && !SAFE_VALUE.test(value) ? `<${tag}${attributes}>${MARK}</${tag}>` : m],
   // Authorization schemes, in any case.
   [/\b(Bearer|Basic|Digest|Token|Negotiate|NTLM)(\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1$2${MARK}`],
   // user:password@ in URLs.
@@ -232,12 +265,17 @@ const RULES: Array<[RegExp, string | ((...m: string[]) => string)] | ((text: str
   // --api-key VALUE, -password VALUE.
   [new RegExp(String.raw`(\s--?)(${NAME_BODY})(\s+)(?!--?\w)(\S+)`, "gi"),
     (match, dash, key, space, value) => isSecretName(key) && !SAFE_VALUE.test(value) ? `${dash}${key}${space}${MARK}` : match],
+  // Email addresses with a URL-encoded @ (name%40example.com).
+  [/(?<![A-Za-z0-9._%+-])[A-Za-z0-9._+-]{1,64}%40[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])/gi, "[redacted-email]"],
   // Email addresses (account logins).
   [/(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])/g, "[redacted-email]"],
   // JSON Web Tokens.
   [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*)?/g, "[redacted-token]"],
-  // Tokens with a known prefix, bare: GitHub, AWS access key ids, Google API keys, sk-/pk- keys, Slack.
-  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{30,64}|(?:sk|pk|rk)-[A-Za-z0-9_-]{16,256}|xox[abposr]-[A-Za-z0-9-]{10,256})(?![A-Za-z0-9_-])/g, "[redacted-token]"],
+  // Tokens with a known prefix, bare: GitHub, AWS access key ids, Google API keys, sk-/pk- keys, Slack, Hugging Face.
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{30,64}|(?:sk|pk|rk)-[A-Za-z0-9_-]{16,256}|xox[abposr]-[A-Za-z0-9-]{10,256}|hf_[A-Za-z0-9]{20,255})(?![A-Za-z0-9_-])/g, "[redacted-token]"],
+  // An AWS secret access key, bare: 40 characters of mixed case, digits and / or +, not a path.
+  [/(?<![A-Za-z0-9/+=._-])[A-Za-z0-9][A-Za-z0-9/+]{39}(?![A-Za-z0-9/+=._-])/g,
+    run => /[/+]/.test(run) && /[a-z]/.test(run) && /[A-Z]/.test(run) && /\d/.test(run) && (run.match(/[/+]/g) ?? []).length <= 4 && !/\/\//.test(run) ? "[redacted-token]" : run],
   // Home folders: other people's names in /Users/<name>, /home/<name>, C:\Users\<name> and ~name, slashes escaped or not.
   [/((?:^|[^A-Za-z0-9_.-])(?:\\{0,2}\/)(?:Users|home)\\{0,2}\/)(?!Shared\b|\[user\])([^\\/\s"'<>:*?|]{1,64})/g, "$1[user]"],
   [/(\b[A-Za-z]:(?:\\{1,2}|\/)Users(?:\\{1,2}|\/))(?!Public\b|\[user\])([^\\/\s"'<>:*?|]{1,64})/gi, "$1[user]"],
