@@ -53,6 +53,56 @@ const SECRETS = [
   ["cloud user info", '{"user_info":"uid-778899"}', "uid-778899"],
   ["PEM private key", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----", "MIIEvQIBADANBg"],
   ["basic auth", "Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA=="],
+  // Authorization schemes in any case.
+  ["bearer, lower case", "authorization: bearer abcDEF123456ghiJKL789", "abcDEF123456ghiJKL789"],
+  ["basic, lower case, proxy header", "Proxy-Authorization: basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA=="],
+  ["bearer, upper case", "AUTHORIZATION: BEARER UPPERtoken9876", "UPPERtoken9876"],
+  ["digest, lower case", "authorization: digest abcdef0123456789", "abcdef0123456789"],
+  // Names with key, passphrase, pin, session, token, secret, password, cookie or credential in them.
+  ["name with key, env", "SCAN_TO_MAKE_MODEL_KEY=hf_9f8e7d6c5b4a3928", "hf_9f8e7d6c5b4a3928"],
+  ["name with key, JSON", '{"SCAN_TO_MAKE_AI_KEY":"plainhex0123456789abcdef0123"}', "plainhex0123456789abcdef0123"],
+  ["name with key, encryption_key", "encryption_key: deadbeefcafe0123456789", "deadbeefcafe0123456789"],
+  ["name with key, camelCase", '{"encryptionKey":"camelkey-4410"}', "camelkey-4410"],
+  ["name with passphrase", "passphrase=hunter2-horse-battery", "hunter2-horse-battery"],
+  ["name with pin", "PAIRING_PIN=482910", "482910"],
+  ["name with pin, JSON", '{"pin":"7351"}', "7351"],
+  ["name with session, camelCase", '{"sessionId":"7f3a9c1e88b24d6fa015"}', "7f3a9c1e88b24d6fa015"],
+  ["name with session, session_key", '{"session_key":"s3ss10nV4lue98765"}', "s3ss10nV4lue98765"],
+  ["name with token, URL fragment", "https://ex.com/cb#id_token=tokXYZ987654", "tokXYZ987654"],
+  ["name with token, URL query", "GET https://api.example.com/x?access_token=tokABC123456&y=1", "tokABC123456"],
+  ["name with secret, client_secret", "client_secret=cs_9876543210abcdef", "cs_9876543210abcdef"],
+  ["name with password, quoted with spaces", "password = 'correct horse battery'", "correct horse"],
+  ["name with cookie, JSON", '{"cookie":"sid=zzz999yyy888"}', "zzz999yyy888"],
+  ["name with credential, plural", "CLOUD_CREDENTIALS=credvalue-5521", "credvalue-5521"],
+  ["name with otp", '{"otp":"731204"}', "731204"],
+  ["name with lan code", "lan_code=87654321", "87654321"],
+  // A safe word counts only as the whole value.
+  ["safe-looking prefix, [set]", "token=[set]hunter2value", "hunter2value"],
+  ["safe-looking prefix, [redacted]", "secret=[redacted]tail-secret-7", "tail-secret-7"],
+  ["safe-looking prefix, true-", "password=true-secret", "true-secret"],
+  ["safe-looking prefix, null-", "api_key=null-123456789", "null-123456789"],
+  ["safe-looking prefix, false_", "secret=false_value99", "false_value99"],
+  ["safe-looking prefix, JSON", '{"password":"true-secret"}', "true-secret"],
+  // Bare tokens with a known prefix.
+  ["bare GitHub token", "cloned with ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6", "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"],
+  ["bare GitHub fine-grained token", "use github_pat_11ABCDEFG0abcdefghij_klmnop now", "github_pat_11ABCDEFG0abcdefghij_klmnop"],
+  ["bare AWS access key id", "aws id AKIAIOSFODNN7EXAMPLE ok", "AKIAIOSFODNN7EXAMPLE"],
+  ["bare Google API key", "key AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r done", "AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r"],
+  ["bare sk- key", "k sk-ant-api03-abcdefghijklmnopqrstuvwx", "sk-ant-api03"],
+  // PEM blocks of any type.
+  ["PEM certificate", "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUZZZ\n-----END CERTIFICATE-----", "MIIBszCCAVmgAwIBAgIUZZZ"],
+  ["PEM EC private key", "-----BEGIN EC PRIVATE KEY-----\nMHQCAQEEIAbc123\n-----END EC PRIVATE KEY-----", "MHQCAQEEIAbc123"],
+  ["PEM OpenSSH private key", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk=\n-----END OPENSSH PRIVATE KEY-----", "b3BlbnNzaC1rZXk="],
+  ["PEM block cut before its end", "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAcut", "MIIEowIBAAKCAQEAcut"],
+  // Unicode-escaped JSON keys.
+  ["unicode-escaped key", String.raw`{"\u0070assword":"unicodesecret1"}`, "unicodesecret1"],
+  ["unicode-escaped key, escaped JSON", String.raw`"{\"\\u0074oken\":\"esc-unicode-22\"}"`, "esc-unicode-22"],
+  // Home folders: other people's names.
+  ["a /Users/<name> path", "/Users/someoneelse/Library/x", "someoneelse"],
+  ["a /home/<name> path", "read /home/otheruser/.config/y", "otheruser"],
+  ["a C:\\Users\\<name> path", "C:\\Users\\DavidM\\z", "DavidM"],
+  ["an escaped-slash home path", String.raw`{\"path\":\"\/Users\/davidm\/Library\"}`, "davidm"],
+  ["a ~name path", "log at ~davidm/Library/Logs", "davidm"],
 ];
 
 for (const [kind, line, secret, options] of SECRETS) {
@@ -61,6 +111,40 @@ for (const [kind, line, secret, options] of SECRETS) {
     assert.ok(!out.includes(secret), `${kind}: ${out}`);
   });
 }
+
+test("this server's own home folder reads ~, also with escaped slashes; other people's names read [user]", t => {
+  const previous = process.env.HOME;
+  process.env.HOME = "/home/tester-home";
+  t.after(() => { if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous; });
+  assert.equal(redactText("open /home/tester-home/models/a.stl"), "open ~/models/a.stl");
+  assert.equal(redactText(String.raw`{"p":"\/home\/tester-home\/x"}`), String.raw`{"p":"~\/x"}`);
+  assert.equal(redactText("/home/tester-homes/x"), "/home/[user]/x", "a longer name is someone else's");
+  assert.equal(redactText("/Users/Shared/x C:\\Users\\Public\\y"), "/Users/Shared/x C:\\Users\\Public\\y");
+});
+
+test("the lead's regressions: a scheme is never taken as the value, access-code is a secret name, a URL's https: swallows nothing", () => {
+  // The key=value rule must not take "Bearer" as authorization's value and leave the token after it.
+  for (const scheme of ["Bearer", "bearer", "BEARER", "Basic"]) {
+    assert.equal(redactText(`Authorization: ${scheme} sch3meSecretValue99`), `Authorization: ${scheme} [redacted]`);
+  }
+  assert.equal(redactText('{"Authorization":"Bearer sch3meSecretValue99"}'), '{"Authorization":"[redacted]"}', "a quoted JSON value goes whole");
+  // "access" ends in s: it is never read as a plural and cut to "acces".
+  assert.equal(redactText("access-code: 31415926"), "access-code: [redacted]");
+  assert.equal(redactText("ACCESS_CODE=31415926 accessCode=31415926"), "ACCESS_CODE=[redacted] accessCode=[redacted]");
+  // "https:" is not a secret name, so it must not take the rest of the URL as its value and hide the token from the rule.
+  assert.equal(redactText("GET https://api.example.com/x?access_token=tokABC123456&y=1"), "GET https://api.example.com/x?access_token=[redacted]&y=1");
+  assert.equal(redactText("open https://ex.com/cb?code=1#id_token=tokXYZ987654"), "open https://ex.com/cb?code=1#id_token=[redacted]");
+});
+
+test("redaction keeps names that only look like secret words, and Bambu's error codes", () => {
+  for (const line of ["exit code: 0 err_code=1200 code=0", '{"step":"send","command":"pause","code":0}', "spinner=3 keyboard=us monkey=1",
+    "token=[set] password=\"\" BAMBU_TOKEN=[set]", "authenticate: failed", "https://example.com/path?page=2"]) {
+    assert.equal(redactText(line), line);
+  }
+  assert.equal(redactText("authorization: bearer abcDEF123456"), "authorization: bearer [redacted]", "the scheme stays");
+  assert.equal(redactText('{"accessCodeSet":true,"pin":null,"token":false}'), '{"accessCodeSet":true,"pin":null,"token":false}', "whether a secret is set stays");
+  assert.deepEqual(JSON.parse(redactText('{"pin": 7351, "otp":731204}')), { pin: "[redacted]", otp: "[redacted]" }, "a bare JSON number becomes a string");
+});
 
 test("redaction keeps empty and already-replaced values, so a setting still shows whether it is set", () => {
   const line = '{"API_KEY": "", "BAMBU_TOKEN": "[set]", "password": "[redacted]"} token=';

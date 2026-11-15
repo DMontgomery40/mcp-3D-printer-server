@@ -8,6 +8,7 @@
  * This file is shared verbatim between bambu-printer-mcp and mcp-3D-printer-server; each server lists its own sources.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export const DIAGNOSTICS_DEFAULT_BYTES = 4_194_304;
@@ -105,7 +106,7 @@ export function rememberSecretArguments(args: unknown): void {
   const visit = (value: unknown, key: string, depth: number): void => {
     if (depth > 4 || value === null || value === undefined) return;
     if (typeof value === "string") {
-      if (SECRET_KEY.test(key) && value.trim().length >= MIN_SECRET_LENGTH && !PLAIN_VALUE.test(value.trim()) && seenSecrets.size < SEEN_SECRET_LIMIT) seenSecrets.add(value.trim());
+      if (isSecretName(key) && value.trim().length >= MIN_SECRET_LENGTH && !PLAIN_VALUE.test(value.trim()) && seenSecrets.size < SEEN_SECRET_LIMIT) seenSecrets.add(value.trim());
       return;
     }
     if (typeof value === "object") for (const [k, v] of Object.entries(value as Record<string, unknown>)) visit(v, k, depth + 1);
@@ -126,39 +127,83 @@ export function resetDiagnosticsMemory(): void {
 // ---------------------------------------------------------------------------------------------------------------------
 // Redaction.
 
-const SECRET_WORDS = String.raw`pass(?:word|wd|code|phrase)?|pwd|secret|token|api[_-]?key|apikey|access[_-]?(?:code|key)|auth(?:orization)?|cookie|session|credential|private[_-]?key|signature|bearer|e-?mail|account|user[_-]?name|user[_-]?info|login|ticket`;
-/** A key named like a secret: one of the words, alone or joined to others by _ . - or case ("accessToken", "api-key"). */
-const KEY = String.raw`(?<![A-Za-z0-9_.])[A-Za-z0-9_.-]{0,48}?(?:${SECRET_WORDS})(?:[_.-][A-Za-z0-9_.-]{0,48})?(?![A-Za-z0-9])`;
-const SECRET_KEY = new RegExp(`^${KEY}$`, "i");
+/**
+ * Whether a name says its value is a secret. The name is split into words at _ . - spaces and camelCase
+ * ("sessionId", "SCAN_TO_MAKE_AI_KEY", "X-Api-Key"); \uXXXX escapes are read first ("\u0070assword").
+ * STRONG words count inside a longer word too ("mytoken", "apikey"); WHOLE words only alone ("PAIRING_PIN", not
+ * "spinner"); "code" only after a word that makes it one (access, lan, pair, pairing, auth, verification, security).
+ */
+const STRONG_WORDS = /pass(?:word|wd|code|phrase|key)|secret|token|apikey|accesscode|accesskey|authkey|privatekey|cookie|session|credential|signature|bearer|e-?mail|username|userinfo|login|ticket|authoriz/;
+const WHOLE_WORDS = new Set(["key", "keys", "pin", "otp", "pwd", "auth", "account", "sid"]);
+const CODE_OWNERS = new Set(["access", "lan", "pair", "pairing", "auth", "verification", "security", "otp"]);
+export function isSecretName(name: string): boolean {
+  const plain = name.replace(/\\{1,2}u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  const words = plain.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return words.some((word, i) => STRONG_WORDS.test(word) || WHOLE_WORDS.has(word) || (word === "code" && i > 0 && CODE_OWNERS.has(words[i - 1]))
+    || (i > 0 && STRONG_WORDS.test(words[i - 1] + word)));
+}
+/** A name in key=value or JSON: letters, digits, _ . - and \uXXXX escapes, starting a word. */
+// Only a name with a word that can make it a secret is taken (the lookahead), so "https://…?token=…" is read from "token".
+const NAME_BODY = String.raw`(?=(?:[A-Za-z0-9_.-]|\\{1,2}u[0-9A-Fa-f]{4}){0,96}?(?:pass|pwd|secret|token|key|cookie|session|credential|signature|bearer|mail|user|login|ticket|auth|pin|otp|code|account|sid|\\{1,2}u))(?:[A-Za-z0-9_.-]|\\{1,2}u[0-9A-Fa-f]{4}){1,96}`;
+const NAME = String.raw`(?<![A-Za-z0-9_.\\-])${NAME_BODY}`;
 // Every pattern below starts at a word's start and bounds its runs, so a long log line costs linear time.
 /** Values too common to replace wherever they appear. */
 const PLAIN_VALUE = /^(?:true|false|yes|no|null|none|undefined|on|off)$/i;
 const MIN_SECRET_LENGTH = 5;
 const MARK = "[redacted]";
+/**
+ * An empty value, one already replaced, or a bare true/false/null says only whether it is set ("accessCodeSet": true):
+ * it stays. Only as the whole value: "[set]hunter2" and "true-secret" are secrets.
+ */
+const SAFE_VALUE = /^(?:(?:\\?["'])?(?:\[set\]|\[redacted(?:-[a-z]+)?\])?(?:\\?["'])?|true|false|null)$/;
+const AUTH_SCHEME = /^(?:\\?["'])?(?:bearer|basic|digest|token|negotiate|ntlm)$/i;
 
-const RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
-  // PEM private keys and certificates' keys, whole.
-  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, MARK],
+/**
+ * key=value, key: value, "key": "value", \"key\":\"value\", ?key=value&. Each name's value is read ahead without being taken,
+ * so a name that is not a secret ("https:", "?code=1") leaves what follows it to be read again ("#id_token=…").
+ */
+const KEY_VALUE = new RegExp(String.raw`(\\?["']?)(${NAME})(\\?["']?)(\s*[:=]\s*)(?=(\\"(?:(?!\\")[^\n]){0,4096}\\"|"(?:[^"\\\n]|\\.){0,4096}"|'[^'\n]{0,4096}'|["']?(?:\[[a-z-]{1,16}\])?[^\s,;&}\])"'\\]*))`, "gi");
+function redactKeyValues(text: string): string {
+  let out = "", last = 0;
+  KEY_VALUE.lastIndex = 0;
+  for (let m = KEY_VALUE.exec(text); m; m = KEY_VALUE.exec(text)) {
+    const [head, q1, key, q2, sep, value] = m;
+    // An empty value, a safe one, or an authorization scheme ("authorization: bearer …", replaced after the scheme) stays.
+    if (!isSecretName(key) || !value || SAFE_VALUE.test(value) || AUTH_SCHEME.test(value)) continue;
+    const quote = value.startsWith('\\"') ? '\\"' : value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
+    // A JSON key's bare value (a number) is replaced by a string, so the JSON still parses.
+    const json = quote ? quote : q2 === '"' ? '"' : q2 === '\\"' ? '\\"' : "";
+    out += text.slice(last, m.index) + `${q1}${key}${q2}${sep}${json}${MARK}${json}`;
+    last = KEY_VALUE.lastIndex = m.index + head.length + value.length;
+  }
+  return out + text.slice(last);
+}
+
+const RULES: Array<[RegExp, string | ((...m: string[]) => string)] | ((text: string) => string)> = [
+  // PEM blocks of every type (private keys, certificates, requests), whole.
+  [/-----BEGIN ([A-Z0-9 ]{1,64})-----[\s\S]*?(?:-----END \1-----|$)/g, MARK],
   // Cookie headers: every cookie on the line.
   [/\b((?:set-)?cookie\s*[:=]\s*)[^\r\n]*/gi, `$1${MARK}`],
-  // Authorization schemes.
-  [/\b(Bearer|Basic|Digest|Token)\s+[A-Za-z0-9._~+/=-]{4,}/g, `$1 ${MARK}`],
+  // Authorization schemes, in any case.
+  [/\b(Bearer|Basic|Digest|Token|Negotiate|NTLM)(\s+)[A-Za-z0-9._~+/=-]{4,}/gi, `$1$2${MARK}`],
   // user:password@ in URLs.
   [/(?<![A-Za-z0-9+.-])([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/@:]{1,256}(?::[^\s/@]{0,256})?@/gi, `$1${MARK}@`],
-  // key=value, key: value, "key": "value", \"key\":\"value\", ?key=value&.
-  [new RegExp(String.raw`(\\?["']?)(${KEY})(\\?["']?)(\s*[:=]\s*)(\\"(?:(?!\\")[^\n]){0,4096}\\"|"(?:[^"\\\n]|\\.){0,4096}"|'[^'\n]{0,4096}'|["']?[^\s,;&}\])"'\\]+)`, "gi"),
-    (match, q1, key, q2, sep, value) => {
-      // An empty value, or one already replaced ("[set]"), says only whether it is set: it stays.
-      if (/^(?:\\?["'])?(?:\[set\]|\[redacted\])?(?:\\?["'])?$/.test(value)) return match;
-      const quote = value.startsWith('\\"') ? '\\"' : value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
-      return `${q1}${key}${q2}${sep}${quote}${MARK}${quote}`;
-    }],
+  // key=value, key: value, "key": "value", \"key\":\"value\", ?key=value& (redactKeyValues).
+  redactKeyValues,
   // --api-key VALUE, -password VALUE.
-  [new RegExp(String.raw`(\s--?${KEY})(\s+)(?!--?\w)(\S+)`, "gi"), `$1$2${MARK}`],
+  [new RegExp(String.raw`(\s--?)(${NAME_BODY})(\s+)(?!--?\w)(\S+)`, "gi"),
+    (match, dash, key, space, value) => isSecretName(key) && !SAFE_VALUE.test(value) ? `${dash}${key}${space}${MARK}` : match],
   // Email addresses (account logins).
   [/(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z0-9-])/g, "[redacted-email]"],
   // JSON Web Tokens.
   [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*)?/g, "[redacted-token]"],
+  // Tokens with a known prefix, bare: GitHub, AWS access key ids, Google API keys, sk-/pk- keys, Slack.
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{30,64}|(?:sk|pk|rk)-[A-Za-z0-9_-]{16,256}|xox[abposr]-[A-Za-z0-9-]{10,256})(?![A-Za-z0-9_-])/g, "[redacted-token]"],
+  // Home folders: other people's names in /Users/<name>, /home/<name>, C:\Users\<name> and ~name, slashes escaped or not.
+  [/((?:^|[^A-Za-z0-9_.-])(?:\\{0,2}\/)(?:Users|home)\\{0,2}\/)(?!Shared\b|\[user\])([^\\/\s"'<>:*?|]{1,64})/g, "$1[user]"],
+  [/(\b[A-Za-z]:(?:\\{1,2}|\/)Users(?:\\{1,2}|\/))(?!Public\b|\[user\])([^\\/\s"'<>:*?|]{1,64})/gi, "$1[user]"],
+  [/(?<![A-Za-z0-9_~])~(?!\[user\])[A-Za-z][A-Za-z0-9._-]{0,31}(?=\\{0,2}\/)/g, "~[user]"],
 ];
 
 /** Long mixed-case-and-digit runs (API keys, session tokens) and 32-digit uppercase hex keys; lowercase hashes stay. */
@@ -170,7 +215,7 @@ function redactTokens(text: string): string {
 
 /** The values of this environment's secret-named variables. */
 export function environmentSecrets(env: NodeJS.ProcessEnv = process.env): string[] {
-  return Object.entries(env).filter(([name, value]) => SECRET_KEY.test(name) && typeof value === "string")
+  return Object.entries(env).filter(([name, value]) => isSecretName(name) && typeof value === "string")
     .map(([, value]) => value!.trim()).filter(value => value.length >= MIN_SECRET_LENGTH && !PLAIN_VALUE.test(value));
 }
 
@@ -187,7 +232,14 @@ export function redactText(text: string, secrets: Iterable<string> = []): string
   const known = [...new Set([...secrets, ...environmentSecrets(), ...seenSecrets])]
     .filter(value => value.length >= MIN_SECRET_LENGTH).sort((a, b) => b.length - a.length);
   for (const value of known) out = out.replace(new RegExp(escapeRegExp(value), "g"), MARK);
-  for (const [pattern, replacement] of RULES) out = out.replace(pattern, replacement as any);
+  // This server's own home folder reads ~ (also with JSON's escaped slashes and Windows' doubled backslashes).
+  const home = os.homedir();
+  if (home && home.length > 1) {
+    for (const form of new Set([home, home.replace(/\//g, "\\/"), home.replace(/\\/g, "\\\\")])) {
+      out = out.replace(new RegExp(escapeRegExp(form) + "(?![A-Za-z0-9._-])", "g"), "~");
+    }
+  }
+  for (const rule of RULES) out = typeof rule === "function" ? rule(out) : out.replace(rule[0], rule[1] as any);
   return redactTokens(out);
 }
 
@@ -305,7 +357,7 @@ export function settingsSnapshot(names: RegExp, env: NodeJS.ProcessEnv = process
   return Object.fromEntries(Object.entries(env)
     .filter((entry): entry is [string, string] => names.test(entry[0]) && typeof entry[1] === "string")
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, value]) => [name, SECRET_KEY.test(name) && value ? "[set]" : value]));
+    .map(([name, value]) => [name, isSecretName(name) && value ? "[set]" : value]));
 }
 
 /** The text of a JSON value for a bundle file. */
