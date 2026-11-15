@@ -137,6 +137,18 @@ test("a thin held body buried whole inside the part does not sit on it, however 
   assert.match(r.purpose.blocked.join(" "), /Move held:photo out of the part in use\(\)/);
 });
 
+test("a base partly over a desk's edge touches it, with the patch the size of the overlap; a floating one does not", runtime, () => {
+  // 100 x 60 mm, 30 mm over the edge: its bottom face is two triangles, each with a corner off the desk.
+  const on = inspect("overhang_base.py");
+  const mount = find(on, "mounts desk");
+  assert.equal(mount.status, "pass", mount.says);
+  const area = Number(/^(\d+) mm\^2/.exec(mount.says)[1]);
+  assert.ok(Math.abs(area - 4200) <= 420, `${area} mm^2 of a 4200 mm^2 overlap`);
+  const off = inspect("floating_base.py");
+  assert.equal(find(off, "mounts desk").status, "not_modelled");
+  assert.match(find(off, "mounts desk").says, /does not touch world:desk/);
+});
+
 const status = (r, prefix) => find(r, prefix)?.status;
 const peak = (r, kase) => r.purpose.loads.find((l) => l.case === kase).peak_tension_kpa;
 

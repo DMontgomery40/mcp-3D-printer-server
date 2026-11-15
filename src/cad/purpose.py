@@ -30,6 +30,8 @@ TAPE_SHORT_KPA = 85.0
 FRICTION = 0.4          # printed plastic, or its pads, resting on wood, laminate or painted metal
 TOUCH_MM = 0.5          # a held object within this of the part sits on it
 PATCH_MM = 0.2          # part surface within this of a world body is in contact with it
+SPLIT_MM = 1.0          # a face straddling a world body's edge is split to pieces this long, and the pieces on the body count
+SPLIT_PIECES = 200_000  # at most this many straddling pieces at once, so a huge boundary stays bounded (the rest is left out)
 INSIDE_MM = TOUCH_MM     # a held body may sink this far into the part (its volume inside over half its surface there) and still sit on it
 INSIDE_MM3 = 1.0        # and an overlap below this is a boolean sliver where faces meet, not a body inside the part
 INSIDE_SHARE = 0.5      # more than this share of a held body inside the part is buried, however thin (a 0.3 mm photo in a slab)
@@ -135,10 +137,40 @@ def _patch(part, world):
     d = np.full(len(part.vertices), np.inf)
     if len(near):
         d[near] = trimesh.proximity.closest_point(world, part.vertices[near])[1]
-    on = (d[part.faces] <= PATCH_MM).all(axis=1)
-    if not on.any():
+    within = d[part.faces] <= PATCH_MM
+    on = within.all(axis=1)
+    t, n, a = [tri[on]], [part.face_normals[on]], [part.area_faces[on]]
+    # A face partly on the world body (a base over a desk's edge) has a corner off it in each of its triangles: split
+    # those that straddle the boundary, and keep splitting only the pieces that still straddle it, down to SPLIT_MM.
+    # The pieces wholly on the body count; those wholly off it are dropped.
+    cross = np.flatnonzero(within.any(axis=1) & ~on)
+    pieces, normals = tri[cross], part.face_normals[cross]
+    while len(pieces) and len(pieces) <= SPLIT_PIECES:
+        edges = np.linalg.norm(pieces - np.roll(pieces, 1, axis=1), axis=2).max(axis=1)
+        pieces, normals = pieces[edges > SPLIT_MM], normals[edges > SPLIT_MM]     # pieces already small judged their corners
+        if not len(pieces):
+            break
+        m = (pieces + np.roll(pieces, -1, axis=1)) / 2                             # midpoints of edges 01, 12, 20
+        pieces = np.concatenate([np.stack([pieces[:, 0], m[:, 0], m[:, 2]], 1), np.stack([m[:, 0], pieces[:, 1], m[:, 1]], 1),
+                                 np.stack([m[:, 2], m[:, 1], pieces[:, 2]], 1), np.stack([m[:, 0], m[:, 1], m[:, 2]], 1)])
+        normals = np.concatenate([normals] * 4)
+        pts = pieces.reshape(-1, 3)
+        dist, facing = np.full(len(pts), np.inf), np.zeros((len(pts), 3))
+        inbox = ((pts >= lo) & (pts <= hi)).all(axis=1)
+        if inbox.any():
+            _, dist[inbox], hit = trimesh.proximity.closest_point(world, pts[inbox])
+            facing[inbox] = world.face_normals[hit]
+        close = (dist <= PATCH_MM).reshape(-1, 3)
+        # A piece counts only where it faces the body (a base on a desk, not the thin strip of a side wall beside it).
+        faces = np.einsum('ij,ij->i', normals, facing.reshape(-1, 3, 3)[:, 0]) < -0.5
+        whole = close.all(axis=1) & faces
+        t.append(pieces[whole]); n.append(normals[whole])
+        a.append(np.linalg.norm(np.cross(pieces[whole, 1] - pieces[whole, 0], pieces[whole, 2] - pieces[whole, 0]), axis=1) / 2)
+        keep = close.any(axis=1) & ~close.all(axis=1)
+        pieces, normals = pieces[keep], normals[keep]
+    t, n, a = np.concatenate(t), np.concatenate(n), np.concatenate(a)
+    if not len(t) or a.sum() <= 0:
         return None
-    t, n, a = tri[on], part.face_normals[on], part.area_faces[on]
     area = float(a.sum())
     c = (t.mean(axis=1) * a[:, None]).sum(axis=0) / area
     mean = (n * a[:, None]).sum(axis=0) / area
