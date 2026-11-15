@@ -64,6 +64,39 @@ For the next change, send just the saved script path and changed parameters:
 
 The earlier parameter file is merged, preserving other choices. The source and effective parameters are saved **before execution**; on a timeout/cancellation the error gives checkpoint paths. For a solid design without inputs, those two files are enough to recover with another `cad_run`. Input-dependent designs also need their saved input snapshots and `<name>.inputs.json`; script-path edits reuse those snapshots by default, or `inputs` can explicitly replace them. There is no automatic replay of interrupted execution.
 
+## Purpose and the design as used
+
+A solid design states what it is for as data, beside `P`, and returns itself as used from `use()`:
+
+```python
+PURPOSE = {
+    "for": "a squeezy holder for my iPhone 16 Pro on my car's dash, where the driver can see it",
+    "modelled_on": "a taped dash pad with a locking ball swivel and a sprung edge grip",
+    "holds": [{"body": "phone", "mass_g": 250}],
+    "mounts": [{"body": "dash", "by": "tape"}],     # tape, rests, screw, clamp, hook or other
+    "user": [-350, -600, 150],                       # the user's eye, mm, in the use() frame
+}
+
+def use():   # Z up, gravity -Z: the part, the held object and the surface it meets, touching where they touch
+    return Compound(children=[holder, phone_box_labelled_held_phone, dash_slab_labelled_world_dash])
+```
+
+`PURPOSE` is read from the source by the trusted inspection process; it is never run and `parameters` cannot change it. Its words, with `modelled_on` and the held and world body names, add requirements whatever it lists: a holder, hook, stand, dock, mount, rack, bracket, cradle or organizer must name what it holds and what it mounts to; anything in a vehicle takes jolts of at least 1.5 g along each axis; a phone, tablet or screen it holds must face `user` within 25 degrees (`faces` changes the angle). `cad_run` exports `use()` as `<name>.use.step` and, from that geometry alone:
+
+- checks that each `held:<name>` body sits on the part (within 0.5 mm) and each `world:<name>` surface touches it;
+- computes the force and moment at the mount contact patch (its area, centroid and second moments come from the part's faces lying on the surface) for gravity on the part (its volume at the material's full density) and what it holds, for gravity plus `jolt_g` along ±X, ±Y and ±Z, and for a hand pressing each held object's exposed face (`press_n`, default 1.5 N, a finger on a screen);
+- for tape, compares the peak edge tension and the shear with 3M VHB's published values: about 30 kPa sustained at 22 °C and 15 kPa at 93 °C (the static shear holds, 1000 g and 500 g on 0.5 in² for 10,000 minutes; vehicles use the hot figure), and 85 kPa for short-term loads (3M's structural glazing design value, 12 psi). A 50 mm disc under a 250 g phone 60 mm out reads about 11 kPa sustained;
+- for a part that rests on a surface, checks that it neither lifts, tips (the centre of pressure stays inside its footprint) nor slides (friction 0.4);
+- for screws, clamps and hooks, reports the loads; their strength is listed in `not_checked`. A mount declared `other` that carries a held body blocks ready (pick the nearest real kind);
+- fails closed where it cannot compute: a taped contact that is not one flat patch blocks ready, and in a mix of mount kinds the tape is still checked, carrying the whole load;
+- holds the designer's numbers to floors: a held body needs a mass over 0 g that fits its modelled size (0.03 to 8 g/cm³), the press is at least 1.5 N when something is held, jolts are at least 1.5 g in a vehicle, and a held screen may be at most 25° off the user's eye;
+- needs each tape or rest surface to be a real one: a slab reaching at least 3 times the contact's area in its plane and at least 3 mm behind it, not a block shaped to the part;
+- draws `renders.use`, the design in use from the user's eye (or from the front right and above), with the world surface cut to its surroundings.
+
+The result's `purpose` lists each requirement as `pass`, `fail` or `not_modelled` with what it says, the computed loads, and `blocked`. `ready` is true when every requirement passes. `final: true` is recorded only when the run is ready; otherwise the result and `cad-result.json` carry `final: false`, `final_requested: true` and `final_refused` with the reasons, so a client that collects final runs never takes it as the model. A design with no `PURPOSE` is not ready. A measurement that fails is reported as not modelled and blocks ready. Mesh-mode runs and `project_3mf()` results carry no `purpose` and keep the earlier selection rule.
+
+Every receipt (`cad-result.json`) also carries `role`. It is `"design"` by default; the worker passes `role: "check"` to every `cad_run` that is not the design itself (a part exported only for `cad_check_fit`, a reference, a diagnostic). A check run evaluates no `PURPOSE`, is never recorded as final (`final_refused` says so if `final: true` was asked), and must never become the person's model. Every valid run that is not final carries `draft_reasons`, plain sentences saying why: "The designer didn't mark this run final.", "It isn't ready, so the engine didn't mark it final." followed by what blocks it, or "This is a check part or reference export, not the design." A client that keeps the last valid run as a draft when no run is final (scan-to-make #790) reads `role` to skip check runs and shows `draft_reasons`. Receipts written before this have no `role`, which means design. Not computed: the part's own strength, articulated ranges (a swivel is judged in the pose `use()` returns), reach sweeps and alternative designs.
+
 ## Worked examples
 
 `cad_examples` lists the engine's cookbook by purpose (each entry's `use_for` names the requests it suits) and returns one script by name; `cad_design` names each by that purpose in a line and has a worker name the bought product, choose an example by purpose, and only then choose a mechanism. Every example is modelled on a bought product, cites the published sizes it used, states its concept (what it is for, the mechanism, the load path, the print orientation and why) and comes back `valid` from `cad_run` with the number of bodies its concept names. The scripts live in `src/cad/examples/`; `tests/cad-examples.test.mjs` checks each record and, with `CAD_COOKBOOK_DATA_DIR` naming an installed runtime, builds every one through `cad_run` (about two minutes; run it on its own, since it holds the engine's one execution slot). They are patterns to adapt, not sizes to reuse.
