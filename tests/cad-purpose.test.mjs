@@ -129,6 +129,14 @@ test("a held body inside the part does not sit on it; one resting on its face do
   assert.equal(find(touching, "held phone is outside the part"), undefined, "real contact adds no failure");
 });
 
+test("a thin held body buried whole inside the part does not sit on it, however thin its overlap", runtime, () => {
+  // A 0.3 mm photo centred in a 20 mm slab: its overlap's average depth is 0.3 mm, but all of it is inside the part.
+  const r = inspect("held_buried.py");
+  assert.equal(r.ready, false);
+  assert.equal(find(r, "held photo is outside the part").status, "fail");
+  assert.match(r.purpose.blocked.join(" "), /Move held:photo out of the part in use\(\)/);
+});
+
 const status = (r, prefix) => find(r, prefix)?.status;
 const peak = (r, kase) => r.purpose.loads.find((l) => l.case === kase).peak_tension_kpa;
 

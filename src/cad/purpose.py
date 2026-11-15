@@ -32,6 +32,7 @@ TOUCH_MM = 0.5          # a held object within this of the part sits on it
 PATCH_MM = 0.2          # part surface within this of a world body is in contact with it
 INSIDE_MM = TOUCH_MM     # a held body may sink this far into the part (its volume inside over half its surface there) and still sit on it
 INSIDE_MM3 = 1.0        # and an overlap below this is a boolean sliver where faces meet, not a body inside the part
+INSIDE_SHARE = 0.5      # more than this share of a held body inside the part is buried, however thin (a 0.3 mm photo in a slab)
 SAME_SHAPE = 0.02       # use()'s part matches build()'s within this fraction: volume, surface area and each principal moment
 HELD_DENSITY = (0.03, 8.0)  # g/cm^3: a paper-towel roll is about 0.09, expanded foam 0.02 to 0.03, steel tools under 8; outside it the held body is not the object
 FLAT = 0.9              # a patch whose mean normal is shorter than this is not one plane
@@ -262,10 +263,13 @@ def evaluate(use_step, compiled, built=None):
                                 'fix': f'Model held:{h["body"]} as one closed solid resting on the part in use(); the engine could not measure whether it is inside the part'})
             else:
                 depth = 2 * inside / skin if skin > 0 else 0.0     # a thin overlap of area A and depth t has volume A*t and surface about 2A
-                if inside > INSIDE_MM3 and depth > INSIDE_MM:
+                # The depth is the overlap's average thickness: for a thin body buried whole it is only the body's own
+                # thickness, so a large share of the body inside the part fails too. No real resting contact comes near half.
+                buried = inside > INSIDE_SHARE * float(body.volume)
+                if inside > INSIDE_MM3 and (depth > INSIDE_MM or buried):
                     results.append({'requirement': f'held {h["body"]} is outside the part', 'status': 'fail',
-                                    'says': f'{inside:.0f} mm^3 of held:{h["body"]} is inside the part (about {depth:.1f} mm deep)',
-                                    'fix': f'Move held:{h["body"]} out of the part in use() so it rests on the part\'s surface: {inside:.0f} mm^3 of it is inside the part (about {depth:.1f} mm deep), and a part cannot carry what it overlaps'})
+                                    'says': f'{inside:.0f} mm^3 of held:{h["body"]} is inside the part ({"most of it" if buried else f"about {depth:.1f} mm deep"})',
+                                    'fix': f'Move held:{h["body"]} out of the part in use() so it rests on the part\'s surface: {inside:.0f} mm^3 of it is inside the part ({"most of it" if buried else f"about {depth:.1f} mm deep"}), and a part cannot carry what it overlaps'})
         cm3 = float(body.volume) / 1000.0
         density = float(h['mass_g']) / cm3 if cm3 > 0 else float('inf')
         if not HELD_DENSITY[0] <= density <= HELD_DENSITY[1]:

@@ -9,7 +9,7 @@
 
 ### Fixed
 
-- `cad_run`'s purpose check fails a held body that sits inside the part (more than 1 mm³ and 0.5 mm deep) rather than on it, and a part in `use()` that has `build()`'s volume but not its shape (surface area and principal moments of inertia, within 2%).
+- `cad_run`'s purpose check fails a held body that sits inside the part (more than 1 mm³ and 0.5 mm deep, or more than half of the body) rather than on it, and a part in `use()` that has `build()`'s volume but not its shape (surface area and principal moments of inertia, within 2%).
 
 ## [1.2.76] – 2026-11-12
 
