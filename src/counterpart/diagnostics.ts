@@ -107,11 +107,14 @@ export function recordToolError(tool: string, error: unknown): void {
 /** Remembers the values of a tool call's secret-named arguments (access codes, API keys, tokens) for redaction. */
 export function rememberSecretArguments(args: unknown): void {
   const visit = (value: unknown, key: string, depth: number): void => {
-    if (depth > 4 || value === null || value === undefined) return;
-    if (typeof value === "string") {
-      if (isSecretName(key) && value.trim().length >= MIN_SECRET_LENGTH && !PLAIN_VALUE.test(value.trim()) && seenSecrets.size < SEEN_SECRET_LIMIT) seenSecrets.add(value.trim());
+    if (depth > 32 || value === null || value === undefined) return;
+    if (typeof value === "string" || typeof value === "number") {
+      const text = String(value).trim();
+      if (isSecretName(key) && text.length >= MIN_SECRET_LENGTH && !PLAIN_VALUE.test(text) && seenSecrets.size < SEEN_SECRET_LIMIT) seenSecrets.add(text);
       return;
     }
+    // An array's elements are held under the key that owns the array ({tokens: ["…"]}).
+    if (Array.isArray(value)) { for (const item of value) visit(item, key, depth + 1); return; }
     if (typeof value === "object") for (const [k, v] of Object.entries(value as Record<string, unknown>)) visit(v, k, depth + 1);
   };
   visit(args, "", 0);
@@ -141,8 +144,12 @@ const WHOLE_WORDS = new Set(["key", "keys", "pin", "otp", "pwd", "pass", "passwd
 const CODE_OWNERS = new Set(["access", "lan", "pair", "pairing", "auth", "verification", "security", "otp", "device", "unlock"]);
 /** Text with \\uXXXX, \\xXX and %XX escapes read, so "\\x70assword" and "pass%77ord" are seen as "password". */
 export function decodeEscapes(text: string): string {
-  return text.replace(/\\{1,2}u([0-9a-fA-F]{4})|\\{1,2}x([0-9a-fA-F]{2})|%([0-9a-fA-F]{2})/g,
-    (_, u, x, p) => String.fromCharCode(parseInt(u ?? x ?? p, 16)));
+  return text.replace(/\\{1,2}u\{([0-9a-fA-F]{1,6})\}|\\{1,2}u([0-9a-fA-F]{4})|\\{1,2}x([0-9a-fA-F]{2})|%([0-9a-fA-F]{2})|&#[xX]([0-9a-fA-F]{1,6});?|&#(\d{1,7});?|\\\//g,
+    (match, brace, u, x, p, hexEntity, decEntity) => {
+      if (match.endsWith("/") && match.startsWith("\\")) return "/";
+      const code = decEntity !== undefined ? parseInt(decEntity, 10) : parseInt(brace ?? u ?? x ?? p ?? hexEntity, 16);
+      return code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    });
 }
 export function isSecretName(name: string): boolean {
   const plain = decodeEscapes(name);
@@ -317,19 +324,34 @@ function encodedForms(secret: string): string[] {
     // The base64 characters that only this secret's bytes decide, wherever it sits in an encoded run ("bblp:<code>").
     const encoded = Buffer.concat([Buffer.alloc(before), bytes]).toString("base64");
     const start = before ? 4 : 0, end = Math.floor((before + bytes.length) / 3) * 4;
-    if (end - start >= 8) forms.add(encoded.slice(start, end));
+    if (end - start >= 4) forms.add(encoded.slice(start, end));
     if (!before) { forms.add(encoded); forms.add(encoded.replace(/=+$/, "")); forms.add(encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")); }
   }
-  return [...forms].filter(form => form.length >= MIN_SECRET_LENGTH);
+  return [...forms].filter(form => form.length >= 4);
 }
+
+/** Base64 characters around a removed core: the group before and after it mix the secret's bytes with its neighbours'. */
+const B64_EDGE = /[A-Za-z0-9+/_-]{1,4}\[redacted\][A-Za-z0-9+/_-]{0,4}={0,2}|\[redacted\][A-Za-z0-9+/_-]{1,4}={0,2}/g;
 
 /** text with every known secret (configured, in this environment, or seen in tool arguments) removed in each encoded form. */
 export function removeKnownSecrets(text: string, secrets: Iterable<string> = []): string {
   const known = [...new Set([...secrets, ...environmentSecrets(), ...seenSecrets])].filter(value => value.length >= MIN_SECRET_LENGTH);
-  const forms = [...new Set(known.flatMap(encodedForms))].sort((a, b) => b.length - a.length);
+  if (!known.length) return text.replace(/\u0000/g, "");
   let out = text.replace(/\u0000/g, "");
-  for (const form of forms) out = out.split(form).join(MARK);
-  return out;
+  // Other encoders' spellings (form-url `+`, lowercase %-hex, Go's \u003c, a lone \u escape, \/, HTML entities): a copy
+  // of each line is decoded, and a line whose decoded copy holds a known secret is withheld whole.
+  out = out.split("\n").map(line => {
+    if (!/[%+\\&]/.test(line)) return line;
+    const decoded = decodeEscapes(line);
+    const spaced = decodeEscapes(line.replace(/\+/g, " "));
+    return known.some(value => decoded.includes(value) || spaced.includes(value)) ? (LINE_PREFIX.exec(line)?.[0] ?? "") + WITHHELD : line;
+  }).join("\n");
+  for (const value of known) {
+    const plain = encodedForms(value).filter(form => form.length >= MIN_SECRET_LENGTH || /^[A-Za-z0-9+/_-]+$/.test(form));
+    for (const form of plain.sort((a, b) => b.length - a.length)) out = out.split(form).join(MARK);
+  }
+  // A base64 core leaves the mixed groups either side of it; they go too (a small over-redaction of innocent base64).
+  return out.replace(B64_EDGE, MARK);
 }
 
 /**
@@ -356,52 +378,91 @@ export function suspectLine(line: string): boolean {
   return plain.split(/[^a-z0-9]+/).some(word => LINE_WORDS.has(word));
 }
 
-/** Whether a suspect line is only a name and a value that says nothing secret ("accessCodeSet": true, BAMBU_TOKEN=[set]). */
-function safeLine(line: string): boolean {
-  const body = line.replace(LINE_PREFIX, "");
-  const m = SAFE_PAIR.exec(body);
-  if (!m) return false;
-  return !NUMBER.test(m[2]) || MEASURE_NAME.test(m[1]);
-}
-
 /** Quotes and brackets left open so far, read on through a line (a value that goes on to the next line). */
 type Open = { depth: number; quote: string };
-function readOpen(state: Open, line: string): Open {
+/**
+ * The quotes and brackets a line leaves open. On a suspect line a single quote counts too, opening only where a value
+ * starts (`password='…`), not inside a word (`don't`).
+ */
+function readOpen(state: Open, line: string, single = false): Open {
   let { depth, quote } = state;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (quote) { if (c === "\\") i++; else if (c === quote) quote = ""; continue; }
     if (c === '"') quote = c;
+    else if (single && c === "'" && !/[A-Za-z0-9]/.test(line[i - 1] ?? "")) quote = c;
     else if (c === "{" || c === "[") depth++;
     else if (c === "}" || c === "]") depth = Math.max(0, depth - 1);
   }
   return { depth, quote };
 }
+const isOpen = (open: Open) => open.depth > 0 || open.quote !== "";
 
-/** Most lines one withheld line takes with it, so a stray quote cannot withhold the rest of a log. */
+/** Whether a suspect line is only a name and a value that says nothing secret, closing all it opens ("accessCodeSet": true). */
+function safeLine(line: string): boolean {
+  const body = line.replace(LINE_PREFIX, "");
+  const m = SAFE_PAIR.exec(body);
+  if (!m || isOpen(readOpen({ depth: 0, quote: "" }, body, true))) return false;
+  return !NUMBER.test(m[2]) || MEASURE_NAME.test(m[1]);
+}
+
+/** Most lines a heuristic continuation (indented lines, a YAML block, a single quote) takes, so it stays bounded. */
 const CONTINUATION_LIMIT = 200;
+const indent = (line: string) => /^[ \t]*/.exec(line)![0].length;
 
 /**
- * Free text with each suspect line withheld whole, with the lines that continue it (indented, inside a quote or a
- * bracket it left open, or a YAML block it starts); its time and level stay. A suspect line that is only a name and a
- * safe value stays.
+ * How many lines after lines[i] (a suspect line) continue it: while a double quote or a bracket it opened is verifiably
+ * still open, however many; lines indented deeper than it, a YAML block scalar it starts (blank lines included), or
+ * a single-quoted value, up to CONTINUATION_LIMIT; a multipart part named like a secret, to its next boundary; and
+ * an Authorization or Bearer line that ends mid-token, its wrapped next line.
+ */
+function continuation(lines: string[], i: number): number {
+  const line = lines[i];
+  if (/^\s*content-disposition\s*:/i.test(line)) {
+    let j = i + 1;
+    while (j < lines.length && !/^--\S/.test(lines[j])) j++;
+    return j - i - 1;
+  }
+  let open = readOpen({ depth: 0, quote: "" }, line, true);
+  const block = /[:=]\s*[>|][-+]?\d?\s*$/.test(line), base = indent(line);
+  let taken = 0, heuristic = 0;
+  while (i + taken + 1 < lines.length) {
+    const next = lines[i + taken + 1];
+    const verified = open.depth > 0 || open.quote === '"';
+    if (!verified) {
+      const deeper = /\S/.test(next) && indent(next) > base && !LINE_PREFIX.test(next.trimStart());
+      const inBlock = block && (!/\S/.test(next) || indent(next) > base);
+      if (!(open.quote === "'" || deeper || inBlock) || ++heuristic > CONTINUATION_LIMIT) break;
+    }
+    open = readOpen(open, next, true);
+    taken++;
+  }
+  // A blank line closing a YAML block is not part of it.
+  while (block && taken > 0 && !/\S/.test(lines[i + taken])) taken--;
+  if (taken === 0 && /\b(?:authorization|bearer)\b/i.test(line) && /[A-Za-z0-9._~+/=-]$/.test(line)) {
+    const next = lines[i + 1];
+    if (next !== undefined && /^[A-Za-z0-9._~+/=-]/.test(next) && !LINE_PREFIX.test(next)) return 1;
+  }
+  return taken;
+}
+
+/**
+ * Free text with each suspect line withheld whole, with the lines that continue it; its time and level stay. A suspect
+ * line that is only a name and a safe value stays, but what continues it is withheld all the same.
  */
 export function withholdSuspectLines(text: string): string {
   const lines = text.split("\n"), out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!suspectLine(line) || safeLine(line)) { out.push(line); continue; }
-    out.push((LINE_PREFIX.exec(line)?.[0] ?? "") + WITHHELD);
-    let open = readOpen({ depth: 0, quote: "" }, line);
-    const block = /[:=]\s*[>|][-+]?\d?\s*$/.test(line);
-    for (let taken = 0; taken < CONTINUATION_LIMIT && i + 1 < lines.length; taken++) {
-      const next = lines[i + 1];
-      const inside = open.depth > 0 || open.quote !== "";
-      if (!inside && !/^[ \t]+\S/.test(next) && !(block && /^\s/.test(next))) break;
-      if (!inside && LINE_PREFIX.test(next)) break;           // a new log entry starts
-      open = readOpen(open, next);
-      i++;
+    if (!suspectLine(line)) { out.push(line); continue; }
+    const taken = continuation(lines, i);
+    if (safeLine(line)) {
+      out.push(line);
+      if (taken) out.push(WITHHELD);
+    } else {
+      out.push((LINE_PREFIX.exec(line)?.[0] ?? "") + WITHHELD);
     }
+    i += taken;
   }
   return out.join("\n");
 }
@@ -456,22 +517,31 @@ export function redactValue(value: unknown, secrets: Iterable<string> = [], dept
 }
 
 /** Fields that hold a setting's name, whose secret-sounding value is a name, not a secret: {"name":"BAMBU_TOKEN"}. */
-const NAME_FIELD = /^(?:name|key|env|env_?name|variable|var|field|id|label|property|setting_?name)$/i;
-const IDENTIFIER = /^[A-Za-z_][\w.\-]{0,95}$/;
+/** Fields that hold a setting's name, in the order one is chosen as an object's name: {"name":"BAMBU_TOKEN"}. */
+const NAME_FIELDS = ["name", "key", "env", "envname", "env_name", "variable", "var", "field", "setting", "setting_name", "settingname", "property", "label", "id"];
+/** A name as people write one: an identifier, or a few words ("Access Code"). */
+const LABEL = /^[A-Za-z_][\w.\-]*(?: [\w.\-]+){0,3}$/;
+const safeScalar = (v: unknown) => typeof v === "boolean" || v === null || v === undefined || v === "" || v === "[set]";
 
 function redactStructure(value: unknown, known: string[], depth: number): unknown {
-  if (Array.isArray(value)) return value.map(item => redactValue(item, known, depth + 1));
+  if (Array.isArray(value)) {
+    // A pair, as Object.entries writes one: ["BAMBU_TOKEN", "…"]. Its second item goes when the first names a secret.
+    if (value.length === 2 && typeof value[0] === "string" && value[0].length <= 96 && isSecretName(value[0])) {
+      return [LABEL.test(value[0]) ? value[0] : redactValue(value[0], known, depth + 1), safeScalar(value[1]) ? value[1] : MARK];
+    }
+    return value.map(item => redactValue(item, known, depth + 1));
+  }
   if (value && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>);
-    const names = (k: string, v: unknown) => NAME_FIELD.test(k) && typeof v === "string" && IDENTIFIER.test(v);
-    const named = entries.some(([k, v]) => names(k, v) && isSecretName(v as string));
-    const safe = (v: unknown) => typeof v === "boolean" || v === null || v === undefined || v === "" || v === "[set]";
+    // The one field naming this object: the first name field, in NAME_FIELDS' order, whose whole string names a secret.
+    const candidates = entries.filter(([k, v]) => NAME_FIELDS.includes(k.toLowerCase()) && typeof v === "string" && v.length <= 96 && isSecretName(v));
+    const chosen = candidates.sort(([a], [b]) => NAME_FIELDS.indexOf(a.toLowerCase()) - NAME_FIELDS.indexOf(b.toLowerCase()))[0]?.[0];
     return Object.fromEntries(entries.map(([k, v]) => {
-      // A field holding a secret's name keeps it ({"name":"BAMBU_TOKEN"}, {"key":"BAMBU_TOKEN"}).
-      if (names(k, v) && isSecretName(v as string)) return [k, v];
-      if (isSecretName(k)) return [k, safe(v) || (typeof v === "number" && MEASURE_NAME.test(k)) ? v : MARK];
+      // The chosen name field keeps its name ({"name":"BAMBU_TOKEN"}, {"name":"Access Code"}).
+      if (k === chosen) return [k, LABEL.test(v as string) ? v : redactValue(v, known, depth + 1)];
+      if (isSecretName(k)) return [k, safeScalar(v) || (typeof v === "number" && MEASURE_NAME.test(k)) ? v : MARK];
       // An object that names a secret ({"name":"BAMBU_ACCESS_CODE","note":…,"value":…}) loses every other value.
-      if (named) return [k, safe(v) ? v : MARK];
+      if (chosen !== undefined) return [k, safeScalar(v) ? v : MARK];
       return [k, redactValue(v, known, depth + 1)];
     }));
   }
@@ -536,10 +606,11 @@ function checkName(name: string): void {
  * The bundle from sources, in their order: each file's tail, redacted. Small sources go in whole; the rest share what
  * is left equally, keeping their newest lines. Names, contents and notes together stay within maxBytes.
  */
-export function buildDiagnostics(options: { package: string; version: string; sources: DiagnosticsSource[]; notes?: string[]; maxBytes?: number; secrets?: string[] }): DiagnosticsResult {
+export function buildDiagnostics(options: { package: string; version: string; sources: DiagnosticsSource[]; notes?: string[]; fixedNotes?: string[]; maxBytes?: number; secrets?: string[] }): DiagnosticsResult {
   const maxBytes = diagnosticsBudget(options.maxBytes);
-  // Notes are this server's own sentences: the patterns and known secrets go, the words stay.
-  const notes = (options.notes ?? []).map(note => redactPatterns(note, options.secrets));
+  // Notes are redacted as any text is; fixedNotes are this server's own sentences built only from constants (setting
+  // names it reads), whose secret words name settings: the patterns and known secrets go, the words stay.
+  const notes = [...(options.fixedNotes ?? []).map(note => redactPatterns(note, options.secrets)), ...(options.notes ?? []).map(note => redactText(note, options.secrets))];
   const redact = (name: string, text: string) => name.endsWith(".json") ? redactJsonText(text, options.secrets) : redactText(text, options.secrets);
   const entries: Array<{ name: string; text: string; cut: boolean }> = [];
   for (const source of options.sources) {
@@ -554,7 +625,7 @@ export function buildDiagnostics(options: { package: string; version: string; so
       read = readTail(source.file, maxBytes);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
-      notes.push(redactPatterns(source.missing && code === "ENOENT" ? source.missing
+      notes.push(redactText(source.missing && code === "ENOENT" ? source.missing
         : `${source.name}: not included (${code === "ENOENT" ? "no such file" : code ?? (error instanceof Error ? error.message : String(error))}).`, options.secrets));
       continue;
     }
