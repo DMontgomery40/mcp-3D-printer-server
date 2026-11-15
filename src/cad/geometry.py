@@ -42,7 +42,7 @@ def inspect(request):
     # What the part is for, evaluated on the design as it is used (purpose.py): ready, and why not.
     from purpose import inspect_purpose
     try:
-        purpose = inspect_purpose(request, float(step.volume) if step is not None else None)
+        purpose = inspect_purpose(request, step)
     except Exception as e:
         why = f'the purpose could not be evaluated: {type(e).__name__}: {e}'[:300]
         purpose = {'declared': None, 'requirements': [], 'loads': [], 'not_checked': [], 'blocked': [why], 'ready': False}

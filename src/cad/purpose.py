@@ -30,6 +30,9 @@ TAPE_SHORT_KPA = 85.0
 FRICTION = 0.4          # printed plastic, or its pads, resting on wood, laminate or painted metal
 TOUCH_MM = 0.5          # a held object within this of the part sits on it
 PATCH_MM = 0.2          # part surface within this of a world body is in contact with it
+INSIDE_MM = TOUCH_MM     # a held body may sink this far into the part (its volume inside over half its surface there) and still sit on it
+INSIDE_MM3 = 1.0        # and an overlap below this is a boolean sliver where faces meet, not a body inside the part
+SAME_SHAPE = 0.02       # use()'s part matches build()'s within this fraction: volume, surface area and each principal moment
 HELD_DENSITY = (0.03, 8.0)  # g/cm^3: a paper-towel roll is about 0.09, expanded foam 0.02 to 0.03, steel tools under 8; outside it the held body is not the object
 FLAT = 0.9              # a patch whose mean normal is shorter than this is not one plane
 WORLD_AREA = 3.0        # a tape or rest surface reaches this many times the contact's area in its plane
@@ -179,7 +182,20 @@ def _held_face(held, part_com):
     return n, com + n * half, com
 
 
-def evaluate(use_step, compiled, build_volume=None):
+def signature(shape):
+    """What a rigid move keeps: volume, surface area and the principal moments of inertia about the centre of mass."""
+    moments = sorted(float(v) for v in np.linalg.eigvalsh(np.array(shape.matrix_of_inertia, float)))
+    return {'volume': float(shape.volume), 'area': float(shape.area), 'moments': moments}
+
+
+def _overlap(a, b):
+    """The volume two solids share and the surface area of what they share (0, 0 where they only touch)."""
+    common = a.intersect(b)
+    pieces = [] if common is None else list(common) if isinstance(common, (list, tuple)) or hasattr(common, 'sort_by') else [common]
+    return sum(float(p.volume) for p in pieces), sum(float(p.area) for p in pieces)
+
+
+def evaluate(use_step, compiled, built=None):
     """Each requirement's status on the use() assembly, the computed loads at the mounts, and what blocks ready."""
     from build123d import Compound, import_step, CenterOf
     results, loads, notes = [], [], []
@@ -210,9 +226,19 @@ def evaluate(use_step, compiled, build_volume=None):
     part_mesh = _mesh(part_shape)
     vol = sum(s.volume for s in part)
     part_mass = vol * compiled['density'] / 1000.0                     # g
-    if build_volume and abs(vol - build_volume) > 0.02 * build_volume + 1.0:
+    build_volume = built['volume'] if built else None
+    if build_volume and abs(vol - build_volume) > SAME_SHAPE * build_volume + 1.0:
         results.append({'requirement': 'use is the built part', 'status': 'fail', 'says': f'the part in use() is {vol:.0f} mm^3, the part build() exports {build_volume:.0f} mm^3',
                         'fix': f'Build the part in use() from build() (the same bodies, moved into the pose it is used in): its {vol:.0f} mm^3 is not the {build_volume:.0f} mm^3 build() exports, so nothing checked in use() is the part that prints'})
+    elif build_volume:
+        # The same volume is not the same part (a 100 x 100 x 0.36 mm pad and a 30 x 30 x 4 mm strip are both 3600 mm^3):
+        # a rigid move keeps the surface area and the principal moments too.
+        mine = signature(part_shape)
+        off = lambda a, b: abs(a - b) > SAME_SHAPE * abs(b) + 1e-6 * max(built['moments'][-1], 1.0)
+        if abs(mine['area'] - built['area']) > SAME_SHAPE * built['area'] + 1.0 or any(off(a, b) for a, b in zip(mine['moments'], built['moments'])):
+            results.append({'requirement': 'use is the built part', 'status': 'fail',
+                            'says': f'the part in use() has {vol:.0f} mm^3 like the part build() exports, but {mine["area"]:.0f} mm^2 of surface against {built["area"]:.0f} mm^2 and other moments of inertia',
+                            'fix': f'Build the part in use() from build() (the same bodies, moved into the pose it is used in): its shape is not the shape build() exports ({mine["area"]:.0f} mm^2 of surface, not {built["area"]:.0f} mm^2, though both are {vol:.0f} mm^3), so nothing checked in use() is the part that prints'})
     part_com = np.array(list(part_shape.center(CenterOf.MASS)), float) if vol > 0 else part_mesh.center_mass
     masses = [('the part', part_mass, part_com)]
     held_faces = []
@@ -227,6 +253,19 @@ def evaluate(use_step, compiled, build_volume=None):
         results.append({'requirement': f'holds {h["body"]}', 'status': 'pass' if ok else 'fail',
                         'says': f'held:{h["body"]} sits on the part ({gap:.2f} mm)' if ok else f'held:{h["body"]} is {gap:.1f} mm from the part: nothing carries it',
                         **({} if ok else {'fix': f'Put held:{h["body"]} where it really rests on the part in use() (it is {gap:.1f} mm away), or make the part reach it'})})
+        if ok:
+            # distance_to() is 0 for a body inside the part too: a phone sunk into its cradle's back touches nothing it rests on.
+            try:
+                inside, skin = _overlap(body, part_shape)
+            except Exception as e:   # a measurement that failed proves nothing: it blocks ready
+                results.append({'requirement': f'held {h["body"]} is outside the part', 'status': 'not_modelled', 'says': f'the overlap of held:{h["body"]} and the part could not be measured ({type(e).__name__})',
+                                'fix': f'Model held:{h["body"]} as one closed solid resting on the part in use(); the engine could not measure whether it is inside the part'})
+            else:
+                depth = 2 * inside / skin if skin > 0 else 0.0     # a thin overlap of area A and depth t has volume A*t and surface about 2A
+                if inside > INSIDE_MM3 and depth > INSIDE_MM:
+                    results.append({'requirement': f'held {h["body"]} is outside the part', 'status': 'fail',
+                                    'says': f'{inside:.0f} mm^3 of held:{h["body"]} is inside the part (about {depth:.1f} mm deep)',
+                                    'fix': f'Move held:{h["body"]} out of the part in use() so it rests on the part\'s surface: {inside:.0f} mm^3 of it is inside the part (about {depth:.1f} mm deep), and a part cannot carry what it overlaps'})
         cm3 = float(body.volume) / 1000.0
         density = float(h['mass_g']) / cm3 if cm3 > 0 else float('inf')
         if not HELD_DENSITY[0] <= density <= HELD_DENSITY[1]:
@@ -389,7 +428,7 @@ def evaluate(use_step, compiled, build_volume=None):
     return results, loads, notes
 
 
-def inspect_purpose(request, build_volume=None):
+def inspect_purpose(request, built=None):
     """The purpose block of a solid result, or None for mesh mode and 3MF projects (their paths are unchanged)."""
     base = Path(request['output']) / request['name']
     if request.get('mode', 'solid') != 'solid' or Path(str(base) + '.project.json').exists() or request.get('role') == 'check':
@@ -401,7 +440,7 @@ def inspect_purpose(request, build_volume=None):
                 'loads': [], 'not_checked': [], 'blocked': [why + '.'], 'ready': False}
     compiled = compile_purpose(p)
     try:
-        results, loads, notes = evaluate(Path(str(base) + '.use.step'), compiled, build_volume)
+        results, loads, notes = evaluate(Path(str(base) + '.use.step'), compiled, signature(built) if built is not None else None)
     except Exception as e:   # a measurement that failed proves nothing: reported, and it blocks ready
         loads, notes = [], []
         results = [{'requirement': n, 'status': 'fail' if pr else 'pass', 'says': pr or 'stated'} for n, pr in compiled['requirements']]

@@ -110,6 +110,25 @@ test("use() must show the part build() exports, not another one", runtime, () =>
   assert.match(r.purpose.blocked.join(" "), /^Build the part in use\(\) from build\(\)/);
 });
 
+test("a use() part with the built part's volume but another shape is not the built part", runtime, () => {
+  // A 100 x 100 x 0.36 mm pad and the 30 x 30 x 4 mm strip build() exports are both 3600 mm^3.
+  const r = inspect("use_same_volume.py");
+  assert.equal(r.ready, false);
+  assert.equal(find(r, "use is the built part").status, "fail");
+  assert.match(r.purpose.blocked.join(" "), /Build the part in use\(\) from build\(\)[^.]*its shape is not the shape build\(\) exports/);
+});
+
+test("a held body inside the part does not sit on it; one resting on its face does", runtime, () => {
+  const inside = inspect("held_inside.py");
+  assert.equal(inside.ready, false);
+  assert.equal(find(inside, "holds phone").status, "pass", "it touches the part");
+  assert.equal(find(inside, "held phone is outside the part").status, "fail");
+  assert.match(inside.purpose.blocked.join(" "), /Move held:phone out of the part in use\(\)/);
+  const touching = inspect("held_touching.py");
+  assert.equal(find(touching, "holds phone").status, "pass");
+  assert.equal(find(touching, "held phone is outside the part"), undefined, "real contact adds no failure");
+});
+
 const status = (r, prefix) => find(r, prefix)?.status;
 const peak = (r, kase) => r.purpose.loads.find((l) => l.case === kase).peak_tension_kpa;
 
