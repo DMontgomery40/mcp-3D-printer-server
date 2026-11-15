@@ -626,3 +626,72 @@ test("property: the review's syntaxes (multipart, single-quote splits, form-url,
     }
   }
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Reason tags on a withheld line. A withheld line names the auth states it mentions from a fixed list, never with any
+// of its own text: "[line withheld: may contain a secret · mentions: token expired]". It cannot leak by construction.
+
+const TAGS = diagnostics.WITHHELD_REASONS ?? [];
+const MARKER = new RegExp(String.raw`^\[line withheld: may contain a secret(?: · mentions: ((?:[^,\]]+)(?:, [^,\]]+)*))?\]$`);
+/** The output of one withheld line, minus its time and level, is the fixed marker and phrases from the list only. */
+const onlyMarker = line => {
+  const m = MARKER.exec(line.replace(/^\S+ (?:error|warn) /, ""));
+  return !!m && (m[1] ?? "").split(", ").filter(Boolean).every(tag => TAGS.includes(tag));
+};
+
+test("the real login-expired sentence is withheld with its reasons named", () => {
+  const out = redactText("2026-11-14T16:55:13.912Z error Failed to authenticate: this login reached its time limit and cannot be renewed. Run `claude auth login` to sign in again, or use `claude setup-token` and set CLAUDE_CODE_OAUTH_TOKEN for unattended jobs");
+  assert.ok(onlyMarker(out), out);
+  for (const tag of ["failed to authenticate", "login time limit", "claude auth login", "sign in again", "setup-token"]) assert.ok(out.includes(tag), `${tag}: ${out}`);
+  assert.ok(out.startsWith("2026-11-14T16:55:13.912Z error [line withheld"), out);
+});
+
+test("common auth failures are withheld with their reasons", () => {
+  for (const [line, tag] of [["cloud token refresh failed", "token refresh failed"], ["Access code is wrong", "access code wrong"], ["401 Unauthorized", "unauthorized"],
+    ["Model access token expired", "token expired"], ["access code rejected by printer", "access code rejected"], ["Permission denied (publickey,password)", "permission denied"]]) {
+    const out = redactText(line);
+    assert.ok(onlyMarker(out) && out.includes(tag), `${line}: ${out}`);
+  }
+});
+
+// The focused check's probes (bambu-printer-mcp #166 comment 6892743713): every one withheld, its value never out.
+const X_PROBES = [
+  ["the password sunflower was rejected", "sunflower"], ["password zxqvbn rejected", "zxqvbn"], ["wrong password zxqvbn", "zxqvbn"],
+  ["password zxqvbn is wrong", "zxqvbn"], ["password is wrong zxqvbn", "zxqvbn"], ["access code is wrong 48291037", "48291037"],
+  ["the access code was rejected 48291037", "48291037"], ["access code wrong 4829", "4829"], ["token expired zxqvbnmk", "zxqvbnmk"],
+  ["zxqvbnmk token expired", "zxqvbnmk"], ["expired zxqvbnmk token", "zxqvbnmk"], ["TOKEN EXPIRED ZXQVBNMK", "ZXQVBNMK"],
+  ["authentication failed: password zxqvbnmk rejected by the printer", "zxqvbnmk"], ["invalid credentials, password zxqvbnmk", "zxqvbnmk"],
+  ["LAN login failed, access code rejected (48291037)", "48291037"], ["cloud token refresh failed for zxqvbnmk", "zxqvbnmk"],
+  ["token expired; password zxqvbn", "zxqvbn"], ["password for this printer is zxqvbn and was rejected", "zxqvbn"],
+  ["CLAUDE_CODE_OAUTH_TOKEN zxqvbnmk expired", "zxqvbnmk"], ["CLAUDE_CODE_OAUTH_TOKEN zxqvbnmk is expired", "zxqvbnmk"],
+  ["password：zxqvbn rejected", "zxqvbn"], ["token “zxqvbnmk” expired", "zxqvbnmk"], ["password `zxqvbn` rejected", "zxqvbn"],
+  ["run claude auth login zxqvbnmk", "zxqvbnmk"], ["invalid token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2ln", "eyJzdWIiOiIxMjM0In0"],
+  ["token invalid eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2ln", "eyJzdWIiOiIxMjM0In0"], ["Bearer zq4829 expired", "zq4829"],
+  ["Bearer zqalpha expired", "zqalpha"], ["token expired, new token zqnewtoken", "zqnewtoken"], ["new token zqnewtoken, token expired", "zqnewtoken"],
+  ["token=zqvalue9 expired", "zqvalue9"], ["password is hunter2x", "hunter2x"], ["access code 48291037 rejected", "48291037"],
+  ['token "zq7quoted" expired', "zq7quoted"], ["auth failed for user:pqzz77@host.example", "pqzz77"], ["token expired\n  zq7continued", "zq7continued"],
+];
+for (const [text, secret] of X_PROBES) {
+  test(`focused check probe stays withheld: ${text.slice(0, 50)}`, () => {
+    const out = textBundle(text) + JSON.stringify(buildDiagnostics({ package: "p", version: "1", sources: [], notes: [text] }));
+    assert.ok(!out.includes(secret), `${text}: ${out}`);
+  });
+}
+
+test("property: a withheld line's output is only the fixed marker and phrases from the list", () => {
+  let seed = 0x7a6;
+  const rand = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const pick = list => list[rand(list.length)];
+  const WORDS = ["password", "token", "access code", "api key", "session", "secret", "auth"];
+  const STATES = ["expired", "rejected", "is wrong", "refresh failed", "invalid", "denied", "time limit", "Unauthorized 401", "sign in again"];
+  const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (let i = 0; i < 300; i++) {
+    const value = Array.from({ length: 4 + rand(10) }, () => alphabet[rand(alphabet.length)]).join("");
+    const parts = [pick(WORDS), pick(STATES), value, pick(["login", "for the printer", "(", "“", "`", "：", "="]), pick(WORDS)];
+    for (let j = parts.length - 1; j > 0; j--) { const k = rand(j + 1); [parts[j], parts[k]] = [parts[k], parts[j]]; }
+    const line = `2026-11-15T10:00:00.000Z error ${parts.join(" ")}`;
+    const out = redactText(line);
+    assert.ok(onlyMarker(out), `case ${i}: ${JSON.stringify(line)} -> ${out}`);
+    assert.ok(!out.includes(value), `case ${i} leaked ${value}`);
+  }
+});

@@ -344,7 +344,7 @@ export function removeKnownSecrets(text: string, secrets: Iterable<string> = [])
     if (!/[%+\\&]/.test(line)) return line;
     const decoded = decodeEscapes(line);
     const spaced = decodeEscapes(line.replace(/\+/g, " "));
-    return known.some(value => decoded.includes(value) || spaced.includes(value)) ? (LINE_PREFIX.exec(line)?.[0] ?? "") + WITHHELD : line;
+    return known.some(value => decoded.includes(value) || spaced.includes(value)) ? (LINE_PREFIX.exec(line)?.[0] ?? "") + withheldMarker(line) : line;
   }).join("\n");
   for (const value of known) {
     const plain = encodedForms(value).filter(form => form.length >= MIN_SECRET_LENGTH || /^[A-Za-z0-9+/_-]+$/.test(form));
@@ -370,6 +370,45 @@ const SAFE_PAIR = new RegExp(String.raw`^[\s"'{\[,]*([A-Za-z0-9_.\-]{1,96})["']?
 /** A log line's leading time and level ("2026-11-14T10:00:00.000Z error"), kept on a withheld line. */
 const LINE_PREFIX = /^(?:\[?\d{4}-\d\d-\d\d[T ][\d:.,]+(?:Z|[+-]\d\d:?\d\d)?\]?\s+(?:\[?(?:error|warn(?:ing)?|info|debug|trace|fatal|notice)\]?:?\s+)?|\[?(?:error|warn(?:ing)?|info|debug|trace|fatal|notice)\]?:?\s+)/i;
 export const WITHHELD = "[line withheld: may contain a secret]";
+
+/**
+ * Reasons a withheld line names, from this fixed list only: each is a canonical phrase found in the line read
+ * lowercased, its escapes read and everything but letters and digits made one space. The marker carries these strings
+ * and never any of the line's own text, so it cannot leak: "[line withheld: may contain a secret · mentions: token
+ * expired]". Generic auth states, no printer or service wording.
+ */
+const REASONS: Array<[string, RegExp]> = [
+  ["failed to authenticate", /\bfailed to authenticate\b/],
+  ["authentication failed", /\b(?:authentication|auth|login) failed\b/],
+  ["login expired", /\b(?:login|session|sign in) (?:has |is )?expired\b/],
+  ["login time limit", /\blogin\b.*\btime limit\b/],
+  ["token expired", /\btoken (?:has |is )?expired\b|\bexpired token\b/],
+  ["token refresh failed", /\btoken refresh failed\b|\brefresh token failed\b|\bfailed to refresh (?:the )?token\b/],
+  ["token invalid", /\btoken (?:is )?invalid\b|\binvalid token\b/],
+  ["invalid credentials", /\binvalid credentials\b/],
+  ["unauthorized", /\bunauthori[sz]ed\b/],
+  ["401", /\b401\b/],
+  ["access code wrong", /\baccess code (?:is |was )?(?:wrong|incorrect|invalid)\b|\b(?:wrong|incorrect|invalid) access code\b/],
+  ["access code rejected", /\baccess code (?:was )?rejected\b/],
+  ["password wrong", /\bpassword (?:is |was )?(?:wrong|incorrect|invalid)\b|\b(?:wrong|incorrect|invalid) password\b/],
+  ["password rejected", /\bpassword (?:was )?rejected\b/],
+  ["not signed in", /\bnot (?:signed|logged) in\b/],
+  ["claude auth login", /\bclaude auth login\b/],
+  ["auth login", /\bauth login\b/],
+  ["sign in again", /\b(?:sign|log) in again\b/],
+  ["setup-token", /\bsetup token\b/],
+  ["permission denied", /\b(?:permission|access) denied\b/],
+];
+/** The canonical phrases of REASONS, in order: all a withheld marker may name. */
+export const WITHHELD_REASONS = REASONS.map(([phrase]) => phrase);
+
+/** The withheld marker for these lines: WITHHELD, naming the REASONS they mention ("claude auth login" over "auth login"). */
+export function withheldMarker(lines: string): string {
+  const plain = ` ${decodeEscapes(lines).toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  const found = REASONS.filter(([, pattern]) => pattern.test(plain)).map(([phrase]) => phrase);
+  const tags = found.filter(tag => !(tag === "auth login" && found.includes("claude auth login")));
+  return tags.length ? `${WITHHELD.slice(0, -1)} · mentions: ${tags.join(", ")}]` : WITHHELD;
+}
 
 /** Whether a line may carry a secret: a secret word anywhere in it, in any spelling or encoding. */
 export function suspectLine(line: string): boolean {
@@ -458,9 +497,9 @@ export function withholdSuspectLines(text: string): string {
     const taken = continuation(lines, i);
     if (safeLine(line)) {
       out.push(line);
-      if (taken) out.push(WITHHELD);
+      if (taken) out.push(withheldMarker(lines.slice(i + 1, i + 1 + taken).join("\n")));
     } else {
-      out.push((LINE_PREFIX.exec(line)?.[0] ?? "") + WITHHELD);
+      out.push((LINE_PREFIX.exec(line)?.[0] ?? "") + withheldMarker(lines.slice(i, i + 1 + taken).join("\n")));
     }
     i += taken;
   }
@@ -477,7 +516,11 @@ export function redactText(text: string, secrets: Iterable<string> = []): string
   // Lines are judged as written (a pattern's replacement could close a quote the secret left open); PEM blocks span
   // lines with no secret word in them, so they go first.
   const known = [...secrets];
-  return redactPatterns(withholdSuspectLines(removePem(removeKnownSecrets(text, known))), known);
+  // A withheld marker is fixed text: the pattern rules never rewrite it ("token expired" is a reason, not a credential).
+  const markers: string[] = [];
+  const held = withholdSuspectLines(removePem(removeKnownSecrets(text.replace(/\u0001/g, ""), known)))
+    .replace(/\[line withheld: may contain a secret[^\]\n]*\]/g, marker => `\u0001${markers.push(marker) - 1}\u0001`);
+  return redactPatterns(held, known).replace(/\u0001(\d+)\u0001/g, (_, n) => markers[Number(n)]);
 }
 
 const PEM = /-----BEGIN ([A-Z0-9 ]{1,64})-----[\s\S]*?(?:-----END \1-----|$)/g;
