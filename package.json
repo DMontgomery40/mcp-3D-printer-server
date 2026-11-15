@@ -5,7 +5,7 @@
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "counterpart": {
         "contract": "counterpart/1",
-        "notes": "Checks what a design is for on the design as used: what it holds, how it mounts, the loads there and whether it faces its user.",
+        "notes": "Checks what a design is for on the design as used, and returns this server’s own redacted diagnostics for bug reports.",
         "autoUpdate": true
     },
     "main": "dist/index.js",

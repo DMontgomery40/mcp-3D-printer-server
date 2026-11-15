@@ -565,15 +565,21 @@ Describe the printer in the shared `counterpart/1` shape: the server's name and 
   "server": { "name": "mcp-3d-printer-server", "version": "1.2.21" },
   "printer": { "kind": "klipper", "host": "192.168.1.50", "name": "voron" },
   "capabilities": { "progress": true, "layers": true, "camera": "http-snapshot", "filaments": "single",
-                    "pause": true, "resume": true, "cancel": true, "print3mf": false, "gcode": true }
+                    "pause": true, "resume": true, "cancel": true, "print3mf": false, "gcode": true, "diagnostics": true }
 }
 ```
+
+`capabilities.diagnostics` is `true` when this server has `counterpart_diagnostics`; an older server leaves it out.
 
 #### counterpart_self_check
 
 Whether this install's own runtime dependencies loaded: `{contract, server: {name, version}, ok, checks: [{name, ok, optional?, version?, message?}]}`. One check says the running server is its installed package's version; one per dependency in `package.json` says it resolves from this install, loads, and its installed version meets the exact pin (such as `bambu-node`), `^` or `~` range; `web crypto` says the global Web Crypto API the streamable HTTP transport needs is present. `sharp`, an optional dependency, is marked `optional` and does not make `ok` false. Run it after an update. It contacts no printer. bambu-printer-mcp returns the same shape.
 
 `package.json` carries a `counterpart` field, readable with `npm view mcp-3d-printer-server counterpart` before a client downloads a version: `contract` (`counterpart/1`), one sentence of `notes` about that release, and `autoUpdate`, which a release sets to false to ask clients not to install it automatically.
+
+#### counterpart_diagnostics
+
+This server's own diagnostics for a bug report, `{package, version, files: [{name, content, truncated}], notes}`, for a client to add to its own export without knowing any log path. `files` are relative paths with UTF-8 text: `server.json` (package, version, Node.js, platform), `printers.json` (the configured printer's id, kind, host, serial, model, connection and whether a credential is set; firmware is not read), `settings.json` (`PRINTER_*`, `BAMBU_*`, `SLICER_*`, `CAD_*` and similar settings, secret ones only as `[set]`), `slicer.json` (slicer type, path, profiles and the version its macOS bundle or AppImage name gives; the slicer is never run), `cad.json` (CAD runtime status), `tool-errors.log` (recent failed calls: tool and error, never arguments), `server-stderr.log` (this run's stderr, including printer connection and Bambu MQTT messages). The Bambu network plug-in and native helper logs are left out: other programs write them, and they can hold secrets this server cannot recognise. Optional `printer` (a serial or host) limits `printers.json` to that printer; optional `max_bytes` (default 4,194,304, at most 8,388,608) bounds the names, contents and notes together, keeping each file's newest lines. Redaction fails closed: the configured secrets and secret arguments go wherever they appear, also URL-encoded, JSON-escaped or base64; logged objects are redacted by key, and an object whose field names a secret loses its other values; settings show values only for known non-secret settings (any other only as `[set]`); and any log line that names a secret, in any spelling or encoding, is withheld whole as `[line withheld: may contain a secret]` with the lines that continue it, keeping its time and level. Serial numbers, error codes, firmware versions and whether a secret is set stay. A secret this server never held, on a line that names no secret, is the one thing it cannot recognise. A missing log is a note, never an error. It contacts no printer.
 
 #### counterpart_print_progress
 
