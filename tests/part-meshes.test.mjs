@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import { trackedMkdtempSync } from "./support/temp.mjs";
-import { partMeshes, PART_MESHES_OUTPUT_SCHEMA } from "../dist/counterpart/part-meshes.js";
+import { partMeshes, PART_MESHES_OUTPUT_SCHEMA, MAX_TOTAL_TRIANGLES } from "../dist/counterpart/part-meshes.js";
 import { makeCounterpart3mf, writeCadProject3mf } from "../dist/counterpart/make-3mf.js";
 import { stlTriangles } from "../dist/slicer/floating-regions.js";
 
@@ -210,4 +210,27 @@ test("counterpart_part_meshes keeps a sub-file component that shares its root ob
   const result = await partMeshes({ three_mf_path: source, out_dir: dir });
   assert.deepEqual(result.parts.map(p => [p.id, p.name, p.filament, p.triangles]), [["1/1", "Body", 1, 12], ["1/2", "Lid", 2, 12]]);
   assert.deepEqual(result.parts.map(p => bounds(p.stl_path).min[0]), [0, 20]);
+});
+
+// Codex review of #169: nested components that place one mesh many times stop at the call's triangle budget while
+// collecting, before the geometry is expanded in memory; the part is listed in skipped.
+test("counterpart_part_meshes stops a nested repeated assembly at the triangle budget while collecting", async t => {
+  const dir = folder(t);
+  // Seven levels, each placing the level below ten times: 10^7 cubes of 12 triangles if expanded.
+  const levels = Array.from({ length: 7 }, (_, i) => `<object id="${i + 2}" type="model"><components>${Array.from({ length: 10 }, (_, k) =>
+    `<component objectid="${i + 1}" transform="1 0 0 0 1 0 0 0 1 ${k * 2} 0 0"/>`).join("")}</components></object>`).join("");
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", "<Types/>");
+  zip.file("3D/3dmodel.model", `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>
+    <object id="1" type="model">${CUBE}</object>${levels}<object id="100" type="model" name="Swarm"><components><component objectid="8"/></components></object>
+    <object id="200" type="model" name="Small">${CUBE}</object></resources>
+    <build><item objectid="100"/><item objectid="200"/></build></model>`);
+  const source = path.join(dir, "swarm.3mf");
+  fs.writeFileSync(source, await zip.generateAsync({ type: "nodebuffer" }));
+  const started = Date.now();
+  const result = await partMeshes({ three_mf_path: source, out_dir: dir });
+  assert.ok(Date.now() - started < 30000, `took ${Date.now() - started} ms`);
+  assert.deepEqual(result.parts.map(p => p.name), ["Small"]);
+  assert.equal(result.skipped.length, 1);
+  assert.match(result.skipped[0].reason, new RegExp(`more triangles than this call's remaining \\d+ of ${MAX_TOTAL_TRIANGLES}`));
 });
