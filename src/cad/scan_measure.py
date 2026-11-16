@@ -124,8 +124,10 @@ def measure_scan(scan, picture="scan-measure.png", support=True, levels=10):
     piece_area = np.bincount(label[F[:, 0]], area, label.max() + 1)
     main = int(np.argmax(piece_area))
     body = label == main
+    # The ten largest removed pieces only: a noisy scan's thousands of specks are counted, not each measured.
+    others = [int(k) for k in np.argsort(-piece_area) if k != main and piece_area[k] > 0]
     removed = [{"size_mm": [round(float(v), 1) for v in np.ptp(V[label == k], axis=0)], "area_mm2": round(float(piece_area[k]), 1)}
-               for k in np.argsort(-piece_area) if k != main and piece_area[k] > 0]
+               for k in others[:10]]
     plane = _support_plane(V, F, n, area, body) if support else None
     if plane is not None:
         # Stand the object on the support's plane, then keep what is above it.
@@ -184,7 +186,8 @@ def measure_scan(scan, picture="scan-measure.png", support=True, levels=10):
             "note": "A round plate wider than what stands on it was cut away as a turntable. If the photos show it is "
                     "the object's own base, design from uncut_size_mm instead."},
         "cut_mm": 0.5 if plane is not None else None,
-        "pieces_removed": removed[:10],
+        "pieces_removed": removed,
+        "pieces_removed_count": len(others),
         "profile": profile,
         "volume_mm3": None,
         "picture": str(picture) if picture else None,
