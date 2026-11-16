@@ -85,18 +85,16 @@ export function floatingRegions(triangles: Float64Array, options: { plate_mm?: n
   const order = Array.from({ length: nV }, (_, i) => i).sort((p, q) => xyz[p * 3 + 2] - xyz[q * 3 + 2] || p - q);
   const parent = new Int32Array(nV).fill(-1);
   const lowest = new Int32Array(nV);
-  const lo = new Float64Array(nV * 3), hi = new Float64Array(nV * 3);
   const find = (v: number): number => { while (parent[v] !== v) { parent[v] = parent[parent[v]]; v = parent[v]; } return v; };
   const z = (v: number) => xyz[v * 3 + 2];
-  const found: { v: number; depth: number; lo: number[]; hi: number[] }[] = [];
+  const found: { v: number; depth: number }[] = [];
   const consider = (root: number, depth: number) => {
     const low = lowest[root];
     if (z(low) - minZ > plate && depth >= minDepth && normalZ[low] < 0)
-      found.push({ v: low, depth, lo: Array.from(lo.subarray(root * 3, root * 3 + 3)), hi: Array.from(hi.subarray(root * 3, root * 3 + 3)) });
+      found.push({ v: low, depth });
   };
   for (const v of order) {
     parent[v] = v; lowest[v] = v;
-    for (let k = 0; k < 3; k++) lo[v * 3 + k] = hi[v * 3 + k] = xyz[v * 3 + k];
     for (const n of neighbours[v]) {
       if (parent[n] < 0) continue;
       const a = find(v), b = find(n);
@@ -105,13 +103,34 @@ export function floatingRegions(triangles: Float64Array, options: { plate_mm?: n
       const [keep, end] = z(lowest[a]) <= z(lowest[b]) ? [a, b] : [b, a];
       consider(end, z(v) - z(lowest[end]));
       parent[end] = keep;
-      for (let k = 0; k < 3; k++) { lo[keep * 3 + k] = Math.min(lo[keep * 3 + k], lo[end * 3 + k]); hi[keep * 3 + k] = Math.max(hi[keep * 3 + k], hi[end * 3 + k]); }
     }
   }
   // Pieces that never joined a lower one: separate bodies; the one holding the lowest point sits on the plate.
   const tops = new Map<number, number>();
   for (let v = 0; v < nV; v++) { const r = find(v); tops.set(r, Math.max(tops.get(r) ?? -Infinity, z(v))); }
   for (const [root, top] of tops) consider(root, top - z(lowest[root]));
+  /**
+   * The box of what hangs: the surface walked from the low point through every vertex below the height where it joins
+   * the rest, with each edge that crosses that height cut there. The same for any facet order (Codex review, #169).
+   */
+  const hanging = (start: number, top: number) => {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    const add = (p: number[]) => { for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); } };
+    const seen = new Uint8Array(nV);
+    const stack = [start];
+    seen[start] = 1;
+    while (stack.length) {
+      const u = stack.pop()!;
+      const pu = [xyz[u * 3], xyz[u * 3 + 1], xyz[u * 3 + 2]];
+      add(pu);
+      for (const w of neighbours[u]) {
+        if (z(w) < top) { if (!seen[w]) { seen[w] = 1; stack.push(w); } continue; }
+        const f = (top - pu[2]) / (z(w) - pu[2] || 1);
+        add([pu[0] + (xyz[w * 3] - pu[0]) * f, pu[1] + (xyz[w * 3 + 1] - pu[1]) * f, top]);
+      }
+    }
+    return { lo, hi };
+  };
   // Merge low points within merge_mm of a deeper one; deepest first.
   found.sort((p, q) => q.depth - p.depth);
   const kept: typeof found = [];
@@ -121,7 +140,7 @@ export function floatingRegions(triangles: Float64Array, options: { plate_mm?: n
   }
   const r2 = (n: number) => Math.round(n * 100) / 100;
   return {
-    regions: kept.slice(0, limit).map(({ v, depth, lo: l, hi: h }) => ({
+    regions: kept.slice(0, limit).map(({ v, depth }) => ({ v, depth, ...hanging(v, z(v) + depth) })).map(({ v, depth, lo: l, hi: h }) => ({
       z: r2(z(v) - minZ), depth_mm: r2(depth),
       box_mm: { min: [r2(l[0]), r2(l[1]), r2(l[2] - minZ)] as [number, number, number], max: [r2(h[0]), r2(h[1]), r2(h[2] - minZ)] as [number, number, number] },
     })),

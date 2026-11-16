@@ -83,3 +83,22 @@ test("floatingWarningFacts adds the stop rule and the places only for a floating
   assert.deepEqual(await floatingWarningFacts({ failed: true, message: "floating regions" }, stl, false), {});
   assert.deepEqual(await floatingWarningFacts(undefined, stl, false), {});
 });
+
+// Codex review of #169: a coarse leg hanging from a bridge gets the box of the whole leg, whatever the facet order.
+test("floatingRegions boxes the whole hanging surface, the same for any facet order", () => {
+  // In x-z (seen from -y): a post 0..10, a bridge at z 20..30 out to x = 40, and a leg x 30..40 hanging to z = 10.
+  const outline = [[0, 0], [10, 0], [10, 20], [30, 20], [30, 10], [40, 10], [40, 30], [0, 30]];
+  const v = (i, y) => [outline[i % 8][0], y, outline[i % 8][1]];
+  const tris = [];
+  // Walls wound outward (the outline runs counter-clockwise seen from -y, extruded toward +y).
+  for (let i = 0; i < 8; i++) tris.push(...v(i, 0), ...v(i + 1, 20), ...v(i + 1, 0), ...v(i, 0), ...v(i, 20), ...v(i + 1, 20));
+  // End caps as rectangles: post, bridge, leg.
+  const rect = ([x0, z0], [x1, z1]) => [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+  for (const [a, b, c, d] of [rect([0, 0], [10, 30]), rect([10, 20], [40, 30]), rect([30, 10], [40, 20])])
+    for (const y of [0, 20]) tris.push(...[a, b, c, a, c, d].flatMap(([x, zz]) => [x, y, zz]));
+  const expected = [{ z: 10, depth_mm: 10, box_mm: { min: [30, 0, 10], max: [40, 20, 20] } }];
+  assert.deepEqual(floatingRegions(Float64Array.from(tris)).regions, expected);
+  const reversed = [];
+  for (let i = tris.length - 9; i >= 0; i -= 9) reversed.push(...tris.slice(i, i + 9));
+  assert.deepEqual(floatingRegions(Float64Array.from(reversed)).regions, expected);
+});

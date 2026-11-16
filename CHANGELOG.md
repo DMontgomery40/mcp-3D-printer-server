@@ -8,7 +8,7 @@
   - It returns `units: "mm"`, `folder` and `parts: [{id, name, plate?, color?, filament?, painted?, stl_path, triangles, size_mm}]`.
   - Each STL is in the 3MF's build frame, with component transforms, build-item transforms and the model's unit applied, so the parts line up when drawn together.
   - `color` is the 3MF's own filament colour. A part beyond the read limits is listed in `skipped` with the reason.
-  - One mesh placed twice as a component gives two parts. A mirrored placement keeps its surface facing out. One call writes at most 4 million triangles; the rest go in `skipped`.
+  - One mesh placed twice as a component gives two parts. A mirrored placement keeps its surface facing out. A sub-file component that shares its root object's id is read as that component. One call writes at most 4 million triangles; the rest go in `skipped`.
   - `list_3mf_plates` adds `components` to a part its object places more than once, and `parts_truncated` to a plate with more than 1000 parts. A plain 3MF's part names come from its objects' own names.
   - `counterpart_printer_info` advertises it as `capabilities.partMeshes`.
   - Tested with a hand-built two-plate project (sub-file components, a rotated copy, a modifier, a non-printable item, centimetre units) and with the DAD pass's own 3MF: two parts, read in under a second. Refs DMontgomery40/scan-to-make#691 and #845.
@@ -19,7 +19,7 @@
 - When a slice that worked warns of floating regions, `slice_stl` adds `next`, the stop rule: one targeted fix and one re-slice, then report it or slice with supports on.
   - The rule says that a separate body in mid-air, or a region on a feature that carries load or makes a fit, is not cosmetic.
   - For an STL the slicer did not turn or scale, it also adds `floating_regions`. Each region gives where it starts (`z` above the model's lowest point), how far it hangs (`depth_mm`), and the box of what hangs, in the STL's own x and y.
-  - The slicer itself gives no location. These come from a sweep over the STL's surface for downward-facing low points above the plate.
+  - The slicer itself gives no location. These come from a sweep over the STL's surface for downward-facing low points above the plate. Each box covers the whole hanging surface up to where it joins the rest, whatever the facet order.
   - Tested on synthetic meshes and with a mocked slicer result. Refs DMontgomery40/scan-to-make#859.
 
 - `measure_scan(scan)` in `cad_run` scripts measures a captured object once, before any design (scan-to-make #859; the DAD pass wrote two measuring scripts of its own).

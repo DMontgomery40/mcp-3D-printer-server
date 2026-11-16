@@ -189,3 +189,25 @@ test("counterpart_part_meshes reverses the winding of a mirrored placement so th
   assert.deepEqual(result.parts.map(p => signedVolume(p.stl_path)), [1, 1]);
   assert.deepEqual(result.parts.map(p => bounds(p.stl_path).min[0]), [0, -6]);
 });
+
+// Codex review of #169: object ids are local to each model file, so a sub-file object with the root object's id is a
+// component, not the root object's own mesh.
+test("counterpart_part_meshes keeps a sub-file component that shares its root object's id", async t => {
+  const dir = folder(t);
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", "<Types/>");
+  zip.file("3D/3dmodel.model", `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources>
+    <object id="1" type="model"><components>
+      <component p:path="/3D/Objects/object_1.model" objectid="1"/>
+      <component p:path="/3D/Objects/object_1.model" objectid="2" transform="1 0 0 0 1 0 0 0 1 20 0 0"/>
+    </components></object></resources><build><item objectid="1"/></build></model>`);
+  zip.file("3D/Objects/object_1.model", `<model unit="millimeter"><resources><object id="1">${CUBE}</object><object id="2">${CUBE}</object></resources></model>`);
+  zip.file("Metadata/model_settings.config", `<config><object id="1"><metadata key="name" value="Pair"/>
+    <part id="1" subtype="normal_part"><metadata key="name" value="Body"/><metadata key="extruder" value="1"/></part>
+    <part id="2" subtype="normal_part"><metadata key="name" value="Lid"/><metadata key="extruder" value="2"/></part></object></config>`);
+  const source = path.join(dir, "same-id.3mf");
+  fs.writeFileSync(source, await zip.generateAsync({ type: "nodebuffer" }));
+  const result = await partMeshes({ three_mf_path: source, out_dir: dir });
+  assert.deepEqual(result.parts.map(p => [p.id, p.name, p.filament, p.triangles]), [["1/1", "Body", 1, 12], ["1/2", "Lid", 2, 12]]);
+  assert.deepEqual(result.parts.map(p => bounds(p.stl_path).min[0]), [0, 20]);
+});

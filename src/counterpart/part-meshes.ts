@@ -220,7 +220,9 @@ export async function partMeshes(args: Record<string, unknown>): Promise<PartMes
       const file = part.path?.replace(/^\//, "") ?? ROOT;
       // Each place the object puts this mesh: itself, or every component that names it (one mesh placed twice is two
       // parts on the plate, like a plain 3MF's pair of wheels).
-      const placements: (string | undefined)[] = String(part.object_id) === objectId ? [undefined]
+      // Object ids are local to each model file: only a part in the root model with the build object's own id is that
+      // object's own mesh (Codex review, #169).
+      const placements: (string | undefined)[] = String(part.object_id) === objectId && file === ROOT ? [undefined]
         : [...((root as ModelFile).objects.get(objectId ?? "") ?? "").matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)]
           .map(match => match[1]).filter(attrs => /\bobjectid="(\d+)"/.exec(attrs)?.[1] === String(part.object_id)
             && (/\b(?:\w+:)?path="\/?([^"]+)"/.exec(attrs)?.[1] ?? ROOT) === file);
