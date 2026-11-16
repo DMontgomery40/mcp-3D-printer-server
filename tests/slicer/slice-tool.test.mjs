@@ -1005,6 +1005,44 @@ test("optional: installed BambuStudio slices P1S 0.4 into a 3MF with P1S plate G
   assert.deepEqual(result.structuredContent.slicer_result.sliced_plates.map((plate) => plate.warning_message), [""]);
 });
 
+// scan-to-make #859 pass B: "has floating regions" and nothing about where; six rebuilds followed. The result now
+// says where, in the STL's own frame, and carries the rule that stops the chase.
+test("slice_stl locates a floating-regions warning in the STL and carries the one-fix rule", async (t) => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install, { BAMBU_PROFILES_ROOT: path.dirname(install.bbl) });
+  const dir = await trackedMkdtemp(path.join(os.tmpdir(), "floating-slice-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const box = ([x0, y0, z0], [x1, y1, z1]) => {
+    const c = (i) => [i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0];
+    return [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]]
+      .flatMap(([a, b, cc, d]) => [[a, b, cc], [a, cc, d]]).map(f => `facet normal 0 0 0\nouter loop\n${f.map(i => `vertex ${c(i).join(" ")}`).join("\n")}\nendloop\nendfacet`).join("\n");
+  };
+  const stl = path.join(dir, "speck.stl");
+  await fs.writeFile(stl, `solid speck\n${box([0, 0, 0], [20, 20, 10])}\n${box([30, 0, 6], [31, 1, 7])}\nendsolid speck\n`);
+  await install.setMode("studio:p1s-floating-regions.json");
+  const result = await call("slice_stl", { stl_path: stl, bambu_model: "p1s" });
+  assert.equal(result.isError, undefined, text(result));
+  assert.match(result.structuredContent.slicer_report.message, /has floating regions/);
+  assert.match(result.structuredContent.next, /one targeted fix and one re-slice, then stops/);
+  assert.deepEqual(result.structuredContent.floating_regions.regions, [{ z: 6, depth_mm: 1, box_mm: { min: [30, 0, 6], max: [31, 1, 7] } }]);
+  const turned = await call("slice_stl", { stl_path: stl, bambu_model: "p1s", orient: true });
+  assert.equal(turned.structuredContent.floating_regions, undefined);
+  assert.match(turned.structuredContent.floating_regions_unlocated, /turned or scaled the model/);
+});
+
+// The DAD pass (scan-to-make #858) sliced a two-colour 3MF for a P1S with no AMS loaded and got only "2 filament
+// colours were supplied for 1 filament slots". The refusal now carries a plain answer and the counts.
+test("slice_stl with more colours than filaments refuses with a plain answer and the counts", async (t) => {
+  const install = await createFakeInstall(t);
+  const { call } = await startServer(t, install, { BAMBU_PROFILES_ROOT: path.dirname(install.bbl) });
+  await install.setMode("studio:p1s-success.json");
+  const result = await call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", filament_colours: "#C8A27A;#111111" });
+  assert.equal(result.isError, true, JSON.stringify(result));
+  assert.equal(result.structuredContent.code, "needs-more-filaments");
+  assert.deepEqual(result.structuredContent.filament_slots, { colours: 2, slots: 1 });
+  assert.equal(result.structuredContent.slicer_report.message, "This design is in 2 colours, but only 1 filament is available to print it. It needs a printer with an AMS loaded with 2 colours, or it can print in one colour.");
+});
+
 // Bambu Studio's own checks: its result.json, verbatim, from the Scan to Make
 // stove gap filler sliced for a P1S. slice_stl used to drop the warnings.
 test("slice_stl returns Bambu Studio's result.json, warnings and errors included", async (t) => {

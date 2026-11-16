@@ -41,6 +41,8 @@ export interface ModelPlate {
   build_items: number[];
   /** Each model part of this plate's objects once, with the filament it prints in (counterpart/1; see PlatePart). */
   parts: PlatePart[];
+  /** How many more parts the plate has beyond the 1000 listed, when it has more. */
+  parts_truncated?: number;
   /** The plate's own preview from the file (Metadata/plate_N.png), when asked for and present. */
   thumbnail_png_base64?: string;
 }
@@ -164,6 +166,8 @@ export async function listModelPlates(filePath: string, options: { thumbnails?: 
     if (geometry) {
       plate.build_items = filaments.buildItems.get(plate.index + 1) ?? [];
       plate.parts = filaments.parts.get(plate.index + 1) ?? [];
+      const truncated = filaments.partsTruncated.get(plate.index + 1);
+      if (truncated) plate.parts_truncated = truncated;
     }
   }
   result.project_filaments = filaments.project;

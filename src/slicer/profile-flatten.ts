@@ -24,6 +24,7 @@
  * fail loud rather than producing dangerous gcode for hardware we don't own.
  */
 
+import { FilamentSlotsError } from "../refusal.js";
 import fs from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
@@ -713,6 +714,8 @@ export async function flattenForCli(opts: FlattenOptions): Promise<FlattenedProf
   normalizeForCli(processFlat, "process", opts.processLeaf);
   filamentFlats.forEach((f, i) => normalizeForCli(f, "filament", opts.filamentLeaves[i]));
   if (opts.filamentColours && opts.filamentColours.length !== filamentFlats.length) {
+    // More colours than slots is a design the loaded filaments can't print in its colours: said plainly (#858).
+    if (opts.filamentColours.length > filamentFlats.length) throw new FilamentSlotsError(opts.filamentColours.length, filamentFlats.length);
     throw new Error(
       `${opts.filamentColours.length} filament colours were supplied for ${filamentFlats.length} filament slots.`
     );

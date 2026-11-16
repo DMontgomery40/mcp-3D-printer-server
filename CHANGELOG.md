@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.2.79] – 2026-11-16
+
+### Added
+
+- `counterpart_part_meshes` (counterpart/1) writes one STL per printable part of any 3MF into a new folder inside `out_dir`. The 3MF can be a pass's, `counterpart_make_3mf`'s, `cad_run`'s `project_3mf`, or a designer's Bambu Studio, OrcaSlicer or plain 3MF.
+  - It returns `units: "mm"`, `folder` and `parts: [{id, name, plate?, color?, filament?, painted?, stl_path, triangles, size_mm}]`.
+  - Each STL is in the 3MF's build frame, with component transforms, build-item transforms and the model's unit applied, so the parts line up when drawn together.
+  - `color` is the 3MF's own filament colour. A part beyond the read limits is listed in `skipped` with the reason.
+  - One mesh placed twice as a component gives two parts. A mirrored placement keeps its surface facing out. A sub-file component that shares its root object's id is read as that component. One call writes at most 4 million triangles, checked while nested components are expanded; the rest go in `skipped`.
+  - `list_3mf_plates` adds `components` to a part its object places more than once, and `parts_truncated` to a plate with more than 1000 parts. A plain 3MF's part names come from its objects' own names.
+  - `counterpart_printer_info` advertises it as `capabilities.partMeshes`.
+  - Tested with a hand-built two-plate project (sub-file components, a rotated copy, a modifier, a non-printable item, centimetre units) and with the DAD pass's own 3MF: two parts, read in under a second. Refs DMontgomery40/scan-to-make#691 and #845.
+- `counterpart_make_3mf` takes an optional `parts[].color` (`#RRGGBB`), and so does `cad_run`'s `project_3mf().add_part(..., color=)` for a new project.
+  - When every filament has one, the 3MF declares them in `project_settings.config` `filament_colour`, as Bambu Studio does. `slice_stl` and `counterpart_part_meshes` then read them back.
+  - Without colours, the file is unchanged.
+  - Sliced with Bambu Studio 02.08.02.61 on macOS for a P1S from the DAD pass's parts: two slots and plate G-code with one profile per slot, with one profile for both, and with no profiles given. The sliced file kept both colours. No printer was contacted.
+- When a slice that worked warns of floating regions, `slice_stl` adds `next`, the stop rule: one targeted fix and one re-slice, then report it or slice with supports on.
+  - The rule says that a separate body in mid-air, or a region on a feature that carries load or makes a fit, is not cosmetic.
+  - For an STL the slicer did not turn or scale, it also adds `floating_regions`. Each region gives where it starts (`z` above the model's lowest point), how far it hangs (`depth_mm`), and the box of what hangs, in the STL's own x and y.
+  - The slicer itself gives no location. These come from a sweep over the STL's surface for downward-facing low points above the plate. Each box covers the whole hanging surface up to where it joins the rest, whatever the facet order.
+  - Tested on synthetic meshes and with a mocked slicer result. Refs DMontgomery40/scan-to-make#859.
+
+- `measure_scan(scan)` in `cad_run` scripts measures a captured object once, before any design (scan-to-make #859; the DAD pass wrote two measuring scripts of its own).
+  - It keeps the scan's main piece and removes the turntable or support it stands on (its plane fitted, even when tilted) and any floating pieces.
+  - Removed pieces count nowhere in the size or profile, and the profile is the surface's own cross-section at each height, so a mesh of large triangles still has one.
+  - It removes a support only when it is round and well wider than what stands on it. When it does, the result also gives `uncut_size_mm` and a note to check the photos, since the cut piece may be the object's own base. A lamp's own square base is kept.
+  - It prints `scan_measure`: the object's size in its own frame (long side on x), its length and depth at ten heights, and what it removed. It saves `scan-measure.png`, the silhouettes from three sides with 10 mm ticks, and returns the object alone as a mesh.
+  - `cad_design` tells the worker to design from it.
+  - On the DAD pass's own scan (copied read-only from the capture), it finds the sign alone, 196 × 22.6 × 103.2 mm, without the 1° tilted turntable disc or the floating chunk, in under 3 seconds. A synthetic fixture is in the suite; the real scan runs only where `DAD_SCAN_MESH` points to it.
+
+### Changed
+
+- `blender_mcp_setup`'s answer for an unset Blender is a plain sentence a new tester can read: "Blender isn't connected to your printer software yet. Scan cleanup can use it once it is; printing never needs it." The settings it needs (`BLENDER_MCP_COMMAND`, `BLENDER_MCP_ARGS`) are in a new `settings` field. Refs DMontgomery40/scan-to-make#851.
+- The design guidance builds early, in pieces (scan-to-make #859; one pass spent 42 minutes thinking before its first geometry).
+  - `cad_design` asks for a rough but complete first `cad_run` within the first few turns, then one body or mechanism per run: never a whole multi-part script planned in one thought.
+  - The steps before the first build (bought products, the cookbook example, the mechanism) are a sentence each. `PURPOSE` and the concept docstring start with the first build and grow with it; `use()` follows once the main bodies exist.
+  - Every check still applies, as soon as the geometry it checks exists. `cad_run` calls go one at a time, because parallel calls only queue.
+  - Colour parts come from the same run as the model (`project_3mf`), never from re-running the script once per colour.
+  - `fdm_design`, `fdm_after_slice` and `fdm_slicing` add the slicer-warning stop rule. `fdm_multicolor` adds the one-run colour rule.
+
+### Fixed
+
+- A slice with more filament colours than filament slots now refuses with code `needs-more-filaments`, `filament_slots: {colours, slots}`, and a plain `slicer_report.message` a client can show.
+  - Example: "This design is in 2 colours, but only 1 filament is available to print it. It needs a printer with an AMS loaded with 2 colours, or it can print in one colour."
+  - Before, it gave only "2 filament colours were supplied for 1 filament slots" (the DAD pass, scan-to-make #858).
+  - Tested with a mocked slicer, and with Bambu Studio 02.08.02.61 on macOS for the DAD pass's own call (a 3MF without declared colours, two colours, one filament). Nothing was sent to a printer.
+  - A 3MF that declares its colours slices into one slot per colour even with a single filament profile. Whether that printer has an AMS for it is then a question at print time.
+- `counterpart_printer_info` no longer waits on an unreachable printer (scan-to-make #815).
+  - The printer gets `PRINTER_INFO_LIVE_MS` (default 10 s) to give its identity and live capabilities, and the answer is then as before, with `live: true`. Ten seconds is under the companion's 15 s timeout, and the companion keeps the answer it read at connect, so a slow but reachable printer still answers live.
+  - Otherwise the answer comes from configuration alone, with `live: false`. Layers, pause and camera are then reported as not available rather than guessed.
+  - Tested with a mock printer that accepts connections and never answers.
+- `scan_touchup`'s `regions()` no longer raises `IndexError` when a colour region is one or two vertices on a coarse scan. That happened on the DAD sign at the defaults of 6 clusters and 3 mm². A synthetic regression fails before the fix. Refs DMontgomery40/scan-to-make#858.
+
 ## [1.2.78] – 2026-11-16
 
 ### Fixed

@@ -492,6 +492,7 @@ export class CadEngine {
       "worker.py",
       "geometry.py",
       "scan_touchup.py",
+      "scan_measure.py",
       "project3mf.py",
       "purpose.py",
       "process.ts",

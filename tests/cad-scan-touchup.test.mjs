@@ -19,3 +19,27 @@ test(
     assert.ok(result.seconds < 60, `took ${result.seconds} s`);
   },
 );
+
+test(
+  "scan_touchup regions survives a colour region of one or two vertices (scan-to-make #858)",
+  { skip: ready ? false : "needs the CAD runtime's Python libraries (set CAD_TEST_PYTHON)" },
+  () => {
+    const r = spawnSync(python, [fileURLToPath(new URL("./scan_touchup_regions_check.py", import.meta.url))], {
+      encoding: "utf8",
+      timeout: 120000,
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.equal(JSON.parse(r.stdout.trim().split("\n").at(-1)).ok, true);
+  },
+);
+
+test(
+  "measure_scan isolates an object from its turntable and floating pieces and measures it once (scan-to-make #859)",
+  { skip: ready ? false : "needs the CAD runtime's Python libraries (set CAD_TEST_PYTHON)" },
+  () => {
+    // DAD_SCAN_MESH: the DAD pass's scan/mesh.obj, a private capture, checked only where it is present.
+    const r = spawnSync(python, [fileURLToPath(new URL("./scan_measure_check.py", import.meta.url))], { encoding: "utf8", timeout: 180000 });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.equal(JSON.parse(r.stdout.trim().split("\n").at(-1)).ok, true);
+  },
+);

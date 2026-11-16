@@ -47,15 +47,29 @@ test("the engine prompt names every example by purpose in one line each, and the
   assert.ok(at("choose from the cookbook by purpose") < at("only then, choose the mechanism"));
   assert.ok(at("only then, choose the mechanism") < at("Form first:"));
   // the product is named where a reviewer can see it: in the script's header, as the cookbook's are
-  assert.match(text, /write the concept as the script's opening docstring, the way every cookbook example does: what it is, then "Modelled on:" the bought product you named/);
+  assert.match(text, /Write the concept in a few lines as the first build's opening docstring, the way every cookbook example does: what it is, then "Modelled on:" the bought product you named/);
   assert.match(text, /After every cad_run, Read its perspective view \(renders\.perspective/);
   assert.match(text, /Before the final run, list what the views show is wrong against the bought product you named \(for a scan, the object in its photos\)/);
   assert.match(text, /print\(\) it in the script: the result returns it as printed/);
   assert.match(CAD_DESIGN_PROMPT.text, /Form first: build the product's shape, not a profile pushed up\./);
   assert.match(CAD_DESIGN_PROMPT.text, /perspective view/);
   // the purpose as data and the design as used, before geometry; final only when ready (scan-to-make #608)
-  assert.ok(at("only then, choose the mechanism") < at("Then state the purpose as data, before any geometry: a literal PURPOSE = {...}"));
-  assert.match(text, /define use\(\) beside build\(\)/);
+  assert.ok(at("only then, choose the mechanism") < at("State the purpose as data in the first build, as a short first version, and complete it as the design grows: a literal PURPOSE = {...}"));
+  // scan-to-make #859: build early, in pieces; the steps before the first run are sentences, not a plan held in one thought
+  assert.ok(at("Build early, in pieces.") < at("A new design starts from the product"));
+  assert.match(text, /The first cad_run is a rough but complete model within your first few turns/);
+  assert.match(text, /Then add one body, mechanism or detail per run/);
+  assert.match(text, /Never write a whole multi-part script in your head/);
+  assert.match(text, /build, look, then add/);
+  assert.match(text, /Every check below still applies; each runs as soon as the geometry it checks exists/);
+  assert.match(text, /each step before the first run is a sentence, not a study/);
+  // colours from the same run as the model (#859 fix 5)
+  assert.match(text, /A design in several colours gets them from the same run as the model/);
+  assert.match(text, /Never re-run the whole script once per colour/);
+  // measure a scan once (#859 fix 4), with the helper rather than hand-written measuring scripts
+  assert.match(text, /Measure a scan once, before designing from it: one check run[^\n]*measure_scan\(load_scan\(/);
+  assert.match(text, /instead of writing measuring scripts of your own/);
+  assert.match(text, /Add use\(\) beside build\(\) once the main bodies exist/);
   assert.match(text, /"held:<body>"/);
   assert.match(text, /"world:<body>"/);
   assert.match(text, /final: true is recorded only when ready is true/);

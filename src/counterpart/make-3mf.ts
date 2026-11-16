@@ -27,20 +27,20 @@ const MAX_PARTS = 64;
 const MAX_FILAMENT = 64;
 const MAX_STL_BYTES = 256 * 1024 * 1024;
 const MAX_TOTAL_TRIANGLES = 5_000_000;
-const PART_KEYS = new Set(["stl_path", "name", "filament"]);
+const PART_KEYS = new Set(["stl_path", "name", "filament", "color"]);
 
 export class Make3mfError extends Error {}
 
 const isFilament = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_FILAMENT;
 
 type Mesh = { vertices: Float32Array; indices: Uint32Array; triangles: number; min: number[]; max: number[] };
-type Part = { name: string; stlPath: string; filament: number; mesh: Mesh };
+type Part = { name: string; stlPath: string; filament: number; mesh: Mesh; color?: string };
 export type Make3mfResult = {
   contract: typeof COUNTERPART_CONTRACT;
   path: string;
   objects: number;
   filaments: number;
-  parts: { name: string; stl_path: string; filament: number; triangles: number }[];
+  parts: { name: string; stl_path: string; filament: number; triangles: number; color?: string }[];
 };
 
 function fail(message: string): never { throw new Make3mfError(message); }
@@ -254,8 +254,30 @@ async function publish(outPath: string, bytes: Buffer): Promise<void> {
   }
 }
 
+/**
+ * The project's filament colours, filament 1 first, when the parts give one for every filament they use (#691): Bambu
+ * Studio and OrcaSlicer keep a project's colours in project_settings.config filament_colour, slice_stl keeps them per
+ * slot, and counterpart_part_meshes reads them back. Some colours but not all, or two for one filament, is refused.
+ */
+function filamentColours(parts: Part[]): string[] | undefined {
+  if (!parts.some(part => part.color)) return undefined;
+  const colours: string[] = [];
+  for (const part of parts) {
+    if (!part.color) fail(`Give every part a color, or none: "${part.name}" has none.`);
+    const known = colours[part.filament - 1];
+    if (known && known !== part.color) fail(`Filament ${part.filament} has two colours (${known} and ${part.color}); parts on one filament share its colour.`);
+    colours[part.filament - 1] = part.color;
+  }
+  const missing = Array.from(colours, (colour, index) => colour ? undefined : index + 1).filter(Boolean);
+  if (missing.length) fail(`No part uses filament ${missing.join(", ")}, so it has no colour; number the filaments from 1 without gaps.`);
+  return colours;
+}
+
 async function writeAssemblies(objects: Assembly[], outPath: string, application: string): Promise<void> {
   const zip = new JSZip();
+  const colours = filamentColours(objects.flatMap(object => object.parts));
+  // Only the colours: no process settings, so slice_stl still slices it with its own profiles.
+  if (colours) zip.file("Metadata/project_settings.config", JSON.stringify({ filament_colour: colours }, null, 2));
   zip.file("[Content_Types].xml", CONTENT_TYPES);
   zip.file("_rels/.rels", RELATIONSHIPS);
   zip.file("3D/3dmodel.model", modelXml(objects, plateTransforms(objects), application));
@@ -274,7 +296,9 @@ export async function makeCounterpart3mf(args: Record<string, unknown>): Promise
     const label = `parts[${index}]`;
     if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object with stl_path and name.`);
     const entry = value as Record<string, unknown>;
-    if (Object.keys(entry).some(key => !PART_KEYS.has(key))) fail(`${label} accepts only stl_path, name and filament.`);
+    if (Object.keys(entry).some(key => !PART_KEYS.has(key))) fail(`${label} accepts only stl_path, name, filament and color.`);
+    if (entry.color !== undefined && (typeof entry.color !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(entry.color))) fail(`${label}.color must be a colour as #RRGGBB.`);
+    const color = typeof entry.color === "string" ? entry.color.toUpperCase() : undefined;
     const name = nonEmptyText(entry.name, `${label}.name`).trim();
     const stlPath = path.resolve(nonEmptyText(entry.stl_path, `${label}.stl_path`));
     if (path.extname(stlPath).toLowerCase() !== ".stl") fail(`${label}.stl_path must name an STL file.`);
@@ -283,7 +307,7 @@ export async function makeCounterpart3mf(args: Record<string, unknown>): Promise
     const mesh = await readMesh(await fs.realpath(stlPath).catch(() => fail(`${label}.stl_path does not exist.`)), `${label}.stl_path`);
     triangles += mesh.triangles;
     if (triangles > MAX_TOTAL_TRIANGLES) fail(`The parts have more than ${MAX_TOTAL_TRIANGLES} triangles in total; decimate them first.`);
-    parts.push({ name, stlPath, filament, mesh });
+    parts.push({ name, stlPath, filament, mesh, ...(color ? { color } : {}) });
   }
   await writeAssemblies([{ name: path.basename(outPath, path.extname(outPath)), plate: 1, parts }], outPath, "mcp-3D-printer-server counterpart_make_3mf");
   return {
@@ -291,7 +315,7 @@ export async function makeCounterpart3mf(args: Record<string, unknown>): Promise
     path: outPath,
     objects: 1,
     filaments: Math.max(...parts.map(part => part.filament)),
-    parts: parts.map(part => ({ name: part.name, stl_path: part.stlPath, filament: part.filament, triangles: part.mesh.triangles })),
+    parts: parts.map(part => ({ name: part.name, stl_path: part.stlPath, filament: part.filament, triangles: part.mesh.triangles, ...(part.color ? { color: part.color } : {}) })),
   };
 }
 
@@ -395,7 +419,9 @@ export async function writeCadProject3mf(manifest: unknown, partsDir: string, in
       const parts: Part[] = [];
       for (const [at, part] of (entry.parts as Record<string, unknown>[]).entries()) {
         if (!isFilament(part?.filament)) fail(`objects[${index}].parts[${at}].filament must be from 1 to ${MAX_FILAMENT}.`);
-        parts.push({ name: text(part.name, "part name"), stlPath: "", filament: part.filament, mesh: await partMesh(part.stl, `objects[${index}].parts[${at}]`) });
+        const color = typeof part.color === "string" && /^#[0-9A-F]{6}$/.test(part.color) ? part.color : undefined;
+        if (part.color !== undefined && !color) fail(`objects[${index}].parts[${at}].color must be #RRGGBB.`);
+        parts.push({ name: text(part.name, "part name"), stlPath: "", filament: part.filament, mesh: await partMesh(part.stl, `objects[${index}].parts[${at}]`), ...(color ? { color } : {}) });
       }
       objects.push({ name: text(entry.name, "object name"), plate, parts });
     }

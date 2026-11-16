@@ -172,7 +172,62 @@ export class CounterpartService {
     }
   }
 
+  /**
+   * What this MCP can do for the configured printer (scan-to-make #815). The printer is asked for its identity and live
+   * capabilities (layers, pause, camera) within PRINTER_INFO_LIVE_MS (default 10000 ms); when it doesn't answer in time
+   * the answer comes from configuration alone, with live: false, instead of waiting on the printer's own timeouts.
+   * Scan to Make's companion reads this once at connect with a 15 s timeout and keeps a successful answer, so the
+   * default leaves a slow but reachable printer time to answer live and still answers before that timeout.
+   */
   async printerInfo(target: PrinterTarget): Promise<CounterpartPrinterInfo> {
+    const raw = Number(process.env.PRINTER_INFO_LIVE_MS?.trim() || 10_000);
+    const bound = Number.isFinite(raw) && raw >= 0 && raw <= 60_000 ? raw : 10_000;
+    const live = this.livePrinterInfo(target);
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), bound); timer.unref?.(); });
+    const answered = await Promise.race([live.then(info => ({ ...info, live: true }), () => undefined), late]);
+    clearTimeout(timer);
+    if (answered) return answered as CounterpartPrinterInfo;
+    live.catch(() => undefined);
+    return this.configuredPrinterInfo(target);
+  }
+
+  /** The answer from configuration alone: no printer traffic. */
+  private configuredPrinterInfo(target: PrinterTarget): CounterpartPrinterInfo {
+    const kind = kindOf(target.type);
+    const generic = this.generic(target);
+    let identity: PrinterIdentity = {};
+    let capabilities: CounterpartCapabilities;
+    if (!generic) {
+      const model = process.env.BAMBU_MODEL?.trim() || undefined;
+      const serial = target.apiKey.split(":")[0] || undefined;
+      identity = { model, displayName: bambuDisplayName(model, serial), serial };
+      capabilities = {
+        progress: true, layers: true, camera: overrideSnapshotUrl() ? "http-snapshot" : "none", filaments: "ams",
+        pause: true, resume: true, cancel: true, print3mf: true, gcode: true,
+        slicing: sliceCapabilities(this.bambuProfileSource().slicerType ?? "bambustudio", true),
+      };
+    } else {
+      // Unknown until the printer answers: reported as not available rather than guessed.
+      capabilities = {
+        progress: true, layers: false, camera: overrideSnapshotUrl() ? "http-snapshot" : "none", filaments: "single",
+        pause: false, resume: false, cancel: true, print3mf: false, gcode: true,
+        slicing: sliceCapabilities(this.bambuProfileSource().slicerType ?? "prusaslicer", false),
+      };
+    }
+    if (cadEnabled()) capabilities.cad = CAD_CAPABILITY;
+    capabilities.diagnostics = true;
+    capabilities.partMeshes = true;
+    return compact({
+      contract: COUNTERPART_CONTRACT,
+      server: this.server,
+      printer: { kind, host: target.host, ...identity },
+      capabilities,
+      live: false,
+    }) as CounterpartPrinterInfo;
+  }
+
+  private async livePrinterInfo(target: PrinterTarget): Promise<CounterpartPrinterInfo> {
     const kind = kindOf(target.type);
     const generic = this.generic(target);
     let identity: PrinterIdentity = {};
@@ -204,6 +259,7 @@ export class CounterpartService {
     }
     if (cadEnabled()) capabilities.cad = CAD_CAPABILITY;
     capabilities.diagnostics = true;
+    capabilities.partMeshes = true;
     const streamCandidates = await this.cameraCandidates(target).catch(() => []);
     capabilities.cameraStream = await cameraNativeAvailable() && streamCandidates.length > 0 &&
       (capabilities.camera !== "none" || streamCandidates.some(candidate => candidate.configured));

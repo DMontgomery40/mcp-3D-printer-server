@@ -1,11 +1,11 @@
 {
     "name": "mcp-3d-printer-server",
     "mcpName": "io.github.DMontgomery40/mcp-3d-printer-server",
-    "version": "1.2.78",
+    "version": "1.2.79",
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "counterpart": {
         "contract": "counterpart/1",
-        "notes": "Checks what a design is for on the design as used, and returns this server’s own redacted diagnostics for bug reports.",
+        "notes": "Builds designs early and measures a scan once, gives each part of any 3MF as its own mesh in its colour, and says plainly when a two-colour print needs an AMS.",
         "autoUpdate": true
     },
     "main": "dist/index.js",

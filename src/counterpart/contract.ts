@@ -72,6 +72,8 @@ export interface CounterpartCapabilities {
   /** What slice_stl can apply with this server's slicer for this printer (src/slicer/capabilities.ts). For a Bambu printer on
    *  OrcaSlicer this assumes the call passes the printer's bambu_model, as Counterpart does; without one, OrcaSlicer slices generically. */
   slicing?: { supports: boolean; copies: boolean; orient: boolean };
+  /** counterpart_part_meshes is here: one STL per printable part of any 3MF, with its filament's colour (#691, #845). */
+  partMeshes?: boolean;
 }
 
 export interface PrinterIdentity {
@@ -87,6 +89,11 @@ export interface CounterpartPrinterInfo {
   server: { name: string; version: string };
   printer: { kind: PrinterKind; host: string } & PrinterIdentity;
   capabilities: CounterpartCapabilities;
+  /**
+   * true when the printer answered within the bound and identity and capabilities are its own; false when it didn't and
+   * they come from configuration alone (scan-to-make #815). Absent from older servers.
+   */
+  live?: boolean;
 }
 
 export interface FilamentSlot {
@@ -139,6 +146,7 @@ export const PRINTER_INFO_OUTPUT_SCHEMA = {
   required: ["contract", "server", "printer", "capabilities"],
   properties: {
     contract: { type: "string", const: COUNTERPART_CONTRACT },
+    live: { type: "boolean", description: "The printer answered within the bound; false: identity and capabilities come from configuration alone." },
     server: {
       type: "object",
       required: ["name", "version"],
@@ -166,6 +174,7 @@ export const PRINTER_INFO_OUTPUT_SCHEMA = {
         camera: { type: "string", enum: ["bambu-tcp", "rtsp", "http-snapshot", "none"] },
         cameraStream: {type: "boolean"},
         diagnostics: { type: "boolean", description: "counterpart_diagnostics is available." },
+        partMeshes: { type: "boolean", description: "counterpart_part_meshes is available." },
         filaments: { type: "string", enum: ["ams", "single", "none"] },
         pause: { type: "boolean" },
         resume: { type: "boolean" },
@@ -377,6 +386,7 @@ export const MAKE_3MF_OUTPUT_SCHEMA = {
           stl_path: { type: "string" },
           filament: { type: "integer", minimum: 1 },
           triangles: { type: "integer", minimum: 1 },
+          color: { type: "string", pattern: "^#[0-9A-F]{6}$" },
         },
         required: ["name", "stl_path", "filament", "triangles"],
       },

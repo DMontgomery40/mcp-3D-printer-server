@@ -76,8 +76,10 @@ test("blender_mcp_setup says plainly when the bridge isn't the upstream package 
   const { system, runs } = blenderSystem(root, { files: [] });
   const check = env => new BlenderAddonSetup(async () => undefined, system, env).check();
   const none = await check({});
-  assert.deepEqual({ ...none, message: undefined }, { supported: false, reason: "not-configured", listening: false, message: undefined });
-  assert.match(none.message, /no Blender bridge configured/, "the person is told what to do, in words a client shows as they are");
+  assert.deepEqual({ ...none, message: undefined }, { supported: false, reason: "not-configured", listening: false, message: undefined, settings: ["BLENDER_MCP_COMMAND", "BLENDER_MCP_ARGS"] });
+  // A new tester sees this as it is (scan-to-make #851): a plain sentence, no setting names; those are in settings.
+  assert.equal(none.message, "Blender isn't connected to your printer software yet. Scan cleanup can use it once it is; printing never needs it.");
+  assert.doesNotMatch(none.message, /BLENDER_|MCP|bridge/);
   assert.equal((await check({ BLENDER_MCP_COMMAND: "/usr/local/bin/my-bridge", BLENDER_MCP_ARGS: "[]" })).reason, "custom-command");
   assert.equal((await check({ BLENDER_MCP_COMMAND: "uvx", BLENDER_MCP_ARGS: '["--from","git+https://example.com/fork","blender-mcp"]' })).reason, "custom-package");
   assert.equal((await check({ BLENDER_MCP_COMMAND: "uvx", BLENDER_MCP_ARGS: "not json" })).reason, "not-configured");

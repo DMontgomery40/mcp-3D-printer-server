@@ -50,6 +50,8 @@ export interface PlatePart {
   name: string;
   filament: number;
   painted?: true;
+  /** How many times the object places this mesh as a component, when more than once (a plain 3MF's wheels). */
+  components?: number;
 }
 
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
@@ -202,7 +204,7 @@ export interface PlateLayout {
  * 3D/3dmodel.model text.
  */
 export async function plateFilaments(zip: JSZip, settings: string, model: string, plates: PlateLayout[], limits: PaintLimits = PAINT_LIMITS)
-  : Promise<{ plates: Map<number, PlateFilament[]>; incomplete: Set<number>; project: PlateFilament[]; buildItems: Map<number, number[]>; parts: Map<number, PlatePart[]> }> {
+  : Promise<{ plates: Map<number, PlateFilament[]>; incomplete: Set<number>; project: PlateFilament[]; buildItems: Map<number, number[]>; parts: Map<number, PlatePart[]>; partsTruncated: Map<number, number> }> {
   const text = async (name: string) => {
     const file = zip.file(name);
     if (!file) return "";
@@ -224,17 +226,27 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
   const components = new Map<string, Map<string, string>>();
   // Root objects that are meshes themselves (a plain 3MF): their own id is the part.
   const rootMeshes = new Set<string>();
-  for (const object of model.matchAll(/<(?:\w+:)?object\b[^>]*\bid="(\d+)"[^>]*>([\s\S]*?)<\/(?:\w+:)?object>/g)) {
-    if (/<(?:\w+:)?mesh[\s>]/.test(object[2])) rootMeshes.add(object[1]);
+  // How often each root object places each component mesh, and the root model's own object names (a plain 3MF's).
+  const componentCounts = new Map<string, Map<string, number>>();
+  const modelNames = new Map<string, string>();
+  // An <object .../> closes itself: its (empty) body never runs on into the next object's.
+  for (const object of model.matchAll(/<(?:\w+:)?object\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?object>)/g)) {
+    const objectId = /\bid="(\d+)"/.exec(object[1])?.[1];
+    if (!objectId) continue;
+    const body = object[2] ?? "";
+    const named = /\bname="([^"]*)"/.exec(object[1])?.[1];
+    if (named) modelNames.set(objectId, words(named));
+    if (/<(?:\w+:)?mesh[\s>]/.test(body)) rootMeshes.add(objectId);
     const parts = new Map<string, string>();
-    for (const component of object[2].matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)) {
+    const counts = new Map<string, number>();
+    for (const component of body.matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)) {
       const path = /\b(?:\w+:)?path="\/?([^"]+)"/.exec(component[1])?.[1];
       const id = /\bobjectid="(\d+)"/.exec(component[1])?.[1];
       // Studio keys a component by (path, objectid); one without p:path names a mesh object in the root model
       // itself, keyed by the root's empty path (bbs_3mf.cpp:4131-4148, 3891).
-      if (id) parts.set(id, path || "3D/3dmodel.model");
+      if (id) { parts.set(id, path || "3D/3dmodel.model"); counts.set(id, (counts.get(id) ?? 0) + 1); }
     }
-    if (parts.size) components.set(object[1], parts);
+    if (parts.size) { components.set(objectId, parts); componentCounts.set(objectId, counts); }
   }
   // Model object order (1-based in layer_config_ranges.xml): the build items' order, as Studio creates the objects.
   const buildItems = [...model.matchAll(/<(?:\w+:)?item\b([^>]*)\/?>/g)].map(item => item[1]);
@@ -290,6 +302,7 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
   const result = new Map<number, PlateFilament[]>();
   const plateItems = new Map<number, number[]>();
   const plateParts = new Map<number, PlatePart[]>();
+  const partsTruncated = new Map<number, number>();
   const itemObject = buildItems.map(item => /\bobjectid="(\d+)"/.exec(item)?.[1]);
   // The plate's copies as root build items (0-based, in build order): a copy is its object's instance_id-th item.
   const plateItemsOf = (plate: PlateLayout) => {
@@ -314,8 +327,10 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
       const entry = (id: string, name: string, filament: number) => {
         const path = meshes?.get(id) ?? (id === objectId && rootMeshes.has(objectId) ? ROOT_MODEL : undefined);
         const paint = path ? painting.get(`${path}#${id}`) : undefined;
-        drawn.push({ object_id: Number(id), build_object_id: Number(objectId), ...(path && path !== "3D/3dmodel.model" ? { path: `/${path}` } : {}), name,
-          filament: valid(filament) ? filament : 1, ...(paint?.states.size ? { painted: true as const } : {}) });
+        const placed = componentCounts.get(objectId)?.get(id) ?? 1;
+        drawn.push({ object_id: Number(id), build_object_id: Number(objectId), ...(path && path !== "3D/3dmodel.model" ? { path: `/${path}` } : {}),
+          name: name || modelNames.get(id) || modelNames.get(objectId) || "",
+          filament: valid(filament) ? filament : 1, ...(paint?.states.size ? { painted: true as const } : {}), ...(placed > 1 ? { components: placed } : {}) });
       };
       if (object?.parts.length) {
         for (const part of object.parts) if (part.subtype === "normal_part" && /^\d+$/.test(part.id))
@@ -324,6 +339,7 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
       else if (rootMeshes.has(objectId)) entry(objectId, object?.name ?? "", objectFilament);
     }
     plateParts.set(plate.number, drawn.slice(0, 1000));
+    if (drawn.length > 1000) partsTruncated.set(plate.number, drawn.length - 1000);
 
     const used = new Map<number, string | undefined>();
     const add = (index: number | undefined, name?: string) => {
@@ -418,5 +434,5 @@ export async function plateFilaments(zip: JSZip, settings: string, model: string
     result.set(plate.number, [...used.entries()].sort((a, b) => a[0] - b[0]).map(([index, name]) => describe(index, project, name)));
   }
   // Every filament the project declares, used on a plate or not: slice_stl takes one profile per declared filament.
-  return { plates: result, incomplete, project: Array.from({ length: declared }, (_, i) => describe(i + 1, project)), buildItems: plateItems, parts: plateParts };
+  return { plates: result, incomplete, project: Array.from({ length: declared }, (_, i) => describe(i + 1, project)), buildItems: plateItems, parts: plateParts, partsTruncated };
 }
