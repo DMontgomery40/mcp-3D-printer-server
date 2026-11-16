@@ -168,7 +168,7 @@ test("the guidance builds early and stops chasing a cosmetic slicer warning afte
     const text = slicingGuidance(slicer, { supports, orient: supports });
     assert.match(text, /- Warnings: A cosmetic warning \(floating regions, small islands\) gets one targeted fix and one re-slice, then stops/);
     assert.match(text, /floating_regions: each one's z, depth and box/);
-    assert.match(text, /A warning on a feature that carries load or makes a fit is not cosmetic/);
+    assert.match(text, /A region that is a separate body in mid-air, or on a feature that carries load or makes a fit, is not cosmetic/);
   }
   assert.match(FDM_CORE, /the first geometry is how you check a plan, not the reward for finishing one/);
   assert.match(FDM_CORE, /Write the concept down in a few lines, with the first build rather than as a plan before it/);

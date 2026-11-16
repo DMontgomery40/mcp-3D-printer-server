@@ -48,8 +48,27 @@ with tempfile.TemporaryDirectory() as tmp:
     assert len(r["pieces_removed"]) == 1 and near(sorted(r["pieces_removed"][0]["size_mm"]), [40, 50, 60], 2), r["pieces_removed"]
     assert all(near([p["length_mm"], p["depth_mm"]], [190, 20], 1.5) for p in r["profile"]), r["profile"]
     assert Path("scan-measure.png").stat().st_size > 0
-    # the object alone, cut 0.5 mm above the support it stood on
-    assert near([r["mesh"].bounds[0, 2], r["mesh"].bounds[1, 2]], [0.5, r["size_mm"][2]], 0.6), r["mesh"].bounds
+    # the object alone, cut 0.5 mm above the support it stood on, standing at z = 0
+    assert near([r["mesh"].bounds[0, 2], r["mesh"].bounds[1, 2]], [0, r["size_mm"][2] - 0.5], 0.6), r["mesh"].bounds
+    # with the size it would have if the cut piece were the object's own base, and a plain warning to check it
+    assert near(r["support_removed"]["uncut_size_mm"], [220, 220, 114.5], 2), r["support_removed"]
+    assert "own base" in r["support_removed"]["note"]
+    assert near(r["scan_size_mm"][:2], [220, 220], 3), r["scan_size_mm"]
+
+    # A product with its own base (scan-to-make #859 review): a lamp's square 100 x 100 x 10 foot under a 50 x 50 x 90
+    # tower, no turntable. The foot is the product: nothing is cut.
+    base = mf.Manifold.cube((100, 100, 10)).translate((-50, -50, 0))
+    tower = mf.Manifold.cube((50, 50, 90)).translate((-25, -25, 10))
+    with redirect_stdout(StringIO()):
+        lamp = measure_scan(mesh(mf.Manifold.batch_boolean([base, tower], mf.OpType.Add)), picture=None)
+    assert lamp["support_removed"] is None, lamp["support_removed"]
+    assert near(lamp["size_mm"], [100, 100, 100], 0.01) and abs(lamp["volume_mm3"] - 325000) < 1, lamp
+
+    # A footprint that is a line (a flat strip on edge) measures instead of raising.
+    strip = trimesh.Trimesh([[0, 0, 0], [10, 0, 0], [10, 0, 5], [0, 0, 5]], [[0, 1, 2], [0, 2, 3]], process=False)
+    with redirect_stdout(StringIO()):
+        flat = measure_scan(strip, picture=None)
+    assert near(flat["size_mm"], [10, 0, 5], 0.01), flat["size_mm"]
 
     # No support: a box measured as it is, nothing removed.
     with redirect_stdout(StringIO()):

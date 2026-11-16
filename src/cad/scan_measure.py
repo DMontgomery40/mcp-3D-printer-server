@@ -44,16 +44,35 @@ def _support_plane(V, F, n, area, body):
     footprint = np.ptp(V[body][:, 0]) * np.ptp(V[body][:, 1])
     if not above.any() or point[2] > lo + 0.6 * (hi - lo) or plate_area < 0.15 * footprint:
         return None
-    # The plate reaches past what stands on it, as a turntable does; a part's own flat shelf doesn't.
-    if np.ptp(V[below][:, 0]) * np.ptp(V[below][:, 1]) < 1.3 * np.ptp(V[above][:, 0]) * np.ptp(V[above][:, 1]):
+    # A turntable is round and reaches well past what stands on it. A product's own base (a lamp's square foot, a
+    # plinth) usually isn't both; one that is still gets cut, and the result says so (uncut_size_mm, note).
+    below_area, roundness = _hull_shape(V[below][:, :2])
+    above_area, _ = _hull_shape(V[above][:, :2])
+    if roundness < 0.8 or below_area < 2.5 * above_area:
         return None
     return point, normal
 
 
+def _hull_shape(xy):
+    """A footprint's convex-hull area and how round it is: the area over the circle through its farthest point (a
+    disc is about 1, a square 0.64). (0, 0) when the footprint is a point or a line."""
+    from scipy.spatial import ConvexHull, QhullError
+    try:
+        hull = ConvexHull(xy)
+    except (QhullError, ValueError):
+        return 0.0, 0.0
+    ring = xy[hull.vertices]
+    radius = np.linalg.norm(ring - ring.mean(0), axis=1).max()
+    return float(hull.volume), float(hull.volume / (np.pi * radius ** 2)) if radius > 0 else 0.0
+
+
 def _rect_yaw(xy):
     """The yaw (radians) that turns the footprint's smallest bounding rectangle square to x and y, its long side on x."""
-    from scipy.spatial import ConvexHull
-    hull = xy[ConvexHull(xy).vertices]
+    from scipy.spatial import ConvexHull, QhullError
+    try:
+        hull = xy[ConvexHull(xy).vertices]
+    except (QhullError, ValueError):
+        return 0.0  # a point or a line: measured in the scan's own x and y
     best = None
     for i in range(len(hull)):
         d = hull[(i + 1) % len(hull)] - hull[i]
@@ -96,6 +115,7 @@ def measure_scan(scan, picture="scan-measure.png", support=True, levels=10):
     import trimesh
     V = np.asarray(scan.vertices, dtype=np.float64)
     F = np.asarray(scan.faces, dtype=np.int64)
+    scan_size = np.ptp(V, axis=0)
     tri = V[F]
     cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
     area = np.linalg.norm(cross, axis=1) / 2
@@ -143,6 +163,9 @@ def measure_scan(scan, picture="scan-measure.png", support=True, levels=10):
     P = P - [centre[0], centre[1], 0]
     size = np.ptp(P, axis=0)
     size[2] = P[:, 2].max()
+    # The whole main piece in the same frame, support included: the size if the cut piece was the object's own base.
+    whole = (V[body] - [0, 0, floor]) @ R.T
+    uncut = np.ptp(whole, axis=0)
     profile = []
     for h in np.linspace(0, size[2], levels + 2)[1:-1]:
         band = np.abs(P[:, 2] - h) < max(size[2] / (levels * 4), 0.5)
@@ -153,10 +176,13 @@ def measure_scan(scan, picture="scan-measure.png", support=True, levels=10):
         "size_mm": [round(float(v), 1) for v in size],
         "frame": "Object frame: x along its long side, y across, z up from where it stands; centred on x and y.",
         "yaw_deg": round(float(np.degrees(yaw)) % 180, 1),
-        "scan_size_mm": [round(float(v), 1) for v in np.ptp(V, axis=0)],
+        "scan_size_mm": [round(float(v), 1) for v in scan_size],
         "support_removed": None if plane is None else {
             "top_z_mm": round(float(plane[0][2]), 1), "tilt_deg": round(float(np.degrees(np.arccos(np.clip(plane[1][2], -1, 1)))), 1),
-            "size_mm": [round(float(v), 1) for v in np.ptp(V[body & (V[:, 2] <= 0.5)], axis=0)]},
+            "size_mm": [round(float(v), 1) for v in np.ptp(V[body & (V[:, 2] <= 0.5)], axis=0)],
+            "uncut_size_mm": [round(float(v), 1) for v in uncut],
+            "note": "A round plate wider than what stands on it was cut away as a turntable. If the photos show it is "
+                    "the object's own base, design from uncut_size_mm instead."},
         "cut_mm": 0.5 if plane is not None else None,
         "pieces_removed": removed[:10],
         "profile": profile,
@@ -165,6 +191,8 @@ def measure_scan(scan, picture="scan-measure.png", support=True, levels=10):
     }
     if obj.is_watertight:
         report["volume_mm3"] = round(float(abs(obj.volume)), 1)
+    # The object as returned stands at z = 0, its cut face on the plate.
+    obj.apply_translation([0, 0, -float(obj.vertices[:, 2].min())])
     if picture:
         _silhouettes(P, Fk, Path(picture), size)
     print(json.dumps({"scan_measure": report}))

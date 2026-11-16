@@ -135,7 +135,7 @@ export function isFloatingWarning(message: string | undefined): boolean {
   return !!message && /floating regions?|small islands?|isolated islands?/i.test(message);
 }
 
-export const SLICE_WARNING_RULE = "A cosmetic warning (floating regions, small islands) gets one targeted fix and one re-slice, then stops: if it remains, report it in the result or slice with supports on. Do not rebuild and re-slice to chase it.";
+export const SLICE_WARNING_RULE = "A cosmetic warning (floating regions, small islands) gets one targeted fix and one re-slice, then stops: if it remains, report it in the result or slice with supports on. Do not rebuild and re-slice to chase it. A region that is a separate body in mid-air, or on a feature that carries load or makes a fit, is not cosmetic: fix that one properly.";
 
 /**
  * What slice_stl adds to a slice that worked but warned about floating regions: the rule above, and where the

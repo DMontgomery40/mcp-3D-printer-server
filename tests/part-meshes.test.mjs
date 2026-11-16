@@ -144,3 +144,26 @@ test("a cad_run project_3mf with part colours declares them, and counterpart_par
   const meshes = await partMeshes({ three_mf_path: out, out_dir: dir });
   assert.deepEqual(meshes.parts.map(p => [p.name, p.color, p.filament]), [["Bar", "#B0855D", 1], ["Letters", "#1A1A1A", 2]]);
 });
+
+// Review of #169: one mesh placed twice as a component (a plain 3MF's wheels) is two parts, a plain 3MF's names come
+// from its <object name=>, and a self-closing <object .../> doesn't swallow the next object.
+test("counterpart_part_meshes gives every placement of a mesh, plain 3MF names, and reads self-closing objects", async t => {
+  const dir = folder(t);
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", "<Types/>");
+  zip.file("3D/3dmodel.model", `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>
+    <object id="2" type="model" name="Empty"/>
+    <object id="1" type="model" name="Wheel">${CUBE}</object>
+    <object id="10" type="model" name="Axle set"><components>
+      <component objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>
+      <component objectid="1" transform="1 0 0 0 1 0 0 0 1 50 0 0"/>
+    </components></object></resources><build><item objectid="10"/></build></model>`);
+  const source = path.join(dir, "wheels.3mf");
+  fs.writeFileSync(source, await zip.generateAsync({ type: "nodebuffer" }));
+  const result = await partMeshes({ three_mf_path: source, out_dir: dir });
+  assert.deepEqual(result.parts.map(p => [p.id, p.name, p.plate]), [["1/1", "Wheel", undefined], ["1/1/2", "Wheel", undefined]]);
+  assert.deepEqual(result.parts.map(p => bounds(p.stl_path).min[0]), [0, 50]);
+  const { listModelPlates } = await import("../dist/counterpart/model-plates.js");
+  const listed = await listModelPlates(source);
+  assert.deepEqual(listed.plates[0].parts, [{ object_id: 1, build_object_id: 10, name: "Wheel", filament: 1, components: 2 }]);
+});

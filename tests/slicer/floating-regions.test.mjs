@@ -73,6 +73,7 @@ test("floatingWarningFacts adds the stop rule and the places only for a floating
   const facts = await floatingWarningFacts(warned, stl, false);
   assert.equal(facts.next, SLICE_WARNING_RULE);
   assert.match(SLICE_WARNING_RULE, /one targeted fix and one re-slice, then stops/);
+  assert.match(SLICE_WARNING_RULE, /a separate body in mid-air, or on a feature that carries load or makes a fit, is not cosmetic/);
   assert.deepEqual(facts.floating_regions.regions, [{ z: 4, depth_mm: 1, box_mm: { min: [20, 0, 4], max: [21, 1, 5] } }]);
   assert.match(facts.floating_regions.frame, /z is millimetres above its lowest point/);
   assert.match((await floatingWarningFacts(warned, stl, true)).floating_regions_unlocated, /turned or scaled the model/);

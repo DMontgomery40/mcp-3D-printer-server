@@ -19,6 +19,8 @@ import { COUNTERPART_CONTRACT } from "./contract.js";
 const MAX_MODEL_BYTES = 64 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 const MAX_DEPTH = 8;
+/** All the STLs one call writes, together: about 200 MB of binary STL. Parts beyond it are listed in skipped. */
+const MAX_TOTAL_TRIANGLES = 4_000_000;
 const ROOT = "3D/3dmodel.model";
 const UNITS: Record<string, number> = { micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000 };
 
@@ -80,9 +82,10 @@ function modelReader(zip: JSZip) {
         const text = bytes.toString("utf8");
         const unit = /<(?:\w+:)?model\b[^>]*\bunit="(\w+)"/.exec(text)?.[1] ?? "millimeter";
         const objects = new Map<string, string>();
-        for (const object of text.matchAll(/<(?:\w+:)?object\b([^>]*)>([\s\S]*?)<\/(?:\w+:)?object>/g)) {
+        // An <object .../> closes itself: its (empty) body never runs on into the next object's.
+        for (const object of text.matchAll(/<(?:\w+:)?object\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?object>)/g)) {
           const id = /\bid="(\d+)"/.exec(object[1])?.[1];
-          if (id) objects.set(id, object[2]);
+          if (id) objects.set(id, object[2] ?? "");
         }
         // Only the root model's unit counts (3MF core spec); a model part's own is read and ignored.
         result = { scale: UNITS[unit] ?? (name === ROOT ? fail(`The 3MF's unit "${unit}" is not one the 3MF standard defines.`) : 1), objects };
@@ -202,35 +205,42 @@ export async function partMeshes(args: Record<string, unknown>): Promise<PartMes
   const folder = await newFolder(args.out_dir, path.basename(source, path.extname(source)));
   const parts: PartMesh[] = [];
   const skipped: NonNullable<PartMeshes["skipped"]> = [];
+  let written = 0;
   try {
+  for (const plate of plates.plates) if (plate.parts_truncated)
+    skipped.push({ id: `plate ${plate.index + 1}`, name: plate.name, reason: `${plate.parts_truncated} more parts beyond the first 1000 on this plate were not read` });
   for (const plate of plates.plates) for (const itemIndex of plate.build_items) {
     const item = items[itemIndex];
     if (!item || /\bprintable="(?:0|false)"/.test(item)) continue;
     const objectId = /\bobjectid="(\d+)"/.exec(item)?.[1];
     for (const part of plate.parts.filter(p => String(p.build_object_id) === objectId)) {
-      const id = `${itemIndex + 1}/${part.object_id}`;
+      const file = part.path?.replace(/^\//, "") ?? ROOT;
+      // Each place the object puts this mesh: itself, or every component that names it (one mesh placed twice is two
+      // parts on the plate, like a plain 3MF's pair of wheels).
+      const placements: (string | undefined)[] = String(part.object_id) === objectId ? [undefined]
+        : [...((root as ModelFile).objects.get(objectId ?? "") ?? "").matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)]
+          .map(match => match[1]).filter(attrs => /\bobjectid="(\d+)"/.exec(attrs)?.[1] === String(part.object_id)
+            && (/\b(?:\w+:)?path="\/?([^"]+)"/.exec(attrs)?.[1] ?? ROOT) === file);
+      if (!placements.length) { skipped.push({ id: `${itemIndex + 1}/${part.object_id}`, name: part.name, reason: `its component is missing from object ${objectId}` }); continue; }
+      for (const [copy, component] of placements.entries()) {
+      const id = copy ? `${itemIndex + 1}/${part.object_id}/${copy + 1}` : `${itemIndex + 1}/${part.object_id}`;
       const triangles: number[] = [];
       let problem: string | undefined;
       try {
-      const placed = matrix(/\btransform="([^"]+)"/.exec(item)?.[1]);
-      if (String(part.object_id) === objectId) problem = await collect(read, ROOT, objectId, placed, triangles);
-      else {
-        // The root object's component that is this part, with its own transform.
-        const component = [...((root as ModelFile).objects.get(objectId ?? "") ?? "").matchAll(/<(?:\w+:)?component\b([^>]*)\/?>/g)]
-          .map(match => match[1]).find(attrs => /\bobjectid="(\d+)"/.exec(attrs)?.[1] === String(part.object_id)
-            && (/\b(?:\w+:)?path="\/?([^"]+)"/.exec(attrs)?.[1] ?? ROOT) === (part.path?.replace(/^\//, "") ?? ROOT));
-        problem = component === undefined ? `its component is missing from object ${objectId}`
-          : await collect(read, part.path?.replace(/^\//, "") ?? ROOT, String(part.object_id), compose(matrix(/\btransform="([^"]+)"/.exec(component)?.[1]), placed), triangles);
-      }
+        const placed = matrix(/\btransform="([^"]+)"/.exec(item)?.[1]);
+        problem = component === undefined ? await collect(read, ROOT, objectId!, placed, triangles)
+          : await collect(read, file, String(part.object_id), compose(matrix(/\btransform="([^"]+)"/.exec(component)?.[1]), placed), triangles);
       } catch (error) {
         // A malformed transform spoils this part only: it is listed with why, and the others are still written.
         if (!(error instanceof PartMeshesError)) throw error;
         problem = error.message;
       }
       if (!problem && !triangles.length) problem = "it has no triangles";
+      if (!problem && written + triangles.length / 9 > MAX_TOTAL_TRIANGLES) problem = `the parts before it already fill this call's ${MAX_TOTAL_TRIANGLES} triangles`;
       // The root model's unit covers every model part and transform in the package (3MF core spec, 3.4).
       if (rootScale !== 1) for (let i = 0; i < triangles.length; i++) triangles[i] *= rootScale;
       if (problem) { skipped.push({ id, name: part.name, reason: problem }); continue; }
+      written += triangles.length / 9;
       const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
       for (let i = 0; i < triangles.length; i++) { min[i % 3] = Math.min(min[i % 3], triangles[i]); max[i % 3] = Math.max(max[i % 3], triangles[i]); }
       const stlPath = path.join(folder, `${parts.length + 1}-${slug(part.name)}.stl`);
@@ -246,6 +256,7 @@ export async function partMeshes(args: Record<string, unknown>): Promise<PartMes
         triangles: triangles.length / 9,
         size_mm: [0, 1, 2].map(k => Math.round((max[k] - min[k]) * 1000) / 1000) as [number, number, number],
       });
+      }
     }
   }
   } catch (error) {
@@ -267,7 +278,7 @@ export const PART_MESHES_OUTPUT_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          id: { type: "string", description: "<build item, from 1>/<part's object id>: stable for the same file; a key, not to be parsed." },
+          id: { type: "string", description: "<build item, from 1>/<part's object id>, with /<n> for its second and later placements as a component: stable for the same file; a key, not to be parsed." },
           name: { type: "string" },
           plate: { type: "integer", minimum: 1, description: "Plate number from 1 (list_3mf_plates index + 1); absent without plate metadata." },
           color: { type: "string", pattern: "^#[0-9A-F]{6}$", description: "The filament's colour as the 3MF declares it; absent when it declares none." },

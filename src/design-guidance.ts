@@ -402,7 +402,7 @@ export function slicingGuidance(slicerType: string, capabilities: { supports: bo
     `How this printer MCP slices. Its slicer is ${slicer}.`,
     "- When they could change a decision, read the printer's loaded filaments with get_printer_filaments and its slicing settings with get_slice_settings.",
     "- To check a consequential choice, slice a checkpoint with slice_stl and read its structured slicer_result (return code, error and each plate's warning), not only the file path. A checkpoint is only a check: the print slices the exported model again.",
-    `- Warnings: ${SLICE_WARNING_RULE} For floating regions, slice_stl's result lists where they are (floating_regions: each one's z, depth and box), so aim the one fix there. A warning on a feature that carries load or makes a fit is not cosmetic: fix that one properly.`,
+    `- Warnings: ${SLICE_WARNING_RULE} For floating regions, slice_stl's result lists where they are (floating_regions: each one's z, depth and box), so aim the one fix there.`,
     capabilities.orient
       ? `- Orientation: slice_stl with orient true lets ${slicer}'s own auto-orient choose how an STL sits on the bed. It keeps overhang area low; it does not check cantilevers. To see what it chooses, slice the checkpoint with orient true. When a print is oriented this way, don't promise a particular orientation on the bed: the slicer chooses it.`
       : `- Orientation: ${slicer} doesn't auto-orient here. An STL prints in the orientation it's exported in.`,

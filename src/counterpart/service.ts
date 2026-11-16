@@ -174,12 +174,14 @@ export class CounterpartService {
 
   /**
    * What this MCP can do for the configured printer (scan-to-make #815). The printer is asked for its identity and live
-   * capabilities (layers, pause, camera) within PRINTER_INFO_LIVE_MS (default 2500 ms); when it doesn't answer in time
+   * capabilities (layers, pause, camera) within PRINTER_INFO_LIVE_MS (default 10000 ms); when it doesn't answer in time
    * the answer comes from configuration alone, with live: false, instead of waiting on the printer's own timeouts.
+   * Scan to Make's companion reads this once at connect with a 15 s timeout and keeps a successful answer, so the
+   * default leaves a slow but reachable printer time to answer live and still answers before that timeout.
    */
   async printerInfo(target: PrinterTarget): Promise<CounterpartPrinterInfo> {
-    const raw = Number(process.env.PRINTER_INFO_LIVE_MS?.trim() || 2500);
-    const bound = Number.isFinite(raw) && raw >= 0 && raw <= 60_000 ? raw : 2500;
+    const raw = Number(process.env.PRINTER_INFO_LIVE_MS?.trim() || 10_000);
+    const bound = Number.isFinite(raw) && raw >= 0 && raw <= 60_000 ? raw : 10_000;
     const live = this.livePrinterInfo(target);
     let timer: NodeJS.Timeout | undefined;
     const late = new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), bound); timer.unref?.(); });
