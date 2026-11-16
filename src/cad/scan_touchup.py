@@ -335,7 +335,10 @@ def _regions(V, F, colours, clusters, min_area, max_regions=40):
         normal = (vn[sel] * w[:, None]).sum(0)
         normal /= np.linalg.norm(normal) + 1e-20
         rel = V[sel] - centre
-        span = rel @ np.linalg.svd(rel * np.sqrt(w)[:, None], full_matrices=False)[2].T
+        # The weighted covariance's axes, longest first: always three, so a region of one or two vertices (a coarse
+        # scan's big vertex areas pass min_area) measures as a point or a line, not an IndexError (scan-to-make #858).
+        axes = np.linalg.eigh((rel * w[:, None]).T @ rel)[1][:, ::-1]
+        span = rel @ axes
         around = np.unique(pairs[pairs[:, 0] == rid][:, 1])
         out.append({"id": rid, "colour": "#%02x%02x%02x" % tuple(int(round(v * 255)) for v in colours[sel].mean(0)),
                     "area_mm2": round(float(w.sum()), 1), "centre_mm": [round(float(v), 2) for v in centre],

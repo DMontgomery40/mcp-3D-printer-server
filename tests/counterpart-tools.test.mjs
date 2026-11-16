@@ -143,7 +143,7 @@ test("OctoPrint over MCP: info, progress, filaments and a Classic Webcam snapsho
   assert.equal(info.contract, "counterpart/1");
   assert.equal(info.server.name, "mcp-3d-printer-server");
   assert.deepEqual(info.printer, { kind: "octoprint", host: "127.0.0.1", model: "Prusa i3", name: "Default" });
-  assert.deepEqual(info.capabilities, { cad: CAD_CAPABILITY, progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true, diagnostics: true,
+  assert.deepEqual(info.capabilities, { cad: CAD_CAPABILITY, progress: true, layers: false, camera: "http-snapshot", cameraStream: await cameraNativeAvailable(), filaments: "single", pause: true, resume: true, cancel: true, print3mf: false, gcode: true, diagnostics: true, partMeshes: true,
     slicing: { supports: false, copies: false, orient: false } }, "PrusaSlicer (the default for OctoPrint) takes none of them here");
   const progress = (await call(client, "counterpart_print_progress")).structuredContent;
   assert.equal(progress.state, "printing");
@@ -191,6 +191,28 @@ test("an unreachable printer reports offline, and PrusaLink without an override 
   const snapshot = await client.callTool({ name: "camera_snapshot", arguments: { type: "prusa", port: prusa.port } });
   assert.equal(snapshot.isError, true);
   assert.match(snapshot.content[0].text, /PRINTER_CAMERA_SNAPSHOT_URL/);
+});
+
+// scan-to-make #815: a printer that never answers used to hold counterpart_printer_info for the HTTP client's timeout.
+test("counterpart_printer_info answers from configuration when the printer doesn't answer in time", async (t) => {
+  const silent = createServer(() => { /* accepts and never answers */ });
+  silent.listen(0, "127.0.0.1"); await once(silent, "listening");
+  t.after(() => { silent.closeAllConnections?.(); return new Promise(resolve => silent.close(resolve)); });
+  const port = String(silent.address().port);
+  const { client } = await server(t, { PRINTER_TYPE: "octoprint", PRINTER_PORT: port, PRINTER_INFO_LIVE_MS: "300" });
+  const started = Date.now();
+  const info = (await call(client, "counterpart_printer_info")).structuredContent;
+  assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`);
+  assert.equal(info.live, false);
+  assert.deepEqual(info.printer, { kind: "octoprint", host: "127.0.0.1" });
+  assert.equal(info.capabilities.partMeshes, true);
+  assert.equal(info.capabilities.diagnostics, true);
+  assert.deepEqual([info.capabilities.layers, info.capabilities.pause, info.capabilities.camera], [false, false, "none"]);
+  // A printer that answers gives its own answer, as before, marked live.
+  const prusa = await mock(t, [["/api/v1/status", 200, { printer: { state: "IDLE" } }], ["/api/v1/info", 200, { name: "MK4", serial: "SN123" }]]);
+  const answered = (await call(client, "counterpart_printer_info", { type: "prusa", port: prusa.port })).structuredContent;
+  assert.equal(answered.live, true);
+  assert.deepEqual(answered.printer, { kind: "prusa", host: "127.0.0.1", name: "MK4", serial: "SN123" });
 });
 
 test("PRINTER_CAMERA_SNAPSHOT_URL overrides the source; non-JPEG replies are rejected", async (t) => {

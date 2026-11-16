@@ -243,9 +243,10 @@ class Project3mf:
         if len(self._new) + sum(1 for e in self._edits if 'geometry' in e) >= MAX_PARTS:
             raise ValueError(f'A project takes at most {MAX_PARTS} new or replaced parts.')
 
-    def add_part(self, geometry, *, name, filament=None, object=None, plate=1):
+    def add_part(self, geometry, *, name, filament=None, object=None, plate=1, color=None):
         """Add a part. Editing a 3MF: into the base object `object` (name or id), in that object's frame.
-        A new project: into the object named `object` (default: one object per part's name) on `plate`."""
+        A new project: into the object named `object` (default: one object per part's name) on `plate`, with an
+        optional color '#RRGGBB' (give every part one, or none): the 3MF then declares each filament's colour."""
         self._count()
         name = _name(name, 'name')
         geometry = _geometry(geometry, f'Part {name!r}')
@@ -257,15 +258,19 @@ class Project3mf:
                 raise ValueError(f'Object {target.name!r} is one mesh without parts (a plain 3MF): only a Bambu Studio or OrcaSlicer project\'s objects take new parts.')
             if plate != 1:
                 raise ValueError('Editing a 3MF, a new part sits on its object\'s plate; plate cannot be set.')
+            if color is not None:
+                raise ValueError('Editing a 3MF, its filaments keep their own colours; color applies to a new project.')
             self._edits.append({'op': 'add_part', 'object_id': target.id, 'name': name,
                                 'filament': self._declared(filament if filament is not None else (target.parts[0].filament if target.parts else 1), 'filament'),
                                 'geometry': geometry})
         else:
             if isinstance(plate, bool) or not isinstance(plate, int) or not 1 <= plate <= MAX_PLATES:
                 raise ValueError(f'plate must be an integer from 1 to {MAX_PLATES}.')
+            if color is not None and not (isinstance(color, str) and re.fullmatch(r'#[0-9A-Fa-f]{6}', color)):
+                raise ValueError('color must be a colour as #RRGGBB.')
             self._new.append({'object': _name(object, 'object') if object is not None else name, 'plate': plate, 'name': name,
                               'filament': _filament(filament if filament is not None else len(self._new) + 1, 'filament'),
-                              'geometry': geometry})
+                              'geometry': geometry, **({'color': color.upper()} if color else {})})
         return self
 
     def _base_part(self, part):
@@ -404,7 +409,7 @@ def export(project, out, mode):
                 raise ValueError(f'Object {key!r} has parts on two plates; one object sits on one plate.')
             index, mesh = stl(part['geometry'])
             objects.setdefault(key, {'name': key, 'plate': part['plate'], 'parts': []})['parts'].append(
-                {'stl': index, 'name': part['name'], 'filament': part['filament']})
+                {'stl': index, 'name': part['name'], 'filament': part['filament'], **({'color': part['color']} if 'color' in part else {})})
             meshes.setdefault(key, []).append(mesh)
         for key in objects:
             combined += _fused(meshes[key])

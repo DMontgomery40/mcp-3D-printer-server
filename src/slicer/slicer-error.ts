@@ -1,3 +1,4 @@
+import { FilamentSlotsError } from "../refusal.js";
 import { plainSlicerError, UNKNOWN_SLICER_ERROR } from "./slicer-messages.js";
 /**
  * Slicer failures carry their own phase and actionable suggestion so the MCP
@@ -70,6 +71,9 @@ export class SlicerError extends Error {
   /** This server's own description of the failure, without the plain sentence or the slicer's words. */
   readonly detail: string;
 
+  /** A refusal with its own structured answer that preparation stopped on (more colours than filament slots). */
+  refusal?: FilamentSlotsError;
+
   constructor(phase: SlicerFailurePhase, message: string, details: SlicerFailureDetails = {}, readonly slicerResult?: SlicerResult) {
     const slicerText = slicerResult ? slicerResultText(slicerResult) : "";
     const output = [slicerText, details.stderrTail, details.stdoutTail].filter(Boolean).join("\n");
@@ -101,5 +105,8 @@ export function tailText(text: string, maxLines = 25, maxChars = 4000): string {
 export function asPreparationError(error: unknown, details: SlicerFailureDetails): SlicerError {
   if (error instanceof SlicerError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  return new SlicerError("preparation", `Slicer preparation failed: ${message}`, details);
+  const wrapped = new SlicerError("preparation", `Slicer preparation failed: ${message}`, details);
+  // Kept so a refusal with its own structured answer still reaches the client.
+  if (error instanceof FilamentSlotsError) wrapped.refusal = error;
+  return wrapped;
 }

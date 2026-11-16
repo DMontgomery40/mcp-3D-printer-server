@@ -159,3 +159,19 @@ test("fdm_slicing says how the configured slicer orients, makes supports and che
   assert.match(orcaText, /OrcaSlicer doesn't auto-orient here/);
   assert.match(orcaText, /set enable_support on every slice_stl call/);
 });
+// scan-to-make #859: a pass spent 18 minutes rebuilding and re-slicing to chase one floating-regions warning, and
+// another 42 minutes planning before its first geometry.
+test("the guidance builds early and stops chasing a cosmetic slicer warning after one aimed fix", () => {
+  for (const text of [FDM_CORE, FDM_AFTER_SLICE]) assert.match(text, /A cosmetic (slicer )?warning \(floating regions, small islands\) gets one targeted fix and one re-slice, then stops: report what remains, or slice with supports on/);
+  assert.match(FDM_AFTER_SLICE, /never loop rebuild and re-slice to chase it/);
+  for (const [slicer, supports] of [["bambustudio", true], ["prusaslicer", false]]) {
+    const text = slicingGuidance(slicer, { supports, orient: supports });
+    assert.match(text, /- Warnings: A cosmetic warning \(floating regions, small islands\) gets one targeted fix and one re-slice, then stops/);
+    assert.match(text, /floating_regions: each one's z, depth and box/);
+    assert.match(text, /A warning on a feature that carries load or makes a fit is not cosmetic/);
+  }
+  assert.match(FDM_CORE, /the first geometry is how you check a plan, not the reward for finishing one/);
+  assert.match(FDM_CORE, /Write the concept down in a few lines, with the first build rather than as a plan before it/);
+  assert.doesNotMatch(FDM_CORE, /before any geometry/);
+  assert.match(FDM_MULTICOLOR, /its colour parts come from the same cad_run as the model/);
+});

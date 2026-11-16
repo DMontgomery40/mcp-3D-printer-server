@@ -80,6 +80,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   list_3mf_plates: read(false),
   list_3mf_plate_objects: read(false),
   counterpart_make_3mf: write(false, false, false), // writes a new 3MF; never overwrites
+  counterpart_part_meshes: write(false, false, false), // a new folder of STLs each call; never overwrites
 
   // FULU BambuNetwork.
   check_fulu_orca_setup: read(true), // run_bridge_probe starts FULU's bridge host

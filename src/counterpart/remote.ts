@@ -68,6 +68,7 @@ export const REMOTE_SCOPES: Readonly<Record<string, RemoteScope>> = {
   center_model: "design",
   lay_flat: "design",
   counterpart_make_3mf: "design",
+  counterpart_part_meshes: "design",
   // control
   cancel_print: "control",
   camera_stream_start: "control",

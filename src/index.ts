@@ -49,7 +49,7 @@ import { PrinterFactory } from "./printers/printer-factory.js";
 import { STLManipulator, SUPPORT_TYPES, type BambuSliceOptions, type ProcessOverrides, type SliceOutput } from "./stl/stl-manipulator.js";
 import { parsePauseLayers, readPlateGcode, pausedLayers, machinePauseGcode } from "./slicer/layer-pauses.js";
 import { PRINT_QUALITY_PROPERTIES, withPrintQuality } from "./slicer/print-quality.js";
-import { PrinterRefusal, withPrintDispatch, markPrintCommandSent, printOutcome } from "./refusal.js";
+import { FilamentSlotsError, PrinterRefusal, withPrintDispatch, markPrintCommandSent, printOutcome } from "./refusal.js";
 import { uploadProgressReporter } from "./upload-progress.js";
 import { isBambuProjectSlicer, usesBambuCli } from "./slicer/capabilities.js";
 import { CounterpartService, type BambuControlRoute, type PrinterTarget } from "./counterpart/service.js";
@@ -57,6 +57,7 @@ import {CAMERA_STREAM_TOOLS} from "./counterpart/camera-tools.js";
 import { annotateTools } from "./tool-annotations.js";
 import { withRemote } from "./counterpart/remote.js";
 import { refusalReport, slicedFileFacts, slicerReport } from "./counterpart/sliced-file.js";
+import { floatingWarningFacts } from "./slicer/floating-regions.js";
 import { listModelPlates } from "./counterpart/model-plates.js";
 
 /** The slicer's verdict beside its result.json (`slicer_report`). */
@@ -84,6 +85,7 @@ import {
   PRINTER_INFO_OUTPUT_SCHEMA,
 } from "./counterpart/contract.js";
 import { makeCounterpart3mf } from "./counterpart/make-3mf.js";
+import { partMeshes, PART_MESHES_OUTPUT_SCHEMA } from "./counterpart/part-meshes.js";
 import { SlicerError } from "./slicer/slicer-error.js";
 import {
   inspectSliceSettings,
@@ -576,7 +578,7 @@ const PRINTER_TARGET_PROPERTIES = {
 const OUTPUT_SCHEMA_TOOLS = new Set([
   "cad_status", "cad_setup", "cad_run", "cad_check_fit", "cad_examples",
   "counterpart_discover_printers", "counterpart_setup_fields", "counterpart_propose_filaments",
-  "counterpart_printer_info", "counterpart_self_check", "counterpart_diagnostics", "counterpart_print_progress", "counterpart_make_3mf", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
+  "counterpart_printer_info", "counterpart_self_check", "counterpart_diagnostics", "counterpart_print_progress", "counterpart_make_3mf", "counterpart_part_meshes", "camera_snapshot", "get_printer_filaments", "pause_print", "resume_print",
   "camera_stream_start", "camera_frame", "camera_stream_stop",
   "fusion_mcp_status", "fusion_mcp_call", "fusion_mcp_new_design", "fusion_mcp_export",
   "blender_mcp_setup", "fusion_mcp_setup", "connect_printer", "octoprint_request_api_key",
@@ -890,6 +892,9 @@ type StructuredToolError = {
   slicer?: Record<string, unknown>;
   /** The slicer's own result.json, verbatim. */
   slicer_result?: Record<string, unknown>;
+  /** needs-more-filaments: the design's colours and the filament slots there were to slice it with. */
+  filament_slots?: { colours: number; slots: number };
+  slicer_report?: { failed: boolean; message?: string; slicer_message?: string };
 };
 
 const SLICING_TOOLS = new Set(["slice_stl", "slice_with_template", "list_templates", "save_template", "get_slice_settings"]);
@@ -1910,7 +1915,8 @@ class ThreeDPrinterMCPServer {
                     properties: {
                       stl_path: { type: "string", description: "Path to the part's STL file." },
                       name: { type: "string", description: "The part's name, shown in the slicer." },
-                      filament: { type: "integer", minimum: 1, maximum: 64, description: "1-based project filament for this part; defaults to the part's position (1, 2, ...)." }
+                      filament: { type: "integer", minimum: 1, maximum: 64, description: "1-based project filament for this part; defaults to the part's position (1, 2, ...)." },
+                      color: { type: "string", pattern: "^#[0-9A-Fa-f]{6}$", description: "The part's colour as #RRGGBB. Give every part one, or none: the 3MF then declares each filament's colour (project_settings.config filament_colour), as Bambu Studio does, and parts on one filament share it." }
                     },
                     required: ["stl_path", "name"],
                     additionalProperties: false
@@ -1922,6 +1928,20 @@ class ThreeDPrinterMCPServer {
               additionalProperties: false
             },
             outputSchema: MAKE_3MF_OUTPUT_SCHEMA
+          },
+          {
+            name: "counterpart_part_meshes",
+            description: "Counterpart contract (counterpart/1): one STL per printable part of any 3MF (a pass's, counterpart_make_3mf's, cad_run's project_3mf, or a designer's Bambu Studio, OrcaSlicer or plain 3MF), so a client draws each part in its colour or shows the design in AR. Writes into a new folder it creates inside out_dir and never overwrites. Returns units (mm), folder and parts: [{id, name, plate?, color?, filament?, painted?, stl_path, triangles, size_mm}], one per part per printed copy. Every STL is in the 3MF's build frame in millimetres, component and build transforms applied, so the parts line up when drawn together; plate is the plate number from 1 (list_3mf_plates index + 1), absent for a 3MF without plates; color is #RRGGBB from the 3MF's own filament colours, absent when it declares none; painted means slicer painting recolours some facets. A part beyond the read limits is listed in skipped with why.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                three_mf_path: { type: "string", description: "Path to the 3MF." },
+                out_dir: { type: "string", description: "An existing folder; each call writes into a new subfolder of it." }
+              },
+              required: ["three_mf_path", "out_dir"],
+              additionalProperties: false
+            },
+            outputSchema: PART_MESHES_OUTPUT_SCHEMA
           },
           {
             name: "get_printer_filaments",
@@ -2054,7 +2074,7 @@ class ThreeDPrinterMCPServer {
               "Slice an STL or 3MF file to generate G-code or a sliced 3MF. For Bambu-compatible CLI slicing " +
               "(bambustudio, orcaslicer-bambulab, or orcaslicer with bambu_model), the exact bambu_model/nozzle machine " +
               "preset from the selected slicer installation is required, profile inheritance is resolved before the CLI " +
-              "runs, and the result must contain plate G-code. Failures stop with the slicer's exit status and output. A 3MF that carries its own process settings (a designer's Bambu Studio or Orca project) slices with them unless slicer_profile, template_name or template_3mf_path is given; the machine still comes from bambu_model. quality and strength adjust that process, and strength never lowers its walls or infill.",
+              "runs, and the result must contain plate G-code. Failures stop with the slicer's exit status and output. A 3MF that carries its own process settings (a designer's Bambu Studio or Orca project) slices with them unless slicer_profile, template_name or template_3mf_path is given; the machine still comes from bambu_model. quality and strength adjust that process, and strength never lowers its walls or infill. When a slice that worked warns of floating regions, structuredContent.next carries the stop rule (one targeted fix and one re-slice, then report it or slice with supports on) and, for an STL the slicer did not turn, structuredContent.floating_regions lists where they are: x and y in the STL's own millimetres, z above its lowest point, and depth_mm, how far each hangs below where it joins the rest.",
             inputSchema: {
               type: "object",
               properties: {
@@ -2940,6 +2960,9 @@ class ThreeDPrinterMCPServer {
           case "counterpart_make_3mf":
             return structured(await makeCounterpart3mf(args ?? {}));
 
+          case "counterpart_part_meshes":
+            return structured(await partMeshes(args ?? {}));
+
           case "camera_snapshot": {
             if (args?.save_path !== undefined && typeof args.save_path !== "string") throw new Error("Invalid save_path: expected a string.");
             if (args?.timeout_ms !== undefined && typeof args.timeout_ms !== "number") throw new Error("Invalid timeout_ms: expected a number.");
@@ -3208,8 +3231,14 @@ class ThreeDPrinterMCPServer {
           case "slice_stl": {
             const sliced = await this.runSliceTool("slice_stl", args as Record<string, unknown> | undefined);
             // The text stays the sliced file's path; slicer_result is the slicer's own result.json, verbatim, and
-            // slicer_report its verdict and words, so clients don't read the slicer's format.
-            return { content: [{ type: "text", text: sliced.path }], structuredContent: withSlicerReport(sliced) };
+            // slicer_report its verdict and words, so clients don't read the slicer's format. A warning about floating
+            // regions comes with where they are and the rule that bounds chasing it (scan-to-make #859).
+            const reported = withSlicerReport(sliced);
+            // Turned or scaled by the slicer: the STL's own coordinates would no longer match the slice.
+            const turned = Boolean(args?.orient) || [args?.rotate, args?.rotate_x, args?.rotate_y].some(r => r !== undefined && Number(r) !== 0)
+              || (args?.scale !== undefined && Number(args.scale) !== 1);
+            const located = await floatingWarningFacts(reported.slicer_report, String(args?.stl_path), turned);
+            return { content: [{ type: "text", text: sliced.path }], structuredContent: { ...reported, ...located } };
           }
 
           case "slice_with_template":
@@ -4132,6 +4161,20 @@ class ThreeDPrinterMCPServer {
   }
 
   private toStructuredToolError(tool: string, message: string, error?: unknown): StructuredToolError {
+    // A design in more colours than filaments to slice it with: the counts and the plain answer a client shows (#858).
+    const slots = error instanceof FilamentSlotsError ? error : error instanceof SlicerError ? error.refusal : undefined;
+    if (slots) {
+      return {
+        status: "error",
+        retryable: false,
+        suggestion: "Load the design's colours in an AMS, or slice it in one colour.",
+        message,
+        tool,
+        code: slots.code,
+        filament_slots: { colours: slots.colours, slots: slots.slots },
+        slicer_report: { failed: true, message: slots.plain, slicer_message: `${slots.colours} filament colours were supplied for ${slots.slots} filament slots.` },
+      };
+    }
     // Slicer failures are local profile/slicer problems, never printer connectivity.
     if (error instanceof SlicerError) {
       return {

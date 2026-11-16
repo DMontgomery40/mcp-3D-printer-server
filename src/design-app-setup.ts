@@ -169,6 +169,8 @@ export type BlenderSetupReport = {
   target_problem?: "not-installed" | "several-modules";
   /** What the person can do, in plain words, when the add-on can't be checked or updated here (reason, target_problem). */
   message?: string;
+  /** not-configured: the server settings that connect Blender, for a setup screen or a log; never shown as the message. */
+  settings?: string[];
   /** The installed file's protocol is what the package expects. */
   current?: boolean;
   /** Set by update. */
@@ -179,7 +181,8 @@ export type BlenderSetupReport = {
 type Installer = { command: string; packageSpec: string; packageName: string };
 
 const UNSUPPORTED_MESSAGES: Record<NonNullable<BlenderSetupReport["reason"]>, string> = {
-  "not-configured": "This printer MCP has no Blender bridge configured (BLENDER_MCP_COMMAND and BLENDER_MCP_ARGS). Set it up for MCP for Blender, then check again.",
+  // Shown as it is to a new tester (scan-to-make #851): plain words; the settings it needs are in `settings`.
+  "not-configured": "Blender isn't connected to your printer software yet. Scan cleanup can use it once it is; printing never needs it.",
   "custom-command": "This Blender bridge uses its own command, so its add-on is updated with that bridge's installer.",
   "custom-package": "This Blender bridge uses its own package, so its add-on is updated with that bridge's installer.",
 };
@@ -249,7 +252,8 @@ export class BlenderAddonSetup {
     const installer = configuredInstaller(this.env);
     const { host, port } = blenderAddress(this.env);
     const listening = await this.system.listening(host, port);
-    if ("reason" in installer) return { supported: false, reason: installer.reason, listening, message: UNSUPPORTED_MESSAGES[installer.reason] };
+    if ("reason" in installer) return { supported: false, reason: installer.reason, listening, message: UNSUPPORTED_MESSAGES[installer.reason],
+      ...(installer.reason === "not-configured" ? { settings: ["BLENDER_MCP_COMMAND", "BLENDER_MCP_ARGS"] } : {}) };
     let live: BlenderAddonHandshake | null | undefined, liveError: string | undefined;
     if (listening) {
       try { live = (await this.handshake()) ?? null; }
@@ -320,6 +324,7 @@ export const BLENDER_SETUP_OUTPUT_SCHEMA = {
   properties: {
     supported: { type: "boolean", description: "The configured bridge is the upstream MCP for Blender package run with uvx, so this tool can check and update its add-on." },
     reason: { type: "string", enum: ["not-configured", "custom-command", "custom-package"] },
+    settings: { type: "array", items: { type: "string" }, description: "not-configured: the server settings that connect Blender (BLENDER_MCP_COMMAND, BLENDER_MCP_ARGS)." },
     package: { type: "string", description: "The package as BLENDER_MCP_ARGS names it." },
     package_version: { type: "string" },
     expected_protocol: { type: "integer", description: "The add-on protocol the package needs." },
