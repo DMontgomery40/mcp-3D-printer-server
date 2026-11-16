@@ -1,7 +1,7 @@
 {
     "name": "mcp-3d-printer-server",
     "mcpName": "io.github.DMontgomery40/mcp-3d-printer-server",
-    "version": "1.2.77",
+    "version": "1.2.78",
     "description": "MCP server for connecting Claude with 3D printer management systems",
     "counterpart": {
         "contract": "counterpart/1",

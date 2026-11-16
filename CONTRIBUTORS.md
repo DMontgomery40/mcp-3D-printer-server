@@ -6,6 +6,7 @@ Thank you to everyone who builds, tests, reports problems, and shares real print
 
 | Contributor | Contribution |
 | --- | --- |
+| [David Montgomery (DMontgomery40)](https://github.com/DMontgomery40) | Reports Fusion’s stalled command path despite successful status reads in [Bambu #167](https://github.com/DMontgomery40/bambu-printer-mcp/issues/167), leading to bounded no-op readiness checks in both servers. Fixture and source validation; no live Fusion test is claimed. |
 | [Adam (@adamkaplan)](https://github.com/adamkaplan) | Supplies H2C serial/status evidence in [fork #47](https://github.com/DMontgomery40/bambu-printer-mcp/issues/47) and exact Bambu Studio 02.08 startup/template reproductions in [fork #48](https://github.com/DMontgomery40/bambu-printer-mcp/issues/48), ported here with fresh identity and bounded file-inspection regressions. No maintainer physical H2C print is claimed. |
 | [Izzy Mansurov (sapoepsilon)](https://github.com/sapoepsilon) | Implements P2S extruder-variant and airduct inspection in [fork #33](https://github.com/DMontgomery40/bambu-printer-mcp/pull/33). Original code authorship is retained in the port, alongside unsafe-file and selected-header regressions; hardware printing is not claimed. |
 | [JaviOFC](https://github.com/JaviOFC) | Provides X2D firmware/status evidence in [fork #36](https://github.com/DMontgomery40/bambu-printer-mcp/issues/36) demonstrating that a cloud job identifier in model_id is not a printer declaration. The observed-identity correction and conflict regressions are ported here. |

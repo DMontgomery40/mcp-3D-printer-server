@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.78] – 2026-11-16
+
+### Fixed
+
+- Detect Fusion command-path hangs even when ping and the active-design read succeed. `fusion_mcp_status` runs a fresh no-op through the pinned add-in’s mutation handler within five seconds and reports `responsive`, `state` (`starting`, `ready`, `unresponsive`) and a plain `reason`. It uses Fusion’s own startup flag, closes failed sessions without replay and never opens or edits a document. Thanks to David Montgomery for [Bambu issue #167](https://github.com/DMontgomery40/bambu-printer-mcp/issues/167). Validated with isolated MCP fixtures and pinned add-in source, not live Fusion or physical printers.
+
 ## [1.2.77] – 2026-11-15
 
 ### Added

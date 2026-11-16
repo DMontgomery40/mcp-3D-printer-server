@@ -36,6 +36,7 @@ export const FUSION_MCP_DEFAULT_ARGS = [
 /** PRD §8.9: Blender's MCP addon holds the add-in's own default, 9876, so Fusion uses 9877. */
 export const FUSION_ADDIN_DEFAULT_PORT = 9877;
 const DEFAULT_TIMEOUT_MS = 180_000;
+const STATUS_PROBE_TIMEOUT_MS = 5_000;
 const LAUNCH_WAIT_MS = 90_000;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
@@ -273,8 +274,8 @@ export class FusionMcpBridge {
   }
 
   /**
-   * {configured, connected, addinReachable, fusionRunning, tools[]}. connected
-   * means the server started and the add-in answered its ping. With launch:
+   * Readiness includes a bounded no-op through the add-in's command handler.
+   * No document is opened or edited. With launch:
    * true and Fusion not running on this Mac, opens Fusion and waits up to 90 s
    * for the add-in port.
    */
@@ -309,15 +310,23 @@ export class FusionMcpBridge {
     }
     // Off macOS, or with Fusion on another computer, the add-in answering is the evidence that Fusion runs.
     const fusionRunning = processRunning === true || addinReachable;
-    const result: Record<string, unknown> = { configured, connected: false, addinReachable, fusionRunning, tools: [], launched, transport: "stdio", pin: FUSION_MCP_PINNED_COMMIT };
+    const result: Record<string, unknown> = { configured, connected: false, responsive: false, state: "unresponsive",
+      reason: configured ? "Fusion isn't responding on your Mac. Restart Fusion, then Try Again." : "Set up the Fusion MCP connection first.", addinReachable, fusionRunning, tools: [], launched, transport: "stdio", pin: FUSION_MCP_PINNED_COMMIT };
     if (!configured) return result;
+    const expires = performance.now() + Math.min(timeout, STATUS_PROBE_TIMEOUT_MS);
+    const remaining = () => {
+      if (signal?.aborted) throw new FusionError("Fusion readiness check cancelled.");
+      const ms = Math.ceil(expires - performance.now());
+      if (ms <= 0) throw new FusionError("Fusion readiness check timed out.");
+      return ms;
+    };
     try {
-      const session = await this.connect(timeout, signal);
+      const session = await this.connect(remaining(), signal);
       result.tools = session.tools;
       result.server = session.client.getServerVersion();
       // faust's ping answers through the add-in without touching Fusion's API.
       if (addinReachable && session.tools.some((tool) => tool.name === "ping")) {
-        result.connected = !(await this.invoke("ping", {}, Math.min(timeout, 15_000), signal)).isError;
+        result.connected = !(await this.invoke("ping", {}, remaining(), signal)).isError;
       }
       // Whether a design is open, from the add-in itself. get_design_type reads the active document's Design product
       // (the add-in's _design(), as every design command does) and changes nothing; with no design it fails with the
@@ -325,12 +334,35 @@ export class FusionMcpBridge {
       if (result.connected === true && session.tools.some((tool) => tool.name === "get_design_type")) {
         let read: CallToolResult;
         // A read that didn't finish (timeout, cancel, lost connection): Fusion isn't usable now, and status says why.
-        try { read = await this.invoke("get_design_type", {}, Math.min(timeout, 15_000), signal); }
+        try { read = await this.invoke("get_design_type", {}, remaining(), signal); }
         catch (error) { result.connected = false; throw error; }
         if (!read.isError) result.activeDesign = true;
         else if (errorKind(read, "get_design_type") === "NO_ACTIVE_DESIGN") result.activeDesign = false;
       }
+      if (result.connected === true) {
+        // execute_code traverses the pinned add-in's mutation snapshots and command handler.
+        // A nonce-bound no-op tests that path without opening or editing a document.
+        const nonce = randomUUID();
+        const code = `# MCP3D_FUSION status_probe
+import json
+json.dumps({"status_probe": True, "nonce": "${nonce}", "startupComplete": app.isStartupComplete})`;
+        const probe = await this.invoke("execute_code", { code }, remaining(), signal);
+        if (errorKind(probe, "execute_code") === "NO_ACTIVE_DESIGN") {
+          result.activeDesign = false;
+          result.reason = "Open a design in Fusion, then Try Again.";
+          return result;
+        }
+        if (probe.isError) throw new FusionError("Fusion's command readiness probe failed.");
+        const receipt = executeCodeJson(probe, "status_probe");
+        if (receipt.nonce !== nonce || typeof receipt.startupComplete !== "boolean") throw new FusionError("Fusion returned an invalid readiness receipt.");
+        result.responsive = receipt.startupComplete;
+        result.connected = receipt.startupComplete;
+        result.state = receipt.startupComplete ? "ready" : "starting";
+        result.reason = receipt.startupComplete ? "Fusion's command path is responding." : "Fusion is still starting. Finish any sign-in or update dialog, then Try Again.";
+      }
     } catch (error) {
+      result.connected = false;
+      await this.close(); // A cutoff command is never replayed or reused on the next check.
       result.error = error instanceof Error ? error.message : String(error);
     }
     return result;
@@ -489,7 +521,10 @@ export const FUSION_STATUS_OUTPUT_SCHEMA = {
   type: "object" as const,
   properties: {
     configured: { type: "boolean", description: "FUSION_MCP_COMMAND is set." },
-    connected: { type: "boolean", description: "The Fusion MCP server started and the add-in answered its ping." },
+    connected: { type: "boolean", description: "The add-in answers and its command probe has not failed. Check state/ responsive for design readiness and activeDesign for an open document." },
+    responsive: { type: "boolean", description: "A fresh no-op through execute_code completed and Fusion reports startup complete; this does not guarantee a later design operation succeeds." },
+    state: { type: "string", enum: ["starting", "ready", "unresponsive"], description: "starting comes from Fusion's own isStartupComplete flag, ready requires the command probe, unresponsive means readiness could not be verified. See reason." },
+    reason: { type: "string", description: "Plain explanation and next step, provided by the MCP rather than inferred by clients." },
     addinReachable: { type: "boolean", description: "The Fusion360MCP add-in answered a ping on FUSION_MCP_HOST:FUSION_MCP_PORT (default localhost:9877) within 2 s. Another program on that port, such as Blender's MCP addon, does not count." },
     fusionRunning: { type: "boolean" },
     activeDesign: { type: "boolean", description: "When connected: whether Fusion has a design open, from the add-in's read-only get_design_type (false is its NO_ACTIVE_DESIGN). The pinned add-in refuses every design command, fusion_mcp_new_design included, without one (faust issue #12). Absent when unknown." },
@@ -500,7 +535,7 @@ export const FUSION_STATUS_OUTPUT_SCHEMA = {
     server: { type: "object" },
     error: { type: "string" },
   },
-  required: ["configured", "connected", "addinReachable", "fusionRunning", "tools"],
+  required: ["configured", "connected", "responsive", "state", "reason", "addinReachable", "fusionRunning", "tools"],
 };
 
 /** fusion_mcp_call passes the remote result through: its structuredContent, else an empty object. */
