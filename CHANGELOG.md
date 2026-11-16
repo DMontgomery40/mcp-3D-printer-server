@@ -8,7 +8,7 @@
   - It returns `units: "mm"`, `folder` and `parts: [{id, name, plate?, color?, filament?, painted?, stl_path, triangles, size_mm}]`.
   - Each STL is in the 3MF's build frame, with component transforms, build-item transforms and the model's unit applied, so the parts line up when drawn together.
   - `color` is the 3MF's own filament colour. A part beyond the read limits is listed in `skipped` with the reason.
-  - One mesh placed twice as a component gives two parts. One call writes at most 4 million triangles; the rest go in `skipped`.
+  - One mesh placed twice as a component gives two parts. A mirrored placement keeps its surface facing out. One call writes at most 4 million triangles; the rest go in `skipped`.
   - `list_3mf_plates` adds `components` to a part its object places more than once, and `parts_truncated` to a plate with more than 1000 parts. A plain 3MF's part names come from its objects' own names.
   - `counterpart_printer_info` advertises it as `capabilities.partMeshes`.
   - Tested with a hand-built two-plate project (sub-file components, a rotated copy, a modifier, a non-printable item, centimetre units) and with the DAD pass's own 3MF: two parts, read in under a second. Refs DMontgomery40/scan-to-make#691 and #845.
@@ -24,6 +24,7 @@
 
 - `measure_scan(scan)` in `cad_run` scripts measures a captured object once, before any design (scan-to-make #859; the DAD pass wrote two measuring scripts of its own).
   - It keeps the scan's main piece and removes the turntable or support it stands on (its plane fitted, even when tilted) and any floating pieces.
+  - Removed pieces count nowhere in the size or profile, and the profile is the surface's own cross-section at each height, so a mesh of large triangles still has one.
   - It removes a support only when it is round and well wider than what stands on it. When it does, the result also gives `uncut_size_mm` and a note to check the photos, since the cut piece may be the object's own base. A lamp's own square base is kept.
   - It prints `scan_measure`: the object's size in its own frame (long side on x), its length and depth at ten heights, and what it removed. It saves `scan-measure.png`, the silhouettes from three sides with 10 mm ticks, and returns the object alone as a mesh.
   - `cad_design` tells the worker to design from it.

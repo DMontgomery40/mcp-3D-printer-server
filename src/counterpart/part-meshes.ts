@@ -137,8 +137,11 @@ async function collect(read: ReturnType<typeof modelReader>, file: string, id: s
   if (mesh) {
     const parsedMesh = parseMesh(model, file, id, mesh);
     if (typeof parsedMesh === "string") return parsedMesh;
-    const t = transform, v = parsedMesh.vertices;
-    for (const c of parsedMesh.corners) {
+    const t = transform, v = parsedMesh.vertices, corners = parsedMesh.corners;
+    // A mirroring placement (negative determinant) turns the surface inside out: each triangle's winding is reversed.
+    const mirrored = t[0] * (t[4] * t[8] - t[5] * t[7]) - t[1] * (t[3] * t[8] - t[5] * t[6]) + t[2] * (t[3] * t[7] - t[4] * t[6]) < 0;
+    for (let i = 0; i < corners.length; i += 3) for (const k of mirrored ? [0, 2, 1] : [0, 1, 2]) {
+      const c = corners[i + k];
       const x = v[c * 3], y = v[c * 3 + 1], z = v[c * 3 + 2];
       out.push(x * t[0] + y * t[3] + z * t[6] + t[9], x * t[1] + y * t[4] + z * t[7] + t[10], x * t[2] + y * t[5] + z * t[8] + t[11]);
     }

@@ -76,6 +76,20 @@ with tempfile.TemporaryDirectory() as tmp:
     assert plain["support_removed"] is None and plain["pieces_removed"] == [], plain
     assert near(plain["size_mm"], [120, 30, 50], 0.01), plain["size_mm"]
     assert plain["volume_mm3"] and abs(plain["volume_mm3"] - 120 * 30 * 50) < 1, plain["volume_mm3"]
+    # A box of twelve triangles still has a profile: the surface's cross-section at each height (Codex review, #169).
+    assert len(plain["profile"]) == 10 and all(near([p["length_mm"], p["depth_mm"]], [120, 30], 0.01) for p in plain["profile"]), plain["profile"]
+
+    # Debris and no turntable: the removed pieces count nowhere (Codex review, #169). A box with a speck 40 mm below
+    # it and another 200 mm off to the side.
+    scattered = trimesh.util.concatenate([mesh(mf.Manifold.cube((120, 30, 50))), mesh(mf.Manifold.cube((2, 2, 2)).translate((10, 10, -40))),
+                                          mesh(mf.Manifold.cube((3, 3, 3)).translate((300, 0, 20)))])
+    for support in (True, False):
+        with redirect_stdout(StringIO()):
+            clean = measure_scan(scattered, picture=None, support=support)
+        assert near(clean["size_mm"], [120, 30, 50], 0.01), (support, clean["size_mm"])
+        assert clean["pieces_removed_count"] == 2 and clean["support_removed"] is None, clean
+        assert near([clean["mesh"].bounds[0, 2], clean["mesh"].bounds[1, 2]], [0, 50], 0.01), clean["mesh"].bounds
+        assert all(near([p["length_mm"], p["depth_mm"]], [120, 30], 0.01) for p in clean["profile"]), clean["profile"]
 
     real = None
     if os.environ.get("DAD_SCAN_MESH"):

@@ -167,3 +167,25 @@ test("counterpart_part_meshes gives every placement of a mesh, plain 3MF names, 
   const listed = await listModelPlates(source);
   assert.deepEqual(listed.plates[0].parts, [{ object_id: 1, build_object_id: 10, name: "Wheel", filament: 1, components: 2 }]);
 });
+
+// Codex review of #169: a mirroring placement (negative determinant) keeps the surface facing outward.
+test("counterpart_part_meshes reverses the winding of a mirrored placement so the part still faces out", async t => {
+  const dir = folder(t);
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", "<Types/>");
+  zip.file("3D/3dmodel.model", `<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>
+    <object id="1" type="model" name="Left">${CUBE}</object></resources>
+    <build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/><item objectid="1" transform="-1 0 0 0 1 0 0 0 1 -5 0 0"/></build></model>`);
+  const source = path.join(dir, "mirror.3mf");
+  fs.writeFileSync(source, await zip.generateAsync({ type: "nodebuffer" }));
+  const result = await partMeshes({ three_mf_path: source, out_dir: dir });
+  // The signed volume of a closed, outward-wound mesh is positive: 1 mm^3 for both the cube and its mirror image.
+  const signedVolume = file => {
+    const v = stlTriangles(fs.readFileSync(file));
+    let sum = 0;
+    for (let i = 0; i < v.length; i += 9) sum += (v[i] * (v[i + 4] * v[i + 8] - v[i + 5] * v[i + 7]) - v[i + 1] * (v[i + 3] * v[i + 8] - v[i + 5] * v[i + 6]) + v[i + 2] * (v[i + 3] * v[i + 7] - v[i + 4] * v[i + 6])) / 6;
+    return Math.round(sum * 1000) / 1000;
+  };
+  assert.deepEqual(result.parts.map(p => signedVolume(p.stl_path)), [1, 1]);
+  assert.deepEqual(result.parts.map(p => bounds(p.stl_path).min[0]), [0, -6]);
+});

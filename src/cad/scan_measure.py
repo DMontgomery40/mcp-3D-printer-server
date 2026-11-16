@@ -141,6 +141,8 @@ def measure_scan(scan, picture="scan-measure.png", support=True, levels=10):
         V = V + [point[0], point[1], 0.0]
     body_faces = body[F].all(1)
     obj = trimesh.Trimesh(V, F[body_faces], process=False)
+    # process=False keeps every vertex: the removed pieces' would otherwise still count in the floor, size and profile.
+    obj.remove_unreferenced_vertices()
     if plane is not None:
         # What stands on the support: cut 0.5 mm above its plane, then the largest connected piece above the cut.
         try:
@@ -168,12 +170,15 @@ def measure_scan(scan, picture="scan-measure.png", support=True, levels=10):
     # The whole main piece in the same frame, support included: the size if the cut piece was the object's own base.
     whole = (V[body] - [0, 0, floor]) @ R.T
     uncut = np.ptp(whole, axis=0)
+    # The surface's own cross-section at each height, not the vertices near it: a mesh of large triangles has none there.
     profile = []
+    framed = trimesh.Trimesh(P, Fk, process=False)
     for h in np.linspace(0, size[2], levels + 2)[1:-1]:
-        band = np.abs(P[:, 2] - h) < max(size[2] / (levels * 4), 0.5)
-        if band.sum() > 2:
-            profile.append({"z_mm": round(float(h), 1), "length_mm": round(float(np.ptp(P[band, 0])), 1),
-                            "depth_mm": round(float(np.ptp(P[band, 1])), 1)})
+        section = framed.section(plane_origin=[0, 0, h], plane_normal=[0, 0, 1])
+        if section is not None and len(section.vertices) > 1:
+            xy = np.asarray(section.vertices)[:, :2]
+            profile.append({"z_mm": round(float(h), 1), "length_mm": round(float(np.ptp(xy[:, 0])), 1),
+                            "depth_mm": round(float(np.ptp(xy[:, 1])), 1)})
     report = {
         "size_mm": [round(float(v), 1) for v in size],
         "frame": "Object frame: x along its long side, y across, z up from where it stands; centred on x and y.",
