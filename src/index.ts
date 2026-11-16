@@ -2796,12 +2796,12 @@ class ThreeDPrinterMCPServer {
           },
           {
             name: "fusion_mcp_status",
-            description: `Check the Autodesk Fusion bridge: whether the Fusion MCP server is configured (by default ${FUSION_ADDIN_REPOSITORY}@${FUSION_MCP_PINNED_COMMIT}, faust-machines' server with document binding; fusion_mcp_setup installs it), whether Fusion is running, whether its Fusion360MCP add-in answers on its port, and the server's tools and schemas. connected is true only when the add-in answered. With launch: true and Fusion not running on this Mac, opens Autodesk Fusion and waits up to 90 s for the add-in.`,
+            description: `Check the Autodesk Fusion bridge: whether the Fusion MCP server is configured (by default ${FUSION_ADDIN_REPOSITORY}@${FUSION_MCP_PINNED_COMMIT}, faust-machines' server with document binding; fusion_mcp_setup installs it), whether Fusion is running, whether its Fusion360MCP add-in answers on its port, and the server's tools and schemas. Reports responsive, state (starting/ready/unresponsive) and reason from a fresh no-op command probe capped at five seconds. No design is opened or edited. Failed probes clear connected; ready does not guarantee a later design operation succeeds. With launch: true and Fusion not running on this Mac, opens Autodesk Fusion and waits up to 90 s for the add-in.`,
             inputSchema: {
               type: "object",
               properties: {
                 launch: { type: "boolean", description: "Open Autodesk Fusion when it is not running (macOS), then wait up to 90 s for the add-in (default false)." },
-                timeout_ms: { type: "integer", minimum: 100, maximum: 600000, description: "Deadline in milliseconds; defaults to FUSION_MCP_TIMEOUT_MS or 180000. The first start downloads the pinned server with uvx." }
+                timeout_ms: { type: "integer", minimum: 100, maximum: 600000, description: "Connection, discovery and command probe deadline, capped at 5000 ms; launch waiting is separate. The first uvx start may need a later retry after its initial download." }
               },
               additionalProperties: false
             },

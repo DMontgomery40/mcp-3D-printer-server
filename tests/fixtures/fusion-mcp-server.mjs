@@ -45,6 +45,12 @@ function call(name, args) {
   }
   if (name === "execute_code") {
     const code = String(args.code);
+    if (code.startsWith("# MCP3D_FUSION status_probe")) {
+      if (mode === "write-hang") return undefined;
+      if (mode === "write-error") return error(name, "UNKNOWN", "Fusion is busy");
+      const nonce = /"nonce": "([^"]+)"/.exec(code)?.[1];
+      return ok(name, { result: JSON.stringify({ status_probe: true, nonce: mode === "stale-probe" ? "stale" : nonce, startupComplete: mode !== "starting" }) });
+    }
     let result = "None";
     if (code.includes("'mcp3d_new_design'")) result = JSON.stringify({ mcp3d_new_design: true, document: "Untitled", parametric: true });
     if (code.includes("'mcp3d_bodies'")) {

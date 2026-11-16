@@ -188,7 +188,7 @@ test("activeDesign comes from the add-in's read-only get_design_type: true with 
   const open = await status("normal");
   assert.equal(open.result.connected, true);
   assert.equal(open.result.activeDesign, true);
-  assert.deepEqual(open.calls, ["ping", "get_design_type"], "one read, nothing that changes the design");
+  assert.deepEqual(open.calls, ["ping", "get_design_type", "execute_code"], "one read and a no-op, nothing that changes the design");
   // Fusion's Home tab (faust issue #12): the add-in's own error kind says no design is open.
   const home = await status("no-design");
   assert.equal(home.result.connected, true);
@@ -290,4 +290,44 @@ test("closing stdin without a signal shuts the server and its Fusion MCP child d
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert.fail(`the Fusion MCP child ${fusionPid} outlived the server`);
+});
+
+
+test("status detects a hung command handler after a successful design read without replay", async t => {
+  const port = await addinPort(t);
+  const {call, requests} = await start(t, {port, mode: "write-hang"});
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const began = Date.now();
+    const result = (await call("fusion_mcp_status", {timeout_ms: 500})).structuredContent;
+    assert.equal(result.connected, false);
+    assert.equal(result.responsive, false);
+    assert.equal(result.state, "unresponsive");
+    assert.match(result.reason, /Restart Fusion/);
+    assert.ok(Date.now() - began < 3000);
+  }
+  assert.equal(requests().filter(e => e.event === "spawn").length, 2);
+  assert.equal(requests().filter(e => e.name === "execute_code").length, 2);
+  assert.equal(requests().filter(e => e.name === "get_design_type").length, 2);
+});
+
+test("status requires a fresh no-op receipt and reports Fusion's own startup state", async t => {
+  const port = await addinPort(t);
+  for (const [mode, state, responsive] of [["normal", "ready", true], ["starting", "starting", false], ["write-error", "unresponsive", false], ["stale-probe", "unresponsive", false]]) {
+    const {call, requests} = await start(t, {port, mode});
+    const result = (await call("fusion_mcp_status")).structuredContent;
+    assert.equal(result.state, state, mode);
+    assert.equal(result.responsive, responsive, mode);
+    const probe = requests().find(e => e.name === "execute_code");
+    assert.match(probe.arguments.code, /app.isStartupComplete/);
+    assert.doesNotMatch(probe.arguments.code, /documents.add|\.close\(|designType\s*=/);
+  }
+});
+
+test("status caps a caller's long timeout at five seconds", async t => {
+  const port = await addinPort(t);
+  const {call} = await start(t, {port, mode: "write-hang"});
+  const began = Date.now();
+  const result = (await call("fusion_mcp_status", {timeout_ms: 90000})).structuredContent;
+  assert.equal(result.state, "unresponsive");
+  assert.ok(Date.now() - began < 8000);
 });
