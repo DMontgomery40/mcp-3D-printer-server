@@ -6,7 +6,9 @@
  * How the printer's feeds are known (the judgement, written down):
  * - Feeds are the AMS trays the printer reports (every tray of every AMS unit, loaded or not: a person can load an
  *   empty one). Without an AMS, its external spool holders, one per nozzle (two on a dual-nozzle model). A print
- *   doesn't mix the external spool with AMS trays, so the two are not added.
+ *   doesn't mix the external spool with AMS trays, so the two are not added. Two external spools feed two colours
+ *   only when each colour is on its own nozzle; the slice's nozzle bindings aren't read here, so a dual-nozzle
+ *   printer without an AMS is unknown for two colours (flagged, not passed) and too few for three.
  * - Known only from a connected printer's report that carries its AMS block; one that lists no AMS unit in it means
  *   no AMS. A report without the block says nothing. The model alone never decides it: every model's AMS is
  *   optional.
@@ -36,6 +38,10 @@ export function feedFromBambuReport(raw: unknown, connected: boolean, dualNozzle
   const external = dualNozzle ? 2 : 1;
   const block = report?.ams && typeof report.ams === "object" ? report.ams as Record<string, unknown> : undefined;
   if (!connected || !block) return { known: false, ams_slots: 0, external, source: connected ? "the printer's report has no AMS block yet" : "the printer's report could not be read" };
+  // Absence needs evidence: the unit list itself, or ams_exist_bits of zero. A partial block (an incremental push with
+  // tray_now but no list) says nothing, and stays unknown (Codex review, #170).
+  const noneExist = block.ams_exist_bits !== undefined && Number.parseInt(String(block.ams_exist_bits), 16) === 0;
+  if (!Array.isArray(block.ams) && !noneExist) return { known: false, ams_slots: 0, external, source: "the printer's report doesn't list its AMS units yet" };
   const units = Array.isArray(block.ams) ? block.ams : [];
   // A unit's own tray list when it reports one (an AMS HT has one); four, as an AMS has, when it doesn't.
   const slots = units.reduce((sum: number, unit) => sum + (Array.isArray((unit as { tray?: unknown })?.tray) ? (unit as { tray: unknown[] }).tray.length : 4), 0);
@@ -82,6 +88,9 @@ export function feedVerdict(result: unknown, feed: PrinterFeed, manual: boolean)
   if (!feed.known)
     return { facts: { ...base, printer: "unknown" },
       note: `This prints in ${colours} colours${changes !== undefined ? ` and changes filament ${changes} time${changes === 1 ? "" : "s"}` : ""}. Without an AMS, the printer stops ${changes !== undefined ? "for each change" : "at each colour change"} for you to swap filament: print it in one colour, or each colour as its own part.` };
+  if (feed.ams_slots === 0 && feed.external > 1 && colours <= feed.external)
+    return { facts: { ...base, printer: "unknown", feeds, source: `${feed.source}; its ${feed.external} external spools feed ${colours} colours only with each colour on its own nozzle` },
+      note: `This prints in ${colours} colours. Without an AMS it needs each colour on its own nozzle, or it stops ${stops} for you to swap filament.` };
   if (feeds >= colours) return { facts: { ...base, printer: "feeds-all", feeds } };
   const plain = feed.ams_slots === 0
     ? `This prints in ${colours} colours. Your printer has no AMS, so it would stop ${stops} for you to change filament. Print it in one colour instead, or print each colour as its own part.`

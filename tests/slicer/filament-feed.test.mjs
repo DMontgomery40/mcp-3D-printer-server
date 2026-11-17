@@ -9,6 +9,10 @@ test("feedFromBambuReport reads AMS trays and external spools only from a connec
   assert.equal(feedFromBambuReport({ gcode_state: "IDLE" }, false, false).known, false, "not connected");
   assert.equal(feedFromBambuReport({ nozzle_temper: 20 }, true, false).known, false, "a sparse push says nothing about the AMS");
   assert.equal(feedFromBambuReport({ gcode_state: "IDLE" }, true, false).known, false, "nor does a report without its AMS block");
+  // Codex review of #170: a partial block without its unit list is not evidence of no AMS; ams_exist_bits of zero is.
+  assert.equal(feedFromBambuReport({ ams: { tray_now: "0", ams_exist_bits: "1" } }, true, false).known, false);
+  assert.deepEqual(feedFromBambuReport({ ams: { tray_now: "255", ams_exist_bits: "0" } }, true, false),
+    { known: true, ams_slots: 0, external: 1, source: "the printer reports no AMS" });
   assert.deepEqual(feedFromBambuReport({ gcode_state: "IDLE", ams: { ams: [], ams_exist_bits: "0" } }, true, false),
     { known: true, ams_slots: 0, external: 1, source: "the printer reports no AMS" });
   assert.deepEqual(feedFromBambuReport({ ams: { ams: [] } }, true, true), { known: true, ams_slots: 0, external: 2, source: "the printer reports no AMS" });
@@ -34,7 +38,14 @@ test("feedVerdict refuses colours the printer can't feed, flags an unknown print
   assert.equal(dad.refusal.plain, "This prints in 2 colours. Your printer has no AMS, so it would stop 85 times for you to change filament. Print it in one colour instead, or print each colour as its own part.");
   assert.deepEqual(dad.refusal.feed, dad.facts);
   // A dual-nozzle printer with no AMS feeds two colours from its two external spools.
-  assert.equal(feedVerdict(plate([10, 10], 40), feedFromBambuReport({ ams: { ams: [] } }, true, true), false).facts.printer, "feeds-all");
+  // A dual-nozzle printer without an AMS: two colours only if each is on its own nozzle, which isn't read here (Codex
+  // review, #170): flagged, not passed; three colours are too many.
+  const dualNoAms = feedFromBambuReport({ ams: { ams: [] } }, true, true);
+  const two = feedVerdict(plate([10, 10], 40), dualNoAms, false);
+  assert.equal(two.refusal, undefined);
+  assert.equal(two.facts.printer, "unknown");
+  assert.equal(two.note, "This prints in 2 colours. Without an AMS it needs each colour on its own nozzle, or it stops 40 times for you to swap filament.");
+  assert.equal(feedVerdict(plate([10, 10, 10], 40), dualNoAms, false).refusal.code, "needs-more-filaments");
   // One AMS (4 trays) feeds four colours, not five: a print doesn't mix the external spool with AMS trays.
   const ams = feedFromBambuReport({ ams: { ams: [{ tray: [{}, {}, {}, {}] }] } }, true, false);
   assert.equal(feedVerdict(plate([1, 1, 1, 1], 9), ams, false).facts.printer, "feeds-all");
