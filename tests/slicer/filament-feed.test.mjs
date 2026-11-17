@@ -31,6 +31,9 @@ test("sliceColours counts the filaments a slice uses and its filament changes", 
   // Each plate prints on its own: two one-colour plates are not a two-colour print.
   assert.deepEqual(sliceColours({ sliced_plates: [{ id: 1, filament_change_times: 0, filaments: [{ id: 1, total_used_g: 5 }] },
     { id: 2, filament_change_times: 0, filaments: [{ id: 2, total_used_g: 5 }] }] }), { colours: 1, changes: 0 });
+  // Codex review of #170: every multi-colour plate's changes count, not only the most colourful plate's.
+  assert.deepEqual(sliceColours({ sliced_plates: [{ id: 1, filament_change_times: 2, filaments: [{ id: 1, total_used_g: 5 }, { id: 2, total_used_g: 5 }, { id: 3, total_used_g: 5 }] },
+    { id: 2, filament_change_times: 85, filaments: [{ id: 1, total_used_g: 5 }, { id: 2, total_used_g: 5 }] }] }), { colours: 3, changes: 87 });
 });
 
 test("feedVerdict refuses colours the printer can't feed, flags an unknown printer, and accepts manual changes", () => {

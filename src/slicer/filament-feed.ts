@@ -55,21 +55,23 @@ export function feedFromBambuReport(raw: unknown, connected: boolean, dualNozzle
 export const UNKNOWN_FEED = (source: string, dualNozzle = false): PrinterFeed => ({ known: false, ams_slots: 0, external: dualNozzle ? 2 : 1, source });
 
 /**
- * The colours a slice prints with and its filament changes, from Bambu Studio / OrcaSlicer's result.json: the plate
- * with the most colours (each plate prints on its own), and its filament changes.
+ * The colours a slice prints with and its filament changes, from Bambu Studio / OrcaSlicer's result.json: the most
+ * colours any one plate prints with (each plate prints on its own), and the changes of every plate that prints in
+ * more than one, added up, so a second plate's changes are never left out (Codex review, #170).
  */
 export function sliceColours(result: unknown): { colours: number; changes: number | undefined } {
   const plates = result && typeof result === "object" && Array.isArray((result as { sliced_plates?: unknown }).sliced_plates)
     ? (result as { sliced_plates: Record<string, unknown>[] }).sliced_plates : [];
-  let best = { colours: 0, changes: undefined as number | undefined };
+  let colours = 0;
+  let changes: number | undefined;
   for (const plate of plates) {
     const used = new Set<number>();
     for (const f of Array.isArray(plate?.filaments) ? plate.filaments as Record<string, unknown>[] : [])
       if (typeof f?.id === "number" && (typeof f.total_used_g !== "number" || f.total_used_g > 0)) used.add(f.id);
-    const changes = typeof plate?.filament_change_times === "number" ? plate.filament_change_times : undefined;
-    if (used.size > best.colours || (used.size === best.colours && (changes ?? 0) > (best.changes ?? 0))) best = { colours: used.size, changes };
+    colours = Math.max(colours, used.size);
+    if (used.size > 1 && typeof plate?.filament_change_times === "number") changes = (changes ?? 0) + plate.filament_change_times;
   }
-  return best;
+  return { colours, changes: colours > 1 ? changes : plates.some(p => typeof p?.filament_change_times === "number") ? 0 : undefined };
 }
 
 export interface FeedVerdict {
