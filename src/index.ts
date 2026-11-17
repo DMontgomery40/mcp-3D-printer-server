@@ -58,6 +58,7 @@ import { annotateTools } from "./tool-annotations.js";
 import { withRemote } from "./counterpart/remote.js";
 import { refusalReport, slicedFileFacts, slicerReport } from "./counterpart/sliced-file.js";
 import { floatingWarningFacts } from "./slicer/floating-regions.js";
+import { feedVerdict, sliceColours, UNKNOWN_FEED } from "./slicer/filament-feed.js";
 import { listModelPlates } from "./counterpart/model-plates.js";
 
 /** The slicer's verdict beside its result.json (`slicer_report`). */
@@ -894,6 +895,8 @@ type StructuredToolError = {
   slicer_result?: Record<string, unknown>;
   /** needs-more-filaments: the design's colours and the filament slots there were to slice it with. */
   filament_slots?: { colours: number; slots: number };
+  filament_changes?: number;
+  filament_feed?: Record<string, unknown>;
   slicer_report?: { failed: boolean; message?: string; slicer_message?: string };
 };
 
@@ -2074,10 +2077,11 @@ class ThreeDPrinterMCPServer {
               "Slice an STL or 3MF file to generate G-code or a sliced 3MF. For Bambu-compatible CLI slicing " +
               "(bambustudio, orcaslicer-bambulab, or orcaslicer with bambu_model), the exact bambu_model/nozzle machine " +
               "preset from the selected slicer installation is required, profile inheritance is resolved before the CLI " +
-              "runs, and the result must contain plate G-code. Failures stop with the slicer's exit status and output. A 3MF that carries its own process settings (a designer's Bambu Studio or Orca project) slices with them unless slicer_profile, template_name or template_3mf_path is given; the machine still comes from bambu_model. quality and strength adjust that process, and strength never lowers its walls or infill. When a slice that worked warns of floating regions, structuredContent.next carries the stop rule (one targeted fix and one re-slice, then report it or slice with supports on) and, for an STL the slicer did not turn, structuredContent.floating_regions lists where they are: x and y in the STL's own millimetres, z above its lowest point, and depth_mm, how far each hangs below where it joins the rest.",
+              "runs, and the result must contain plate G-code. Failures stop with the slicer's exit status and output. A 3MF that carries its own process settings (a designer's Bambu Studio or Orca project) slices with them unless slicer_profile, template_name or template_3mf_path is given; the machine still comes from bambu_model. quality and strength adjust that process, and strength never lowers its walls or infill. When a slice that worked warns of floating regions, structuredContent.next carries the stop rule (one targeted fix and one re-slice, then report it or slice with supports on) and, for an STL the slicer did not turn, structuredContent.floating_regions lists where they are: x and y in the STL's own millimetres, z above its lowest point, and depth_mm, how far each hangs below where it joins the rest. A slice in two or more colours carries filament_feed: the colours, the filament changes the slicer reports, and whether the printer can feed them (a Bambu printer's AMS trays and external spools from a fresh status read; unknown for other printers or without one). When the printer is known not to (no AMS, or fewer filaments than colours), slice_stl refuses with code needs-more-filaments, filament_slots, filament_changes and a plain slicer_report.message, unless manual_filament_changes is true; when it is unknown, the slice succeeds and slicer_report.message says how many times it would stop without an AMS.",
             inputSchema: {
               type: "object",
               properties: {
+                manual_filament_changes: { type: "boolean", description: "The person will change filament by hand: a slice in more colours than the printer can feed (no AMS) is returned, with the number of changes, instead of refused with needs-more-filaments." },
                 stl_path: {
                   type: "string",
                   description: "Path to the STL or 3MF file to slice"
@@ -3238,7 +3242,20 @@ class ThreeDPrinterMCPServer {
             const turned = Boolean(args?.orient) || [args?.rotate, args?.rotate_x, args?.rotate_y].some(r => r !== undefined && Number(r) !== 0)
               || (args?.scale !== undefined && Number(args.scale) !== 1);
             const located = await floatingWarningFacts(reported.slicer_report, String(args?.stl_path), turned);
-            return { content: [{ type: "text", text: sliced.path }], structuredContent: { ...reported, ...located } };
+            // A slice in several colours on a printer that can't feed them is refused or flagged, never sent on
+            // silently (beta 8 DAD replay: 85 manual changes on a P1S with no AMS). See src/slicer/filament-feed.ts.
+            let feedFacts: Record<string, unknown> = {};
+            if (sliceColours(sliced.slicer_result).colours >= 2) {
+              const model = typeof args?.bambu_model === "string" && args.bambu_model.trim() ? args.bambu_model : process.env.BAMBU_MODEL;
+              const feed = args?.use_printer_filaments === false ? UNKNOWN_FEED("use_printer_filaments is false, so the printer wasn't asked")
+                : await this.counterpart.printerFeed(target, model);
+              const verdict = feedVerdict(sliced.slicer_result, feed, args?.manual_filament_changes === true);
+              if (verdict.refusal) throw Object.assign(verdict.refusal, { slicerResult: sliced.slicer_result });
+              if (verdict.facts) feedFacts = { filament_feed: verdict.facts };
+              if (verdict.note && reported.slicer_report)
+                reported.slicer_report = { ...reported.slicer_report, message: reported.slicer_report.message ? `${reported.slicer_report.message}\n${verdict.note}` : verdict.note };
+            }
+            return { content: [{ type: "text", text: sliced.path }], structuredContent: { ...reported, ...located, ...feedFacts } };
           }
 
           case "slice_with_template":
@@ -4167,12 +4184,16 @@ class ThreeDPrinterMCPServer {
       return {
         status: "error",
         retryable: false,
-        suggestion: "Load the design's colours in an AMS, or slice it in one colour.",
+        suggestion: slots.feed ? "Make it in one colour, or print each colour as its own part. If the person will change filament by hand, slice again with manual_filament_changes: true."
+          : "Load the design's colours in an AMS, or slice it in one colour.",
         message,
         tool,
         code: slots.code,
         filament_slots: { colours: slots.colours, slots: slots.slots },
-        slicer_report: { failed: true, message: slots.plain, slicer_message: `${slots.colours} filament colours were supplied for ${slots.slots} filament slots.` },
+        ...(slots.changes !== undefined ? { filament_changes: slots.changes } : {}),
+        ...(slots.feed ? { filament_feed: slots.feed } : {}),
+        ...(slots.slicerResult ? { slicer_result: slots.slicerResult as Record<string, unknown> } : {}),
+        slicer_report: { failed: true, message: slots.plain, slicer_message: slots.detail },
       };
     }
     // Slicer failures are local profile/slicer problems, never printer connectivity.

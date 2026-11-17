@@ -117,7 +117,7 @@ fs.copyFileSync(path.join(${JSON.stringify(fixtures)}, mode === "md5only" ? "md5
     resetCapture: () => Promise.all([fs.rm(capture, { force: true }), fs.rm(inputCapture, { force: true })]) };
 }
 
-async function startServer(t, install, extraEnv = {}) {
+async function startServer(t, install, extraEnv = {}, status) {
   const tempDir = path.join(install.root, "server-temp");
   await fs.mkdir(tempDir, { recursive: true });
   const env = {
@@ -132,7 +132,9 @@ async function startServer(t, install, extraEnv = {}) {
     TEMP_DIR: tempDir, SLICE_CACHE: "off", ...extraEnv,
   };
   // cwd outside the repo so a developer .env cannot change the configuration.
-  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER_ENTRY], cwd: install.root, env, stderr: "pipe" });
+  // status: a stubbed Bambu printer report (getStatus), for the checks that read the printer.
+  const preload = status === undefined ? [] : ["--import", `data:text/javascript;base64,${Buffer.from(`import { BambuImplementation } from ${JSON.stringify(new URL("../../dist/printers/bambu.js", import.meta.url).href)}; BambuImplementation.prototype.getStatus = async () => (${JSON.stringify(status)});`).toString("base64")}`];
+  const transport = new StdioClientTransport({ command: process.execPath, args: [...preload, SERVER_ENTRY], cwd: install.root, env, stderr: "pipe" });
   const client = new Client({ name: "slice-tool-tests", version: "1" });
   await client.connect(transport);
   t.after(() => client.close());
@@ -1041,6 +1043,33 @@ test("slice_stl with more colours than filaments refuses with a plain answer and
   assert.equal(result.structuredContent.code, "needs-more-filaments");
   assert.deepEqual(result.structuredContent.filament_slots, { colours: 2, slots: 1 });
   assert.equal(result.structuredContent.slicer_report.message, "This design is in 2 colours, but only 1 filament is available to print it. It needs a printer with an AMS loaded with 2 colours, or it can print in one colour.");
+});
+
+// Beta 8's DAD replay (Nov 17): a two-colour 3MF with declared colours sliced for a P1S with no AMS succeeded with 85
+// filament changes and no word. A Bambu printer known to have no AMS now refuses it; other printers flag it.
+test("slice_stl refuses a two-colour slice on a Bambu P1S with no AMS, and flags it where the printer can't say", async (t) => {
+  const install = await createFakeInstall(t);
+  const noAms = { connected: true, model: "P1S", status: "IDLE", raw: { gcode_state: "IDLE", ams: { ams: [], ams_exist_bits: "0", tray_now: "255" } } };
+  const bambu = await startServer(t, install, { BAMBU_PROFILES_ROOT: path.dirname(install.bbl), PRINTER_TYPE: "bambu", BAMBU_SERIAL: "TEST_SERIAL", BAMBU_TOKEN: "TEST_TOKEN", PRINTER_HOST: "192.0.2.1" }, noAms);
+  await install.setMode("studio:p1s-dad-two-colours.json");
+  const refused = await bambu.call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s" });
+  assert.equal(refused.isError, true, text(refused));
+  assert.equal(refused.structuredContent.code, "needs-more-filaments");
+  assert.deepEqual(refused.structuredContent.filament_slots, { colours: 2, slots: 1 });
+  assert.equal(refused.structuredContent.filament_changes, 85);
+  assert.match(refused.structuredContent.suggestion, /slice again with manual_filament_changes: true/);
+  assert.equal(refused.structuredContent.slicer_result.sliced_plates[0].filament_change_times, 85);
+  assert.equal(refused.structuredContent.slicer_report.message, "This prints in 2 colours. Your printer has no AMS, so it would stop 85 times for you to change filament. Print it in one colour instead, or print each colour as its own part.");
+  const manual = await bambu.call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s", manual_filament_changes: true });
+  assert.equal(manual.isError, undefined, text(manual));
+  assert.equal(manual.structuredContent.filament_feed.manual, true);
+  assert.equal(manual.structuredContent.slicer_report.message, "Your printer has no AMS, so this print stops 85 times for you to change filament.");
+  // An OctoPrint printer reports no multi-material unit: the slice succeeds, flagged.
+  const octo = await startServer(t, install, { BAMBU_PROFILES_ROOT: path.dirname(install.bbl) });
+  const flagged = await octo.call("slice_stl", { stl_path: SAMPLE_STL, bambu_model: "p1s" });
+  assert.equal(flagged.isError, undefined, text(flagged));
+  assert.equal(flagged.structuredContent.filament_feed.printer, "unknown");
+  assert.match(flagged.structuredContent.slicer_report.message, /changes filament 85 times\. Without an AMS, the printer stops for each change/);
 });
 
 // Bambu Studio's own checks: its result.json, verbatim, from the Scan to Make
