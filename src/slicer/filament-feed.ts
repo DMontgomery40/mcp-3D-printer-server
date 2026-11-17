@@ -43,8 +43,12 @@ export function feedFromBambuReport(raw: unknown, connected: boolean, dualNozzle
   const noneExist = block.ams_exist_bits !== undefined && Number.parseInt(String(block.ams_exist_bits), 16) === 0;
   if (!Array.isArray(block.ams) && !noneExist) return { known: false, ams_slots: 0, external, source: "the printer's report doesn't list its AMS units yet" };
   const units = Array.isArray(block.ams) ? block.ams : [];
-  // A unit's own tray list when it reports one (an AMS HT has one); four, as an AMS has, when it doesn't.
-  const slots = units.reduce((sum: number, unit) => sum + (Array.isArray((unit as { tray?: unknown })?.tray) ? (unit as { tray: unknown[] }).tray.length : 4), 0);
+  // A unit's own tray list when it reports one; without it, one slot for an AMS HT (ids from 128, as ams-mapping.ts
+  // numbers them) and four for an AMS.
+  const slots = units.reduce((sum: number, unit) => {
+    const u = unit as { id?: unknown; tray?: unknown };
+    return sum + (Array.isArray(u?.tray) ? u.tray.length : Number.parseInt(String(u?.id ?? "0"), 10) >= 128 ? 1 : 4);
+  }, 0);
   return { known: true, ams_slots: slots, external, source: slots ? `the printer reports ${units.length} AMS unit${units.length === 1 ? "" : "s"}` : "the printer reports no AMS" };
 }
 
@@ -91,6 +95,11 @@ export function feedVerdict(result: unknown, feed: PrinterFeed, manual: boolean)
   if (feed.ams_slots === 0 && feed.external > 1 && colours <= feed.external)
     return { facts: { ...base, printer: "unknown", feeds, source: `${feed.source}; its ${feed.external} external spools feed ${colours} colours only with each colour on its own nozzle` },
       note: `This prints in ${colours} colours. Without an AMS it needs each colour on its own nozzle, or it stops ${stops} for you to swap filament.` };
+  // A dual-nozzle printer can also feed its other nozzle's external spool beside its AMS trays, depending on the plate's
+  // nozzle bindings, which aren't read here (Codex review, #170): those colours are flagged, not refused.
+  if (feed.ams_slots > 0 && feed.external > 1 && colours > feeds && colours <= feeds + feed.external - 1)
+    return { facts: { ...base, printer: "unknown", feeds: feeds + feed.external - 1, source: `${feed.source}; the other nozzle's external spool can feed one more colour, depending on the plate's nozzle bindings` },
+      note: `This prints in ${colours} colours, one more than the AMS holds. It needs that colour on the other nozzle's external spool, or it stops for you to swap filament.` };
   if (feeds >= colours) return { facts: { ...base, printer: "feeds-all", feeds } };
   const plain = feed.ams_slots === 0
     ? `This prints in ${colours} colours. Your printer has no AMS, so it would stop ${stops} for you to change filament. Print it in one colour instead, or print each colour as its own part.`
