@@ -33,7 +33,8 @@ import {
   type PrinterKind,
 } from "./contract.js";
 import { mapBambu } from "./progress.js";
-import { normalizeModel } from "../safety/limits.js";
+import { isDualNozzleModel, normalizeModel } from "../safety/limits.js";
+import { feedFromBambuReport, UNKNOWN_FEED, type PrinterFeed } from "../slicer/filament-feed.js";
 import { SERIAL_MODELS } from "../safety/printer-state.js";
 import { modelFromSerial } from "./discovery.js";
 import {
@@ -127,6 +128,32 @@ export class CounterpartService {
   private generic(target: PrinterTarget): GenericPrinterImplementation | undefined {
     const implementation = this.implementation(target.type);
     return implementation instanceof GenericPrinterImplementation ? implementation : undefined;
+  }
+
+  /**
+   * The filaments the printer can feed itself, for a multi-colour slice (src/slicer/filament-feed.ts): a Bambu
+   * printer's AMS trays and external spools from a fresh report; unknown for other printers or without one.
+   */
+  async printerFeed(target: PrinterTarget, model: string | undefined): Promise<PrinterFeed> {
+    const dual = isDualNozzleModel(model);
+    const unknown = (source: string) => UNKNOWN_FEED(source, dual);
+    if (this.generic(target)) return unknown("this printer type doesn't report a multi-material unit");
+    const [serial, token] = target.apiKey.split(":");
+    if (!serial || !token) return unknown("no printer is configured to ask");
+    try {
+      const bambu = this.bambu(target);
+      let status = await bambu.getStatus(target.host, target.port, target.apiKey);
+      let feed = feedFromBambuReport(status?.raw, status?.connected === true, dual);
+      // An idle printer's first push can be sparse; its AMS block follows. A printer that isn't connected isn't asked twice.
+      if (status?.connected === true && (!feed.known || feed.ams_slots === 0)) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        status = await bambu.getStatus(target.host, target.port, target.apiKey);
+        feed = feedFromBambuReport(status?.raw, status?.connected === true, dual);
+      }
+      return feed;
+    } catch {
+      return unknown("the printer could not be reached");
+    }
   }
 
   private bambu(target: PrinterTarget): BambuImplementation {

@@ -175,3 +175,11 @@ test("the guidance builds early and stops chasing a cosmetic slicer warning afte
   assert.doesNotMatch(FDM_CORE, /before any geometry/);
   assert.match(FDM_MULTICOLOR, /its colour parts come from the same cad_run as the model/);
 });
+// Beta 8's DAD replay (Nov 17): a copy in its photos' two colours went to a P1S with no AMS, 85 manual changes.
+test("the multicolour guidance makes a copy in one colour on a printer that can't feed its colours, and says why", () => {
+  assert.match(FDM_MULTICOLOR, /First check that the printer can feed the colours itself\. get_printer_filaments lists its AMS trays/);
+  assert.match(FDM_MULTICOLOR, /make the design in one colour by default, even a copy of an object the photos show in several/);
+  assert.match(FDM_MULTICOLOR, /"Your printer has no AMS, so it's one colour; ask for two colours if you'll change filament by hand\."/);
+  assert.match(FDM_MULTICOLOR, /slice with manual_filament_changes: true and say how many times it stops/);
+  assert.match(slicingGuidance("bambustudio", { supports: true, orient: true }), /- Colours: a slice in more colours than the printer can feed[^\n]*needs-more-filaments/);
+});

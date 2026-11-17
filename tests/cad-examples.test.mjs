@@ -65,6 +65,7 @@ test("the engine prompt names every example by purpose in one line each, and the
   assert.match(text, /each step before the first run is a sentence, not a study/);
   // colours from the same run as the model (#859 fix 5)
   assert.match(text, /A design in several colours gets them from the same run as the model/);
+  assert.match(text, /A design gets several colours only when the printer can feed them \(fdm_multicolor: one colour by default on a printer without an AMS/);
   assert.match(text, /Never re-run the whole script once per colour/);
   // measure a scan once (#859 fix 4), with the helper rather than hand-written measuring scripts
   assert.match(text, /Measure a scan once, before designing from it: one check run[^\n]*measure_scan\(load_scan\(/);

@@ -57,10 +57,28 @@ export function printOutcome(error: unknown): PrintOutcome {
  */
 export class FilamentSlotsError extends PrinterRefusal {
   readonly plain: string;
-  constructor(readonly colours: number, readonly slots: number) {
-    const plain = `This design is in ${colours} colours, but only ${slots} filament${slots === 1 ? " is" : "s are"} available to print it. It needs a printer with an AMS loaded with ${colours} colours, or it can print in one colour.`;
-    super("needs-more-filaments", `${plain}\nThe slicer setup said: ${colours} filament colours were supplied for ${slots} filament slots.`);
+  /** The filament changes the slice would make, when the slicer reported them (a printer with too few feeds). */
+  readonly changes?: number;
+  /** The slicer's own words, or this server's when the printer's feeds decided it. */
+  readonly detail: string;
+  /** The printer's feeds and the slice's colours, when they decided it (slice_stl's filament_feed). */
+  feed?: Record<string, unknown>;
+  /** The slicer's own result.json for the slice the printer's feeds refused. */
+  slicerResult?: unknown;
+  /**
+   * colours: the colours the design prints with; slots: the filaments there are to feed them (slice slots, or the
+   * printer's AMS trays plus external spools). `options` carries the plain sentence when the printer's feeds decide
+   * it, and the filament changes the slice would make.
+   */
+  constructor(readonly colours: number, readonly slots: number, options: { plain?: string; changes?: number } = {}) {
+    const plain = options.plain ?? `This design is in ${colours} colours, but only ${slots} filament${slots === 1 ? " is" : "s are"} available to print it. It needs a printer with an AMS loaded with ${colours} colours, or it can print in one colour.`;
+    const detail = options.plain
+      ? `The design prints in ${colours} filaments and the printer can feed ${slots}${options.changes !== undefined ? `; the slice makes ${options.changes} filament changes` : ""}.`
+      : `${colours} filament colours were supplied for ${slots} filament slots.`;
+    super("needs-more-filaments", `${plain}\n${options.plain ? "The slice said" : "The slicer setup said"}: ${detail}`);
     this.name = "FilamentSlotsError";
     this.plain = plain;
+    this.detail = detail;
+    if (options.changes !== undefined) this.changes = options.changes;
   }
 }
