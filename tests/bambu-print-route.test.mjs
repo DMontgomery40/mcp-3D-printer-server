@@ -200,3 +200,22 @@ test("print_3mf checks requested pauses on the plate it prints, not plate 1", as
   assert.equal(reply.isError, true);
   assert.match(reply.content[0].text, /already sliced without a pause before layer 3/);
 });
+
+for(const changedAt of [2,3]) test(`FULU print rechecks the terminal job before dispatch (read ${changedAt})`,async t=>{
+  const work=trackedMkdtempSync(path.join(os.tmpdir(),'fulu-terminal-'));
+  t.after(()=>fs.rmSync(work,{recursive:true,force:true}));
+  const log=path.join(work,'host.jsonl');
+  const preload=`import { BambuImplementation } from ${JSON.stringify(new URL('../dist/printers/bambu.js',import.meta.url).href)};
+    let reads=0;
+    BambuImplementation.prototype.getSafetyStatus=async()=>({connected:true,model:'p1s',serial:'01PTESTSERIAL',
+      raw:{model:'p1s',gcode_state:'FINISH',subtask_name:++reads>=${changedAt}?'changed':'previous',print_error:0,hms:[],nozzle_diameter:'0.4',ams:{ams:[{id:'0',tray:[{id:'3',tray_type:'PETG'}]}]}},
+      observation:{source:'mqtt',requestedAt:Date.now()-1,receivedAt:Date.now(),identitySource:'report'}});`;
+  const {client}=await server(t,{BAMBU_NETWORK_BRIDGE_COMMAND:`${shellQuoteArg(process.execPath)} ${shellQuoteArg(FAKE_FULU_HOST)}`,
+    BAMBU_NETWORK_CONFIG_DIR:path.join(work,'config'),PJARCZAK_BAMBU_PLUGIN_DIR:path.join(work,'plugins'),FAKE_FULU_LOG:log},{preload});
+  const file=await twoFilamentProject(work);
+  const result=await client.callTool({name:'print_3mf',arguments:{three_mf_path:file,ams_slots:[3],use_ams:true,connection_mode:'bambu_network',connection_type:'lan'}});
+  assert.equal(result.isError,true);
+  assert.match(result.content[0].text,/job changed/i);
+  const calls=fs.existsSync(log)?fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse):[];
+  assert.equal(calls.some(call=>['net.start_local_print','net.start_local_print_with_record','net.start_print'].includes(call.method)),false);
+});

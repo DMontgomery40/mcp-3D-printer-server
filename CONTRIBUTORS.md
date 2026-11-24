@@ -6,6 +6,9 @@ Thank you to everyone who builds, tests, reports problems, and shares real print
 
 | Contributor | Contribution |
 | --- | --- |
+| [d0ukan](https://github.com/d0ukan) | Fixes slice-cache invalidation for semicolons in model filenames in [Bambu #175](https://github.com/DMontgomery40/bambu-printer-mcp/pull/175), ported here with original authorship and profile-list regressions. |
+| [Razorback16](https://github.com/razorback16) | Supplies the Studio heater-marker fix, H2C root-file and canceled-job evidence in [Bambu #171](https://github.com/DMontgomery40/bambu-printer-mcp/pull/171). Ports preserve thermal/state checks and verify H2 packets with mocked transports; no maintainer physical H2 print is claimed. |
+| [Jan Jaap (@jappyjan)](https://github.com/jappyjan) | Supplies the stock H2S firmware/status evidence, chipless-nozzle fix and regression in [Bambu #172](https://github.com/DMontgomery40/bambu-printer-mcp/pull/172), ported here with original authorship. Internal safety tests do not expand the public print model allowlist. |
 | [David Montgomery (DMontgomery40)](https://github.com/DMontgomery40) | Reports Fusion’s stalled command path despite successful status reads in [Bambu #167](https://github.com/DMontgomery40/bambu-printer-mcp/issues/167), leading to bounded no-op readiness checks in both servers. Fixture and source validation; no live Fusion test is claimed. |
 | [Adam (@adamkaplan)](https://github.com/adamkaplan) | Supplies H2C serial/status evidence in [fork #47](https://github.com/DMontgomery40/bambu-printer-mcp/issues/47) and exact Bambu Studio 02.08 startup/template reproductions in [fork #48](https://github.com/DMontgomery40/bambu-printer-mcp/issues/48), ported here with fresh identity and bounded file-inspection regressions. No maintainer physical H2C print is claimed. |
 | [Izzy Mansurov (sapoepsilon)](https://github.com/sapoepsilon) | Implements P2S extruder-variant and airduct inspection in [fork #33](https://github.com/DMontgomery40/bambu-printer-mcp/pull/33). Original code authorship is retained in the port, alongside unsafe-file and selected-header regressions; hardware printing is not claimed. |
@@ -65,9 +68,9 @@ Special thanks to the [FULU Foundation](https://www.fulu.org/), [Louis Rossmann]
 
 Thank you to the [MCP TypeScript SDK contributors](https://github.com/modelcontextprotocol/typescript-sdk/graphs/contributors) and [Axios contributors](https://github.com/axios/axios/graphs/contributors) for the compatible 1.32.2 and 1.21.0 releases validated in this project.
 
-Thanks again to [Patrick Juchli](https://github.com/patrickjuchli) and the basic-ftp maintainers for the [6.2.4 listing correction](https://github.com/patrickjuchli/basic-ftp/releases/tag/v6.2.4) included in the prepared 6.2.5 dependency update. Offline regression and package validation cover this update; publication is pending.
+Thanks again to [Patrick Juchli](https://github.com/patrickjuchli) and the basic-ftp maintainers for the [6.2.4 listing correction](https://github.com/patrickjuchli/basic-ftp/releases/tag/v6.2.4) included in the released 6.2.5 dependency update, covered by offline regression and package validation.
 
-Thanks to [Steve Pritchard (sjpritchard)](https://github.com/sjpritchard) for the official H2C first-layer temperature-table report in [bambu-printer-mcp #81](https://github.com/DMontgomery40/bambu-printer-mcp/issues/81). Its safety-preserving correction is ported here and checked with isolated Studio output; publication of this port is pending.
+Thanks to [Steve Pritchard (sjpritchard)](https://github.com/sjpritchard) for the official H2C first-layer temperature-table report in [bambu-printer-mcp #81](https://github.com/DMontgomery40/bambu-printer-mcp/issues/81). Its safety-preserving correction is ported here and checked with isolated Studio output.
 
 ### November 10 maintenance
 

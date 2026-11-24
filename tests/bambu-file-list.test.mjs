@@ -45,3 +45,12 @@ test("Bambu file listing surfaces credential and listing failures instead of emp
     });
   }
 });
+
+for (const prefix of ['093','094','31B','239']) test(`H2 root files are listed and found without changing cache aliases (${prefix})`, async t => {
+  ftp(t, {'/':[dir('cache'),file('root.gcode'),{name:'link',isSymbolicLink:true}],'/cache':[file('root.gcode')]});
+  const printer=new BambuImplementation();
+  const key=`${prefix}TEST:CODE`;
+  assert.deepEqual((await printer.getFiles('mock','990',key)).files,['/root.gcode','cache/root.gcode']);
+  assert.deepEqual(await printer.getFile('mock','990',key,'/root.gcode'),{name:'/root.gcode',exists:true});
+  assert.deepEqual(await printer.getFile('mock','990',key,'root.gcode'),{name:'cache/root.gcode',exists:true});
+});

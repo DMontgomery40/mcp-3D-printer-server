@@ -92,18 +92,22 @@ test('P1S external-spool payload preserves Studio defaults and disables AMS', as
   assert.equal(result.calibration.transmitted.auto_flow_cali, null);
 });
 
-for (const [label, options, expected] of [
-  ['default auto', {}, true],
-  ['explicit off', {bedLeveling:false}, false],
-  ['explicit on', {bedLeveling:true}, true],
-  ['mode off', {autoBedLeveling:0}, false],
-  ['mode on', {autoBedLeveling:1}, true],
-  ['unsupported automatic mode', {autoBedLeveling:2}, true],
+for (const [label, options, expected, mode] of [
+  ['default auto', {}, false, 2],
+  ['explicit off', {bedLeveling:false}, false, 0],
+  ['explicit on', {bedLeveling:true}, true, 1],
+  ['mode off', {autoBedLeveling:0}, false, 0],
+  ['mode on', {autoBedLeveling:1}, true, 1],
+  ['automatic mode', {autoBedLeveling:2}, false, 2],
 ]) test(`H2D direct bed leveling preserves ${label}`, async t=>{
   const {packet,result}=await capture(t,options,'.3mf','h2d');
-  assert.equal(packet.bed_leveling,expected);
-  assert.equal(result.calibration.transmitted.task_bed_leveling,expected);
-  assert.equal(result.calibration.transmitted.auto_bed_leveling,null);
+  assert.equal(packet.bed_leveling,Number(expected));
+  assert.equal(packet.auto_bed_leveling,mode);
+  assert.deepEqual(packet.ams_mapping,[2]);
+  assert.deepEqual(packet.ams_mapping2,[{ams_id:0,slot_id:2}]);
+  assert.match(packet.url,/^ftp:\/\/\/checked-/);
+  assert.equal(result.calibration.transmitted.task_bed_leveling,Number(expected));
+  assert.equal(result.calibration.transmitted.auto_bed_leveling,mode);
   if (options.autoBedLeveling === undefined && options.bedLeveling === undefined) {
     assert.equal(result.calibration.resolved.auto_bed_leveling,2);
     assert.equal(result.calibration.resolved.task_bed_leveling,false);

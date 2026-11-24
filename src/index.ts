@@ -141,7 +141,7 @@ async function previewOfSnapshot(snapshot: string, plateIndex: number, sha256: s
   const preview = await previewPrintFile({ gcode, ...(projectColours ? { projectColours } : {}) });
   return preview ? { ...preview, artifact_sha256: sha256, plate_index: plateIndex } : undefined;
 }
-import { externalStorageState, validatePrinterState } from "./safety/printer-state.js";
+import { assertSameTerminalJob, externalStorageState, validatePrinterState } from "./safety/printer-state.js";
 import { uniquePrintName, withPrinterOperation, withPrintSnapshot } from "./safety/artifact.js";
 import { checkedFile } from "./printers/bambu.js";
 import { CONFIRMATION_UNAVAILABLE, confirmationTimedOut, confirmationTimeoutMs } from "./safety/confirmation.js";
@@ -1363,9 +1363,11 @@ class ThreeDPrinterMCPServer {
         }
       }
       const requirements = { ...inspection, amsMapping: mapping, useAMS };
-      validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
+      const initialStatus = await bambu.getSafetyStatus(devIp, devId, password);
+      validatePrinterState(initialStatus, requirements);
       const confirmedStatus = await bambu.getSafetyStatus(devIp, devId, password);
       validatePrinterState(confirmedStatus, requirements);
+      assertSameTerminalJob(initialStatus, confirmedStatus, model);
       if (cloudFallbackMethod && externalStorageState(confirmedStatus.raw) !== "normal") {
         // Studio sends straight through the cloud when the printer has no storage for the LAN upload.
         bridgeMethod = cloudFallbackMethod;
@@ -1429,7 +1431,9 @@ class ThreeDPrinterMCPServer {
         beforeDispatch: async (method: string) => {
           if (method !== bridgeMethod && method !== cloudFallbackMethod) return;
           assertActive();
-          validatePrinterState(await bambu.getSafetyStatus(devIp, devId, password), requirements);
+          const dispatchStatus = await bambu.getSafetyStatus(devIp, devId, password);
+          validatePrinterState(dispatchStatus, requirements);
+          assertSameTerminalJob(initialStatus, dispatchStatus, model);
         },
         assertDispatchAllowed: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) { assertActive(); bambu.recordFlightDispatch(devIp,devId,remoteFileName,requirements,resumeFile); markPrintCommandSent(); } },
         onDispatched: (method: string) => { if (method === bridgeMethod || method === cloudFallbackMethod) retainForDispatchedUpload(); },

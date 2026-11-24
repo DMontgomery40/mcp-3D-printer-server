@@ -151,6 +151,16 @@ export function isFinishedIdleJob(raw: Record<string, any>, model: string): bool
     finiteNumber(raw.print_error) === 0 && Array.isArray(raw.hms) && raw.hms.length === 0 &&
     [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
 }
+/** Bind a terminal job to the fresh preflight across upload and connection waits. */
+export function assertSameTerminalJob(initial: any, current: any, model: string): void {
+  const terminal = (raw: Record<string, any>) => raw.gcode_state === "FINISH" || isCancelledJob(raw, model) || isFinishedIdleJob(raw, model);
+  const identity = (raw: Record<string, any>) => JSON.stringify([raw.gcode_file, raw.subtask_name, raw.task_id, raw.subtask_id, raw.job_id]);
+  const before = initial.raw, after = current.raw;
+  if ((terminal(before) && identity(before) !== identity(after)) || (!terminal(before) && terminal(after))) {
+    throw new Error("The printer job changed during preflight; check its current job before retrying. No print command was sent.");
+  }
+}
+
 const token = (value: unknown) => typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_-]/g, "") : "";
 function nozzleTypeAndFlow(value: unknown): {type?: string; flow?: string} {
   const text = String(value ?? "");
