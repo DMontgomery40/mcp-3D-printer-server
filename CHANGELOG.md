@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.81] – 2026-11-24
+
+- Hash semicolons in model filenames correctly when reusing slices; keep ordered `--load-settings` and `--load-filaments` profile lists content-sensitive. Port d0ukan's Bambu fork #175 fix.
+- Accept Studio 2.9.1/2.9.2's exact dual-nozzle `M104 T… S… N0 W|C` markers while retaining independent heater/material ceilings and rejecting malformed forms (Razorback16, Bambu fork #171).
+- Send H2 project files to the FTPS root with the documented FTP URL and complete positional AMS/external-spool packet. List root files as `/<name>` and preserve that path in metadata lookup and remote starts; bare read/start names still mean `cache/<name>`. Bare H2 upload-only requests return a unique root name. Other printer backends and legacy routes retain their behavior.
+- Port the exact H2C canceled-job and H2S chipless-nozzle `stat: 5` checks, preserving fresh identity, nozzle configuration and material checks. Bind terminal jobs across project/raw/FULU preflight so a changed job stops dispatch. Thanks to Razorback16 and Jan Jaap (@jappyjan) for the reports, fixes and hardware evidence.
+- Validation uses offline regressions, mocked MQTT/FTPS/FULU transports and retained isolated official Studio/Orca output. No physical printer operation is claimed. The public print model allowlist stays at seven models; H2S/H2C internal safety coverage does not enable their public print routes. Native X2D and P3C/H3C device support remain outside this server's implemented routes.
+
 ## [1.2.80] – 2026-11-17
 
 ### Fixed

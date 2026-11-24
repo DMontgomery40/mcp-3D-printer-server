@@ -344,3 +344,32 @@ test('A1 clean stopped job passes while incomplete, active and other-model repor
   for (const model of ['a1mini','p1p','x1c','h2s']) assert.throws(() => check(fresh({...raw,model}),req({model,verifyMaterials:false})),/not safely idle/);
   assert.throws(() => check(status({model:undefined,modules:[{name:'ota',sn:'030TEST'}]}),requirements),/serial|model|identity/i);
 });
+
+// A stock H2S (OTA 01.02.00.00, TH 02.00.19.36) reports its chipless HS01
+// nozzle as unreliable + unknown, stat 5, also right after the nozzle is
+// confirmed on the touchscreen.
+test('an H2S chipless nozzle reporting stat 5 passes configured checks while other unknown states block', () => {
+  const h2sReport = (overrides = {}) => fresh({model_id:'O1S', nozzle_diameter:'0.4', nozzle_type:'HS01', device:{nozzle:{exist:1, src_id:0, state:4096, tar_id:0, info:[
+    {id:0, diameter:0.4, type:'HS01', sn:'N/A', stat:5, color_m:'00000000', fila_id:'', tm:0, wear:0, ...overrides},
+  ]}}});
+  const job = req({model:'h2s', nozzleDiameters:[0.4], nozzleTypes:['hardened_steel'], nozzleFlows:['standard'], verifyMaterials:false});
+  assert.doesNotThrow(() => check(h2sReport(), job));
+  assert.deepEqual(safety.unchippedNozzles(h2sReport().raw), [0]);
+  assert.throws(() => check(h2sReport({type:'HH01'}), job), /flow variant/i);
+  for (const stat of [13, 5.5, -1]) assert.throws(() => check(h2sReport({stat}), job), /unreliable, abnormal or unknown/, `stat ${stat}`);
+  // The file-to-hardware comparison still runs.
+  assert.throws(() => check(h2sReport({diameter:0.6}), job), /nozzle 0 diameter/i);
+  assert.throws(() => check(h2sReport({type:'HS00'}), job), /nozzle 0 type/i);
+  // A chipped nozzle reporting unknown still blocks.
+  for (const sn of ['B0123456789', '', undefined]) assert.throws(() => check(h2sReport({sn}), job), /unreliable, abnormal or unknown/, `sn ${sn}`);
+  // Abnormal, and unknown without the unreliable bit, still block without a chip.
+  for (const stat of [2, 3, 4, 6, 7]) assert.throws(() => check(h2sReport({stat}), job), /unreliable, abnormal or unknown/, `stat ${stat}`);
+});
+
+test('H2S chipless stat 5 also retains manual heating material and fresh identity checks', () => {
+  const status=fresh({model_id:'O1S',device:{nozzle:{info:[{id:0,diameter:0.4,type:'HS01',sn:'N/A',stat:5}]}},vt_tray:{tray_type:'PLA'}});
+  const requirements=safety.manualHeatingRequirements(status,'h2s',0.4,'PLA');
+  assert.doesNotThrow(()=>check(status,requirements));
+  assert.throws(()=>check(status,{...requirements,materials:['ABS']}),/material/i);
+  assert.throws(()=>check({...status,raw:{...status.raw,model_id:'C12'}},requirements),/model|identity/i);
+});

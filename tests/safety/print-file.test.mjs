@@ -713,3 +713,23 @@ test('real Bambu Studio 02.08.02.61 slices on the Engineering and SuperTack plat
     await assert.rejects(inspectPrintFile(file(name),{model:'p1s',nozzleDiameters:[0.4],plateIndex:0,bedType:other}),/bed type/);
   }
 });
+
+// Studio v02.09.01.70, GCodeProcessor.cpp add_M104_lines: a print that uses both
+// extruders gets `M104 T<heater> S<target> N0 W|C` lines ("Multi extruder pre heating"
+// and "Multi extruder pre cooling"). The bare W or C marks heating or cooling and is
+// not a heat target. The lines below are from H2C, H2D and X2D slices of one project.
+test('Studio 2.9.1 multi-extruder pre-heating W and pre-cooling C markers retain independent temperature checks',async t=>{
+  for(const [name,model] of [['H2C','h2c'],['H2D','h2d'],['H2D Pro','h2dpro'],['X2D','x2d']]) {
+    const result=await inspect(t,header(name,'PLA;PLA','0.4;0.4')+'M104 T1 S25 N0 C ;Multi extruder pre cooling\nM104 T0 S184 N0 W ;Multi extruder pre heating\nM104 T1 S159 N0 C\nM104 S220\n',{model});
+    assert.equal(result.maxNozzleTemperature,220,name);
+  }
+  // The marker never relaxes a hardware or material ceiling.
+  await assert.rejects(inspect(t,header('H2C','PLA;PLA','0.4;0.4')+'M104 T1 S400 N0 W\n',{model:'h2c'}),/temperature|limit/i);
+  await assert.rejects(inspect(t,header('H2C','ABS;PLA','0.4;0.4')+'M104 T1 S290 N0 W\n',{model:'h2c'}),/PLA|temperature|limit/i);
+});
+test('Studio multi-extruder markers reject numeric flags, other forms and single-nozzle models',async t=>{
+  for(const command of ['M104 T1 S25 N0 C1','M104 T1 S25 N0 W0','M104 T1 S25 N0 C W','M104 T1 S25 N0 C C','M104 T1 S25 C','M104 S25 N0 C','M104 T1 N0 C','M104 T1 R25 N0 C','M104 T1 S25 N1 W','M104 T1 S25 N2 W','M104 T2 S25 N0 W','M104 T1 S25 N0 C A','M104 M S210 T1 C','M109 T1 S25 N0 C','M109 T1 S220 N0 W','M140 S55 C','M191 S40 W','M104 S220 W'])
+    await assert.rejects(inspect(t,header('H2C','PLA;PLA','0.4;0.4')+command+'\n',{model:'h2c'}),/unsupported|parameter|target|nozzle|duplicate/i,command);
+  for(const [name,nozzle] of [['P1S','0.4'],['H2S','0.4'],['A1','0.4'],['P2S','0.4']]) for(const command of ['M104 T0 S25 N0 C','M104 T0 S184 N0 W','M104 S220 C','M104 S220 W'])
+    await assert.rejects(inspect(t,header(name,'PLA',nozzle)+command+'\n',{model:name.toLowerCase()}),/unsupported|parameter/i,name+' '+command);
+});

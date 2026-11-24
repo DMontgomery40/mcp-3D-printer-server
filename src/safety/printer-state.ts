@@ -130,7 +130,7 @@ export function finiteNumber(value: unknown): number | undefined {
 }
 
 /**
- * X2D retains FAILED after a canceled job even with no active print error.
+ * X2D and H2C retain FAILED after a canceled job even with no active print error.
  * Bambu Studio classifies FAILED as a finished job; its v02.08.02.61
  * hms_en_20P table (926a7192574bcb9b3a732e1ec59a46d79cb45466)
  * calls 0300400C "The task was canceled."
@@ -138,8 +138,8 @@ export function finiteNumber(value: unknown): number | undefined {
  * Callers still validate HMS, identity, hardware and material configuration,
  * and print dispatch rechecks the identity of the observed job.
  */
-export function isCancelledX2DJob(raw: Record<string, any>, model: string): boolean {
-  return normalizeModel(model) === "x2d" && raw.gcode_state === "FAILED" &&
+export function isCancelledJob(raw: Record<string, any>, model: string): boolean {
+  return ["x2d", "h2c"].includes(normalizeModel(model) ?? "") && raw.gcode_state === "FAILED" &&
     finiteNumber(raw.print_error) === 0 && finiteNumber(raw.fail_reason) === 0x0300400c &&
     [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
 }
@@ -151,6 +151,16 @@ export function isFinishedIdleJob(raw: Record<string, any>, model: string): bool
     finiteNumber(raw.print_error) === 0 && Array.isArray(raw.hms) && raw.hms.length === 0 &&
     [raw.gcode_file, raw.subtask_name].some(value => typeof value === "string" && value.trim().length > 0);
 }
+/** Bind a terminal job to the fresh preflight across upload and connection waits. */
+export function assertSameTerminalJob(initial: any, current: any, model: string): void {
+  const terminal = (raw: Record<string, any>) => raw.gcode_state === "FINISH" || isCancelledJob(raw, model) || isFinishedIdleJob(raw, model);
+  const identity = (raw: Record<string, any>) => JSON.stringify([raw.gcode_file, raw.subtask_name, raw.task_id, raw.subtask_id, raw.job_id]);
+  const before = initial.raw, after = current.raw;
+  if ((terminal(before) && identity(before) !== identity(after)) || (!terminal(before) && terminal(after))) {
+    throw new Error("The printer job changed during preflight; check its current job before retrying. No print command was sent.");
+  }
+}
+
 const token = (value: unknown) => typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_-]/g, "") : "";
 function nozzleTypeAndFlow(value: unknown): {type?: string; flow?: string} {
   const text = String(value ?? "");
@@ -177,6 +187,17 @@ function unreliableWithoutChip(entry: any, stat: number): boolean {
   return (stat & 1) !== 0 && hasNoIdentityChip(entry);
 }
 
+/**
+ * A nozzle without an identity chip may also report state unknown (bits 1-2 = 2)
+ * together with the unreliable bit, stat 5: the stock H2S nozzle on firmware
+ * 01.02.00.00 does. Its diameter and type are configured settings too.
+ * Keep this exception scoped to the reported H2S status. Other models, abnormal
+ * states and chipped nozzles reporting unknown still block.
+ */
+function unknownWithoutChip(entry: any, stat: number, model: string): boolean {
+  return model === "h2s" && stat === 5 && hasNoIdentityChip(entry);
+}
+
 /** Nozzles whose reported diameter and type are configured settings rather than chip readings. */
 export function unchippedNozzles(raw: unknown): number[] {
   const info = (raw as any)?.device?.nozzle?.info;
@@ -200,7 +221,7 @@ function logUnchippedNozzles(raw: Record<string, any>, serial: string): void {
   }
 }
 
-function reportedNozzles(raw: Record<string,any>): ReportedNozzle[] {
+function reportedNozzles(raw: Record<string,any>, model: string): ReportedNozzle[] {
   const info = raw.device?.nozzle?.info;
   const output: ReportedNozzle[] = [];
   if (Array.isArray(info)) {
@@ -214,7 +235,7 @@ function reportedNozzles(raw: Record<string,any>): ReportedNozzle[] {
         // BambuStudio DevNozzle: bit 0 set means the information is unreliable;
         // bits 1-2 are 0 normal, 1 abnormal, 2 unknown.
         const stat = finiteNumber(entry.stat);
-        if (stat === undefined || !Number.isInteger(stat) || stat < 0 || (stat & 6) !== 0) throw new Error(`Printer nozzle ${index} information is unreliable, abnormal or unknown.`);
+        if (stat === undefined || !Number.isInteger(stat) || stat < 0 || ((stat & 6) !== 0 && !unknownWithoutChip(entry, stat, model))) throw new Error(`Printer nozzle ${index} information is unreliable, abnormal or unknown.`);
         if ((stat & 1) !== 0 && !unreliableWithoutChip(entry, stat)) throw new Error(`Printer nozzle ${index} information is unreliable; refresh the nozzle information on the printer.`);
       }
       if (output.some(nozzle => nozzle.index === index)) throw new Error("Printer reported ambiguous duplicate nozzle indices.");
@@ -341,7 +362,7 @@ export function isPauseNotice(raw: Record<string, any>, requireIdle: boolean): b
 }
 function validateErrors(raw: Record<string,any>, requireIdle: boolean, serial: string, model: string) {
   const state = typeof raw.gcode_state === "string" ? raw.gcode_state.toUpperCase() : "UNKNOWN";
-  const terminal = isCancelledX2DJob(raw, model) || isFinishedIdleJob(raw, model);
+  const terminal = isCancelledJob(raw, model) || isFinishedIdleJob(raw, model);
   if (requireIdle && !["IDLE","FINISH"].includes(state) && !terminal) throw new PrinterRefusal("printer-not-ready", `Printer state ${state} is not safely idle.`);
   if (!requireIdle && !["IDLE","FINISH","RUNNING","PAUSE"].includes(state) && !terminal) throw new Error(`Printer state ${state} is unknown or failed.`);
   if (finiteNumber(raw.print_error) !== 0 && !isPauseNotice(raw, requireIdle)) throw new Error("Printer reports a print error or did not report its error state.");
@@ -419,7 +440,7 @@ export function validatePrinterState(status: any, requirements: PrinterStateRequ
       throw new Error("The currently loaded spool differs from the tray checked for this G-code job.");
     }
   }
-  const nozzles = requirements.nozzleDiameters.length ? reportedNozzles(raw) : [];
+  const nozzles = requirements.nozzleDiameters.length ? reportedNozzles(raw, model) : [];
   if (requirements.nozzleDiameters.length && isDualNozzleModel(model) &&
       !Array.isArray(raw.device?.nozzle?.info) && !Array.isArray(raw.nozzle_diameter)) {
     throw new Error("A scalar legacy nozzle report is ambiguous for this multi-nozzle printer; fresh per-nozzle configuration is required.");
@@ -487,7 +508,7 @@ export function manualHeatingRequirements(status: any, model: string, nozzleDiam
   if (!normalized) throw new Error("A known printer model is required for manual nozzle heating.");
   const raw = status?.raw;
   if (!object(raw)) throw new Error("A fresh printer report is required for manual nozzle heating.");
-  if (isDualNozzleModel(normalized) || reportedNozzles(raw).some(nozzle => nozzle.index !== 0)) {
+  if (isDualNozzleModel(normalized) || reportedNozzles(raw, normalized).some(nozzle => nozzle.index !== 0)) {
     throw new Error("Manual heating cannot verify the active nozzle and loaded material on this multi-nozzle printer. Use a checked sliced print instead.");
   }
   const requirements: PrinterStateRequirements = {

@@ -14,8 +14,9 @@ import { BambuClient, PushAllCommand } from "bambu-node";
 import { MAX_PRINT_FILE_BYTES, readSafe3mfArchive } from "../safety/archive.js";
 import { inspectPrintFile, type PrintFileInspection } from "../safety/print-file.js";
 import { isDualNozzleModel, normalizeModel, validateTemperature } from "../safety/limits.js";
-import { describeAmsTrayRange, externalTrayForNozzle, studioAmsMapping } from "../ams-mapping.js";
+import { bridgeAmsMappingValue, bridgeAmsMapping2Entry, describeAmsTrayRange, externalTrayForNozzle, studioAmsMapping } from "../ams-mapping.js";
 import {
+  assertSameTerminalJob,
   manualHeatingRequirements,
   publishBambuCommand,
   readFreshPrinterStatus,
@@ -34,6 +35,19 @@ import { requireHumanConfirmation, type ConfirmHardware } from "../safety/confir
 import { assertExpectedPeaks, validateExpectedPeaks, type ExpectedPeakTemperatures, type PrintSafetyOptions } from "../safety/expected-peaks.js";
 import { controlReply, refusedControlMessage, type ControlReply } from "../control-reply.js";
 import { jobIdentity, newJobResets } from "./report-merge.js";
+
+/** Only documented H2 devices store direct FTPS files at the root; X2D keeps its existing route. */
+function storesAtFtpRoot(model: unknown, serial: string): boolean {
+  const normalized = normalizeModel(String(model ?? ""));
+  return normalized !== "x2d" && !serial.startsWith("20P") &&
+    (["h2s", "h2d", "h2c", "h2dpro"].includes(normalized ?? "") || ["093", "094", "31B", "239"].some(prefix => serial.startsWith(prefix)));
+}
+
+/** A listed /<name> denotes an H2 root file; bare names retain the cache/ alias. */
+function printerFilePath(filename: string, model: unknown, serial: string): string {
+  const normalized = normalizedRemotePath(filename);
+  return /^\/[^/]+$/.test(filename) && storesAtFtpRoot(model, serial) ? filename.slice(1) : normalized;
+}
 
 export interface BambuPrintOptionsInternal extends CallerPrintOptions {
   /** Bytes sent to the printer so far over FTPS, and the file's size (LAN route). */
@@ -643,10 +657,12 @@ export class BambuImplementation extends PrinterImplementation {
     // Recheck before the upload: the printer may have changed meanwhile.
     const recheckedStatus = await this.getSafetyStatus(host, serial, token);
     validatePrinterState(recheckedStatus, requirements);
+    assertSameTerminalJob(initialStatus, recheckedStatus, model);
     assertActive();
 
     const remoteFileName = uniquePrintName(options.filePath);
-    const remoteProjectPath = `cache/${remoteFileName}`;
+    const atRoot = storesAtFtpRoot(model, serial);
+    const remoteProjectPath = atRoot ? remoteFileName : `cache/${remoteFileName}`;
     try {
       await this.ftpUpload(host, token, options.filePath, `/${remoteProjectPath}`, options.onUploadProgress);
     } catch (error) {
@@ -656,15 +672,16 @@ export class BambuImplementation extends PrinterImplementation {
     // Uploads can be long. Recheck current state before the command is dispatched.
     const dispatchStatus = await this.getSafetyStatus(host, serial, token);
     validatePrinterState(dispatchStatus, requirements);
+    assertSameTerminalJob(initialStatus, dispatchStatus, model);
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
 
     const subtaskName = remoteFileName.replace(/\.3mf$/i, "");
-    const projectFileCmd = {
+    const projectFileCmd: { print: Record<string, any> } = {
       print: {
         command: "project_file",
         param: projectMetadata.plateInternalPath,
-        url: `file:///sdcard/${remoteProjectPath}`,
+        url: atRoot ? `ftp:///${remoteProjectPath}` : `file:///sdcard/${remoteProjectPath}`,
         // The printer reports this back as subtask_name, which identifies the checked job for resume.
         subtask_name: subtaskName,
         md5,
@@ -685,6 +702,23 @@ export class BambuImplementation extends PrinterImplementation {
         task_id: "0",
       },
     };
+
+    if (atRoot) {
+      // The documented H2 packet uses full positional mappings and separate virtual-tray entries.
+      const submissionId = String(Date.now() & 0x7fffffff);
+      const dualNozzle = isDualNozzleModel(model);
+      Object.assign(projectFileCmd.print, {
+        file: remoteFileName, bed_type: options.bedType || "auto",
+        timelapse: Number(Boolean(options.timelapse)), bed_leveling: Number(studio.task_bed_leveling),
+        auto_bed_leveling: studio.auto_bed_leveling, flow_cali: Number(studio.task_flow_cali),
+        vibration_cali: Number(studio.task_vibration_cali), layer_inspect: Number(studio.task_layer_inspect),
+        cfg: "0", extrude_cali_flag: 0, extrude_cali_manual_mode: studio.extruder_cali_manual_mode,
+        nozzle_offset_cali: studio.auto_offset_cali,
+        project_id: submissionId, subtask_id: submissionId, task_id: submissionId,
+        ams_mapping: amsMapping.map(value => bridgeAmsMappingValue(value, dualNozzle)),
+        ams_mapping2: amsMapping.map(value => bridgeAmsMapping2Entry(value, dualNozzle)),
+      });
+    }
 
     const calibration = directPrintOptionReport(options, studio, projectFileCmd.print);
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
@@ -726,7 +760,7 @@ export class BambuImplementation extends PrinterImplementation {
    * ams_slots supplies one tray per used filament and is expanded against the
    * plate's filament_ids; use_ams:false maps every used filament to the
    * external spool of its nozzle. Every used position must end up mapped.
-   * The wire form pads to the historical five entries.
+   * H2 wire mappings retain project length; legacy models pad to five entries.
    */
   private checkedAmsMapping(
     model: string,
@@ -785,7 +819,7 @@ export class BambuImplementation extends PrinterImplementation {
       }
     }
     const amsMapping = Array.from(
-      { length: Math.max(5, baseMapping.length, projectMetadata.projectFilamentCount) },
+      { length: Math.max(storesAtFtpRoot(model, "") ? 1 : 5, baseMapping.length, projectMetadata.projectFilamentCount) },
       (_, index) => (index < baseMapping.length ? baseMapping[index] : -1)
     );
     return { baseMapping, amsMapping, useAMS };
@@ -1044,7 +1078,7 @@ export class BambuImplementation extends PrinterImplementation {
   }
 
   async getFiles(host: string, port: string, apiKey: string) {
-    const [, token] = this.extractBambuCredentials(apiKey);
+    const [serial, token] = this.extractBambuCredentials(apiKey);
     const directories = ["cache", "timelapse", "logs"];
     const filesByDirectory: Record<string, string[]> = {};
     // bambu-js swallowed listing failures as empty folders. List read-only over
@@ -1053,6 +1087,7 @@ export class BambuImplementation extends PrinterImplementation {
     try {
       await client.access(this.ftpsOptions(host, token));
       const root = await client.list("/");
+      if (storesAtFtpRoot(undefined, serial)) filesByDirectory["/"] = root.filter(entry => !entry.isDirectory && !entry.isSymbolicLink).map(entry => entry.name);
       for (const directory of directories) {
         const present = root.some((entry) => entry.name === directory && (entry.isDirectory || entry.isSymbolicLink));
         filesByDirectory[directory] = present ? (await client.list(`/${directory}`)).map((entry) => entry.name) : [];
@@ -1062,7 +1097,7 @@ export class BambuImplementation extends PrinterImplementation {
     }
 
     const files = Object.entries(filesByDirectory).flatMap(([directory, names]) =>
-      names.map((name) => `${directory}/${name}`)
+      names.map((name) => directory === "/" ? `/${name}` : `${directory}/${name}`)
     );
 
     return {
@@ -1072,10 +1107,10 @@ export class BambuImplementation extends PrinterImplementation {
   }
 
   async getFile(host: string, port: string, apiKey: string, filename: string) {
-    const [, token] = this.extractBambuCredentials(apiKey);
+    const [serial, token] = this.extractBambuCredentials(apiKey);
 
-    const normalized = filename.replace(/^\/+/, "");
-    const directory = path.posix.dirname(normalized) === "." ? "cache" : path.posix.dirname(normalized);
+    const normalized = printerFilePath(filename, undefined, serial);
+    const directory = path.posix.dirname(normalized) === "." ? "" : path.posix.dirname(normalized);
     const baseName = path.posix.basename(normalized);
 
     let exists = false;
@@ -1111,11 +1146,13 @@ export class BambuImplementation extends PrinterImplementation {
 
     if (!print) {
       // Use direct FTP upload (bypasses bambu-js double-path bug)
-      await this.ftpUpload(host, token, filePath, `/${remotePath}`);
+      const atRoot = !filename.replace(/^\/+/, "").includes("/") && storesAtFtpRoot(options.bambuModel, serial);
+      const destination = atRoot ? uniquePrintName(remotePath) : remotePath;
+      await this.ftpUpload(host, token, filePath, `/${destination}`);
       return {
         status: "success",
         uploaded: true,
-        remotePath,
+        remotePath: atRoot ? `/${destination}` : destination,
         printRequested: false,
       };
     }
@@ -1151,12 +1188,14 @@ export class BambuImplementation extends PrinterImplementation {
     this.validateLoadedGcodeState(initialStatus, inspection);
     const recheckedStatus = await this.getSafetyStatus(host, serial, token);
     this.validateLoadedGcodeState(recheckedStatus, inspection);
+    assertSameTerminalJob(initialStatus, recheckedStatus, model);
     assertActive();
     // Start a uniquely named copy of the inspected bytes, never a name that can change.
     const remotePath = path.posix.join(path.posix.dirname(filename), uniquePrintName(filename));
     await this.ftpUpload(host, token, filePath, `/${remotePath}`);
     const dispatchStatus = await this.getSafetyStatus(host, serial, token);
     const requirements = this.validateLoadedGcodeState(dispatchStatus, inspection);
+    assertSameTerminalJob(initialStatus, dispatchStatus, model);
     const printer = await this.getPrinter(host, serial, token);
     assertActive();
     const watcher = this.watchDispatch(printer, host, serial, token, dispatchStatus, assertActive);
@@ -1186,7 +1225,7 @@ export class BambuImplementation extends PrinterImplementation {
     const [serial, token] = this.extractBambuCredentials(apiKey);
     const model = normalizeModel(options.bambuModel);
     if (!model) throw new Error("A supported bambuModel is required before printing.");
-    const remotePath = normalizedRemotePath(filename);
+    const remotePath = printerFilePath(filename, model, serial);
     if (!remotePath.toLowerCase().endsWith(".gcode")) {
       throw new Error("Remote starts require inspectable .gcode. Use print_3mf with the local project for .3mf printing.");
     }

@@ -437,13 +437,18 @@ export async function inspectPrintFile(filePath: string, options: {model:string;
         continue;
       }
       if(['M104','M109','M140','M190','M141','M191'].includes(code)) {
-        const args=parameters(argumentsText,code==='M104'?'AM':'A');
+        const args=parameters(argumentsText,code==='M104'?(dualNozzle?'AMCW':'AM'):'A');
         // Studio 2.9's GCodeWriter marks layer-temperature changes with bare M.
         // Accept only its exact S-target / optional T form; targets and tool
         // selectors still pass through the independent thermal checks below.
         if(args.has('M')) {
           if(!Number.isNaN(args.get('M')!) || !args.has('S') || [...args.keys()].some(key=>!'MST'.includes(key))) fail('unsupported M104 layer-change temperature parameters');
           args.delete('M');
+        }
+        const markers=code==='M104' && dualNozzle ? ['C','W'].filter(key=>args.has(key)) : [];
+        if(markers.length) {
+          if(markers.length!==1 || !Number.isNaN(args.get(markers[0])!) || args.size!==4 || args.get('N')!==0 || !args.has('T') || !args.has('S') || !args.has('N')) fail('unsupported M104 multi-extruder pre-heating or pre-cooling parameters');
+          args.delete(markers[0]);
         }
         // Official A1 and A1 mini start G-code waits with M109 S<target> H<limit>
         // (S25 H140, S100 H170, S220 H300). H is not a heater target: S stays the

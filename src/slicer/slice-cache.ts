@@ -98,9 +98,10 @@ async function keyOf(run: SlicerRun): Promise<string | undefined> {
     return named;
   };
   const args: string[] = [];
-  for (const arg of run.args) {
+  for (const [index, arg] of run.args.entries()) {
     const parts: string[] = [];
-    for (const piece of arg.split(";")) {
+    const pieces = ["--load-settings", "--load-filaments"].includes(run.args[index - 1]) ? arg.split(";") : [arg];
+    for (const piece of pieces) {
       const value = await part(piece);
       if (value === undefined) return undefined;
       parts.push(value);

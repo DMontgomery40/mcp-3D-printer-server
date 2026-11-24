@@ -531,3 +531,63 @@ test("counterpart dispatch truth brackets the raw G-code transport", async (t) =
     else assert.equal(events.filter(event => event.action === "upload").length, 1);
   }
 });
+
+for (const [model,prefix] of [['h2s','093'],['h2d','094'],['h2c','31B'],['h2dpro','239']]) test(`H2 project uploads reference the root over FTP (${model})`,async t=>{
+  const dual=model!=='h2s';
+  const file=await fixture(t,{model,gcode:dual?'; filament_map = 1\n; physical_extruder_map = 0,1\nM104 S220\n':'M104 S220\n'});
+  if(dual) {
+    const zip=await JSZip.loadAsync(await fs.readFile(file));
+    const settings=JSON.parse(await zip.file('Metadata/project_settings.config').async('string'));
+    settings.nozzle_diameter=['0.4','0.4'];
+    zip.file('Metadata/project_settings.config',JSON.stringify(settings));
+    zip.file('Metadata/plate_1.gcode',(await zip.file('Metadata/plate_1.gcode').async('string')).replace('; nozzle_diameter = 0.4\n','; nozzle_diameter = 0.4,0.4\n'));
+    await fs.writeFile(file,await zip.generateAsync({type:'nodebuffer'}));
+  }
+  const {printer,events}=isolatedPrinter(safetyStatus({model,nozzle:dual?['0.4','0.4']:'0.4',vir_slot:dual?[{id:255,tray_type:'PLA'},{id:254,tray_type:'PLA'}]:[{id:254,tray_type:'PLA'}]}));
+  const result=await printer.print3mf(host,`${prefix}TEST`,token,{projectName:'job',filePath:file,bambuModel:model,useAMS:false});
+  const upload=events.find(e=>e.action==='upload');
+  assert.match(upload.remote,/^\/checked-[a-f0-9-]+-job.gcode.3mf$/);
+  assert.equal(events.find(e=>e.action==='publish').payload.print.url,`ftp://${upload.remote}`);
+  assert.equal(result.remoteProjectPath,upload.remote.slice(1));
+  const packet=events.find(e=>e.action==='publish').payload.print;
+  assert.deepEqual(packet.ams_mapping,dual?[-1]:[254]);
+  assert.deepEqual(packet.ams_mapping2,[{ams_id:dual?255:254,slot_id:dual?0:254}]);
+  assert.equal(packet.file,upload.remote.slice(1));
+});
+
+for(const [prefix,model,root] of [['093','h2s',true],['31B','h2c',true],['01P','p1s',false],['20P','x2d',false]]) test(`explicit root remote starts preserve inspected copies and bare cache aliases (${model})`,async t=>{
+  const file=await fixture(t,{raw:true});
+  const {printer}=isolatedPrinter();
+  const downloaded=[];
+  printer.ftpDownload=async(_h,_t,remote,local)=>{downloaded.push(remote);await fs.copyFile(file,local);};
+  // Stop at the common inspected-print boundary; full byte/state dispatch is covered above.
+  printer.printRawPrepared=async(_h,_s,_t,local,remote)=>({remote,bytes:await fs.readFile(local,'utf8')});
+  for(const name of ['/old.gcode','old.gcode']) {
+    const result=await printer.startJob(host,'',`${prefix}TEST:${token}`,name,{bambuModel:model});
+    assert.equal(result.remote,root&&name.startsWith('/')?'old.gcode':'cache/old.gcode');
+  }
+  assert.deepEqual(downloaded,[root?'old.gcode':'cache/old.gcode','cache/old.gcode']);
+});
+
+test('a terminal job changing before upload or dispatch blocks project and raw print starts',async t=>{
+  for(const raw of [false,true]) for(const changedAt of [2,3]) {
+    const file=await fixture(t,{raw});
+    const {printer,events}=isolatedPrinter();let reads=0;
+    printer.getSafetyStatus=async()=>safetyStatus({state:'FINISH',subtask_name:++reads>=changedAt?'other':'previous',task_id:'1'});
+    const operation=raw?printer.uploadFile(host,'',apiKey,file,'job.gcode',true,{bambuModel:'p1s'}):print3mf(printer,file);
+    await assert.rejects(operation,/job changed/i);
+    assert.equal(events.filter(e=>e.action==='publish').length,0);
+    assert.equal(events.filter(e=>e.action==='upload').length,changedAt===2?0:1);
+  }
+});
+
+for(const prefix of ['093','094','31B','239','01P','20P']) test(`upload-only bare filenames use H2 root without changing explicit directories (${prefix})`,async t=>{
+  const file=await fixture(t,{raw:true});
+  const {printer,events}=isolatedPrinter();
+  const root=!['01P','20P'].includes(prefix);
+  const result=await printer.uploadFile(host,'',`${prefix}TEST:${token}`,file,'job.gcode',false);
+  assert.match(result.remotePath,root?/^\/checked-[a-f0-9-]+-job.gcode$/:/^cache\/job.gcode$/);
+  const explicit=await printer.uploadFile(host,'',`${prefix}TEST:${token}`,file,'cache/job.gcode',false);
+  assert.equal(explicit.remotePath,'cache/job.gcode');
+  assert.equal(events.filter(e=>e.action==='publish').length,0);
+});
