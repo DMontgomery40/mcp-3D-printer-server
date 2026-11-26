@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Inspect the Snapmaker U1's stock start G-code instead of refusing it. Every G-code from Snapmaker Orca's U1 profile failed `confirm_temperatures`, `upload_gcode` with `print=true` and `start_print` with "does not name its heater".
+  - `SET_PURIFIER_MODE` is skipped like `SET_TEMPERATURE_FAN_TARGET`: its `DESIRE_TEMP` and `ALARM_TEMP` are chamber thresholds for the exhaust and circulation fans (Klipper `[purifier]` on the `cavity` sensor). The U1's only heaters are `heater_bed` and `extruder`–`extruder3`.
+  - `M104`/`M109` accept the U1's extruder-map flag `A0`/`A1` (Snapmaker u1-klipper `extruder.py`). `A1`, the default, maps `T` through the slicer's filament mapping as before; `A0` names a physical toolhead, so its target must satisfy every declared material. Other `A` values reject.
+  - `SM_PRINT_EXTRUDER_PREHEAT EXTRUDER=<n> TEMP=<t>` is a nozzle target: the stock macro runs `M104 S{TEMP} T{EXTRUDER} A0`, so it is checked like `A0`. Missing, non-literal or extra parameters reject.
+  - `SM_PRINT_AUTO_FEED` and `SM_PRINT_FLOW_CALIBRATE` take `EXTRUDER=<n>` as a toolhead index; it is no longer reported as a 0–3 °C nozzle target. It must be a literal integer, and their other parameters are checked as before (a `FLOW_CALIBRATE` `TEMP` still rejects as an unnamed heater).
+  - Evidence: offline regressions with the stock start lines, and a real Snapmaker Orca U1 G-code (PETG on T1 at 245/70 °C; the other toolheads preheated to 140 °C and switched off with `A0`) scanned offline. The heater list, `[purifier]` settings and macro body were read from a U1's Moonraker. No print was started.
+
 ## [1.2.81] – 2026-11-24
 
 - Hash semicolons in model filenames correctly when reusing slices; keep ordered `--load-settings` and `--load-filaments` profile lists content-sensitive. Port d0ukan's Bambu fork #175 fix.

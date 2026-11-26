@@ -227,7 +227,9 @@ export function scanGcodeThermal(text: string): GcodeThermalScan {
         commandCount++;
         const word = line.match(/^([A-Za-z_][A-Za-z0-9_]*)/)?.[1]?.toUpperCase() ?? "";
         if (/^T[XC?]$/.test(word) || /^T\?/.test(line)) { activeTool = undefined; continue; }
-        if (["RESPOND", "M117", "TEMPERATURE_WAIT", "SET_TEMPERATURE_FAN_TARGET"].includes(word)) continue;
+        // Snapmaker U1 SET_PURIFIER_MODE DESIRE_TEMP/ALARM_TEMP are chamber thresholds for its exhaust and
+        // circulation fans (Klipper [purifier] on the cavity sensor); the U1 has no chamber heater.
+        if (["RESPOND", "M117", "TEMPERATURE_WAIT", "SET_TEMPERATURE_FAN_TARGET", "SET_PURIFIER_MODE"].includes(word)) continue;
         const rest = line.slice(word.length);
         const pairs = [...rest.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|\S+)/g)];
         if (word === "SET_HEATER_TEMPERATURE") {
@@ -243,7 +245,25 @@ export function scanGcodeThermal(text: string): GcodeThermalScan {
           }
           continue;
         }
+        if (word === "SM_PRINT_EXTRUDER_PREHEAT") {
+          // Snapmaker U1 stock macro: `M104 S{TEMP} T{EXTRUDER} A0`, a physical toolhead (see M104 A below), so
+          // the target must satisfy every declared material. TEMP's default lives in printer config: require literals.
+          const params = new Map(pairs.map((pair) => [pair[1].toUpperCase(), pair[2]]));
+          for (const key of params.keys()) if (!["EXTRUDER", "TEMP"].includes(key)) fail(`unsupported SM_PRINT_EXTRUDER_PREHEAT parameter ${key}`);
+          const extruder = params.get("EXTRUDER");
+          const target = params.get("TEMP");
+          if (extruder === undefined || !/^\d+$/.test(extruder)) fail(`SM_PRINT_EXTRUDER_PREHEAT EXTRUDER '${extruder ?? ""}' is not a literal tool index`);
+          if (target === undefined || !new RegExp(`^${NUMBER}$`).test(target)) fail(`SM_PRINT_EXTRUDER_PREHEAT TEMP '${target ?? ""}' is not a literal number`);
+          targets.push({ line: lineNumber, command: word, heater: "nozzle", value: Number(target), tool: undefined });
+          continue;
+        }
         for (const [, key, value] of pairs) {
+          // Snapmaker U1 SM_PRINT_AUTO_FEED / SM_PRINT_FLOW_CALIBRATE take EXTRUDER as a toolhead index, not a
+          // temperature; their other parameters (e.g. a FLOW_CALIBRATE TEMP) are still checked below.
+          if (key.toUpperCase() === "EXTRUDER" && (word === "SM_PRINT_AUTO_FEED" || word === "SM_PRINT_FLOW_CALIBRATE")) {
+            if (!/^\d+$/.test(value)) fail(`${word} EXTRUDER '${value}' is not a literal tool index`);
+            continue;
+          }
           const heater = macroParameterHeater(key);
           if (!heater) continue;
           if (heater === "ambiguous") fail(`${word} parameter ${key} looks like a temperature but does not name its heater; use BED/EXTRUDER/CHAMBER names`);
@@ -270,9 +290,14 @@ export function scanGcodeThermal(text: string): GcodeThermalScan {
         fail(`unsupported thermal command variant ${code}; re-slice with standard heater commands`);
       }
       if (code === "M104" || code === "M109") {
-        // Marlin B is the AUTOTEMP maximum target; I would select an unknown preset.
-        const params = parseParameters(argumentsText, code, "SRTBF", "F");
-        const tool = toolIndex(params.get("T"), code) ?? activeTool;
+        // Marlin B is the AUTOTEMP maximum target; I would select an unknown preset. Snapmaker U1 A is the
+        // extruder-map flag: A1 (default) maps T through the slicer's filament mapping, A0 makes T a physical
+        // toolhead whose filament position is unknown here, so its targets must satisfy every declared material.
+        const params = parseParameters(argumentsText, code, "SRTBFA", "F");
+        const map = params.get("A");
+        if (map !== undefined && (map.length !== 1 || (map[0] !== 0 && map[0] !== 1))) fail(`${code} A must be 0 or 1`);
+        const index = toolIndex(params.get("T"), code);
+        const tool = map?.[0] === 0 ? undefined : index ?? activeTool;
         for (const key of ["S", "R", "B"]) {
           for (const value of params.get(key) ?? []) targets.push({ line: lineNumber, command: code, heater: "nozzle", value, tool });
         }
