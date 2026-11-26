@@ -258,6 +258,12 @@ export function scanGcodeThermal(text: string): GcodeThermalScan {
           continue;
         }
         for (const [, key, value] of pairs) {
+          // Snapmaker U1 SM_PRINT_AUTO_FEED / SM_PRINT_FLOW_CALIBRATE take EXTRUDER as a toolhead index, not a
+          // temperature; their other parameters (e.g. a FLOW_CALIBRATE TEMP) are still checked below.
+          if (key.toUpperCase() === "EXTRUDER" && (word === "SM_PRINT_AUTO_FEED" || word === "SM_PRINT_FLOW_CALIBRATE")) {
+            if (!/^\d+$/.test(value)) fail(`${word} EXTRUDER '${value}' is not a literal tool index`);
+            continue;
+          }
           const heater = macroParameterHeater(key);
           if (!heater) continue;
           if (heater === "ambiguous") fail(`${word} parameter ${key} looks like a temperature but does not name its heater; use BED/EXTRUDER/CHAMBER names`);

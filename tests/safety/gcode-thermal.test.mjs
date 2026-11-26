@@ -106,9 +106,13 @@ test("Snapmaker U1 stock start G-code: purifier fan thresholds are not heaters, 
   assert.throws(() => inspect(u1 + "M104 S270 T0 A0\n"), /PLA nozzle temperature 270/);
   assert.equal(inspect(u1 + "M104 S270 T0 A1\n").peaks.nozzle, 270);
   assert.throws(() => inspect(u1 + "M109 S400 T0 A0\n"), /exceeds|ceiling/);
+  // Feed and flow-calibration EXTRUDER values are toolhead indexes, not nozzle temperatures.
+  const fed = scanGcodeThermal(u1 + "SM_PRINT_AUTO_FEED EXTRUDER=3\nSM_PRINT_FLOW_CALIBRATE EXTRUDER=3\n");
+  assert.deepEqual(fed.targets.filter((target) => target.heater === "nozzle").map((target) => target.value), [140, 0, 245]);
   for (const command of [
     "SM_PRINT_EXTRUDER_PREHEAT EXTRUDER=1", "SM_PRINT_EXTRUDER_PREHEAT TEMP=140", "SM_PRINT_EXTRUDER_PREHEAT EXTRUDER=1 TEMP={t}",
     "SM_PRINT_EXTRUDER_PREHEAT EXTRUDER=1 TEMP=140 BED=60", "M104 S200 T0 A2", "M104 S200 T0 A",
+    "SM_PRINT_FLOW_CALIBRATE EXTRUDER={e}", "SM_PRINT_FLOW_CALIBRATE EXTRUDER=0 TEMP=300", "PRINT_START BED=60 EXTRUDER=400",
   ]) {
     assert.throws(() => inspect(u1 + command + "\n"), /Print safety/, command);
   }
