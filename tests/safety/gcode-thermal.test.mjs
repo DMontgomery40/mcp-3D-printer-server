@@ -93,6 +93,27 @@ test("comments, display text and non-thermal vendor commands do not create or hi
   assert.equal(result.materials[0], "PLA");
 });
 
+test("Snapmaker U1 stock start G-code: purifier fan thresholds are not heaters, preheats and A0 targets are", () => {
+  // Lines from Snapmaker Orca's stock U1 start G-code. DESIRE_TEMP/ALARM_TEMP drive the exhaust and
+  // circulation fans; SM_PRINT_EXTRUDER_PREHEAT expands to `M104 S{TEMP} T{EXTRUDER} A0`.
+  const u1 = "; filament_type = PETG;PLA;PLA;PLA\nSET_PURIFIER_MODE MODE=1 DESIRE_TEMP=45 ALARM_TEMP=51 FAN_SPEED=0.6 DELAY_OFF=0\nSET_PURIFIER_MODE MODE=3 DESIRE_TEMP=45 FAN_SPEED=0.6 DELAY_OFF=600\nSM_PRINT_EXTRUDER_PREHEAT EXTRUDER=1 TEMP=140\nM104 S0 T1 A0\nM140 S70\nM104 T0 S245\n";
+  const result = inspect(u1);
+  assert.equal(result.peaks.nozzle, 245);
+  assert.equal(result.peaks.bed, 70);
+  assert.equal(result.peaks.chamber, 0);
+  // A0 and the preheat address a physical toolhead, not a filament position: every declared material must allow it.
+  assert.throws(() => inspect(u1 + "SM_PRINT_EXTRUDER_PREHEAT EXTRUDER=0 TEMP=270\n"), /PLA nozzle temperature 270/);
+  assert.throws(() => inspect(u1 + "M104 S270 T0 A0\n"), /PLA nozzle temperature 270/);
+  assert.equal(inspect(u1 + "M104 S270 T0 A1\n").peaks.nozzle, 270);
+  assert.throws(() => inspect(u1 + "M109 S400 T0 A0\n"), /exceeds|ceiling/);
+  for (const command of [
+    "SM_PRINT_EXTRUDER_PREHEAT EXTRUDER=1", "SM_PRINT_EXTRUDER_PREHEAT TEMP=140", "SM_PRINT_EXTRUDER_PREHEAT EXTRUDER=1 TEMP={t}",
+    "SM_PRINT_EXTRUDER_PREHEAT EXTRUDER=1 TEMP=140 BED=60", "M104 S200 T0 A2", "M104 S200 T0 A",
+  ]) {
+    assert.throws(() => inspect(u1 + command + "\n"), /Print safety/, command);
+  }
+});
+
 test("positional materials follow tool changes and tool parameters", () => {
   const two = "; filament_type = PLA;PETG\n";
   assert.throws(() => inspect(two + "T0\nM104 S270\n"), /PLA nozzle temperature 270/);
